@@ -132,6 +132,7 @@ handed off.
 Preferred commands:
 
 ```bash
+uv sync --extra dev
 uv run pytest
 uv run python -m mlb_props_stack
 ```

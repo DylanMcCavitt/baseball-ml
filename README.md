@@ -83,10 +83,24 @@ python3 -m venv .venv
 If you already use `uv`, the equivalent commands are:
 
 ```bash
-uv sync --dev
+uv sync --extra dev
 uv run pytest
 uv run python -m mlb_props_stack
 ```
+
+## CI
+
+GitHub Actions runs the repo baseline checks on pull requests to `main` and on
+pushes to `main`:
+
+- `uv sync --locked --extra dev`
+- `python -m compileall src tests`
+- `uv run pytest`
+- `uv run python -m mlb_props_stack`
+
+That keeps the current scaffold honest without pretending the repo already has a
+full training or deployment pipeline. As model, feature, and data workflows land,
+CI can grow from this baseline instead of starting as placeholder ceremony.
 
 ## Future Hooks
 
