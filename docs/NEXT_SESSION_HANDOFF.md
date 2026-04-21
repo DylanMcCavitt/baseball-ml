@@ -4,67 +4,71 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Last completed issue branch:
-  `dylanmccavitt2015/age-145-ingest-sportsbook-pitcher-strikeout-lines-and-capture`
-- `main` already includes the merged `AGE-143` docs work and the merged
-  `AGE-144` MLB metadata ingest work.
-- `main` now also includes the merged `AGE-145` sportsbook ingest work from
-  PR #5.
-- The repo now has a working The Odds API ingest path for sportsbook pitcher
-  strikeout props that reuses the latest MLB metadata artifacts for the same
-  official date.
+- Current issue branch:
+  `dylanmccavitt2015/age-146-build-statcast-derived-pitcher-and-opponent-strikeout`
+- `main` already includes the merged `AGE-143` docs work, `AGE-144` MLB
+  metadata ingest, and `AGE-145` sportsbook ingest.
+- This branch adds the first Statcast-derived feature-table build for the
+  pitcher strikeout model, but it has not been merged to `main` yet from this
+  handoff snapshot.
 
-## What Was Completed In AGE-145
+## What Was Completed In AGE-146
 
-- `src/mlb_props_stack/ingest/odds_api.py`
-  - added a stdlib-only `OddsAPIClient` with:
-    - `GET /v4/sports/baseball_mlb/events`
-    - `GET /v4/sports/baseball_mlb/events/{eventId}/odds?regions=us&markets=pitcher_strikeouts&oddsFormat=american`
+- `src/mlb_props_stack/ingest/statcast_features.py`
+  - added a stdlib-only `StatcastSearchClient`
+  - added reproducible Baseball Savant Statcast CSV URL construction for
+    targeted pitcher and batter pulls
   - loads the latest normalized MLB metadata run for the target date from:
     - `games.jsonl`
     - `probable_starters.jsonl`
-  - preserves raw Odds API event snapshots under:
-    - `data/raw/the_odds_api/date=YYYY-MM-DD/events/`
-  - preserves raw event-odds snapshots under:
-    - `data/raw/the_odds_api/date=YYYY-MM-DD/event_odds/event_id=.../`
-  - writes normalized sportsbook artifacts under:
-    - `data/normalized/the_odds_api/date=YYYY-MM-DD/run=.../`
+    - `lineup_snapshots.jsonl`
+  - preserves raw CSV pulls under:
+    - `data/raw/statcast_search/date=YYYY-MM-DD/player_type=.../player_id=.../`
+  - writes normalized feature artifacts under:
+    - `data/normalized/statcast_search/date=YYYY-MM-DD/run=.../`
   - emits:
-    - `event_game_mappings.jsonl`
-    - `prop_line_snapshots.jsonl`
-  - reuses the existing `odds_matchup_key` contract to map Odds API `event_id`
-    values back to MLB `gamePk`
-  - resolves `player_id` from probable starters when the event-to-game join is
-    clean, and falls back to deterministic `odds-player:...` ids when the join
-    is still unresolved
-  - keeps unmatched event rows instead of discarding them so schedule / time
-    mismatches can be inspected later
+    - `pull_manifest.jsonl`
+    - `pitch_level_base.jsonl`
+    - `pitcher_daily_features.jsonl`
+    - `lineup_daily_features.jsonl`
+    - `game_context_features.jsonl`
+  - dedupes repeated pitch rows across pitcher and batter pulls into one
+    traceable `pitch_level_base` seam
+  - enforces the current pregame lineup rule:
+    - only lineup snapshots with `captured_at <= commence_time` are allowed
+    - late lineup snapshots stay explicit as missing instead of leaking
+      post-lock information
+  - keeps weather and park factor explicit as missing with status fields rather
+    than silently backfilling them
 - `src/mlb_props_stack/ingest/__init__.py`
-  - exported the new sportsbook ingest surface
+  - exported the new Statcast feature-build surface
 - `src/mlb_props_stack/cli.py`
   - added:
-    - `ingest-odds-api-lines --date YYYY-MM-DD [--output-dir ...] [--api-key ...]`
-  - prints a sportsbook ingest summary with event counts, mapping counts, and
-    normalized artifact paths
-- `tests/test_odds_api_ingest.py`
+    - `ingest-statcast-features --date YYYY-MM-DD [--output-dir ...] [--history-days ...]`
+  - prints a feature-build summary with history window, pull counts, row counts,
+    and normalized artifact paths
+- `tests/test_statcast_feature_ingest.py`
   - added end-to-end coverage for:
-    - writing raw and normalized sportsbook artifacts
-    - preserving prior run directories and raw snapshots across repeated ingests
-    - unmatched event mappings and deterministic fallback player ids
+    - reproducible pitcher and batter pull URLs
+    - raw CSV pull writing and pull-manifest output
+    - deduped `pitch_level_base` rows across pitcher and batter pulls
+    - explicit missing-lineup handling when the only lineup snapshot is late
+    - explicit missing weather / park factor status fields
 - `tests/test_cli.py`
-  - added CLI coverage for the new sportsbook ingest command
+  - added CLI coverage for the new Statcast feature-build command
 - `README.md`
-  - documented the new sportsbook ingest command, env var requirement, and
-    output layout
+  - documented the new feature-build command, raw/normalized output layout, and
+    current missing-input behavior
 - `docs/architecture.md`
-  - updated the trusted sportsbook source, source-adapter table, and current
-    ingest artifact shape to include AGE-145
+  - updated the source-adapter table and current artifact-shape section to
+    include AGE-146
 - `docs/modeling.md`
-  - documented current `player_id` resolution behavior for sportsbook snapshots
+  - documented the current feature-table outputs and the pregame lineup / missing
+    weather guardrails
 
 ## Verification Run
 
-These commands were run successfully during AGE-145:
+These commands were run successfully during AGE-146:
 
 ```bash
 uv sync --extra dev
@@ -76,57 +80,59 @@ uv run python -m mlb_props_stack
 Local results:
 
 - `uv run pytest`
-  - `30 passed`
+  - `33 passed`
 - `uv run python -m mlb_props_stack`
   - still prints the runtime summary cleanly
 
-Not run during AGE-145:
+Not run during AGE-146:
 
 ```bash
-uv run python -m mlb_props_stack ingest-odds-api-lines --date 2026-04-21
+uv run python -m mlb_props_stack ingest-statcast-features --date 2026-04-21
 ```
 
 Reason:
 
-- `ODDS_API_KEY` was not present in the environment during this session, so the
-  live sportsbook smoke run could not be exercised against the real API.
+- the local session verified the new path through deterministic tests instead of
+  writing a live feature run against Baseball Savant; a real smoke run still
+  needs same-date MLB metadata artifacts plus a decision on where that live
+  output should land
 
 ## Recommended Next Issue
 
-- `AGE-146` — `Build Statcast-derived pitcher and opponent strikeout feature tables`
+- `AGE-147` — `Build starter strikeout expectation baseline model`
 
 Why this should go next:
 
-- AGE-144 now provides timestamped MLB game, probable-starter, and lineup
-  artifacts.
-- AGE-145 now provides replayable sportsbook line snapshots plus event-to-game
-  mappings for the same official date.
-- AGE-146 can build the first real feature tables against those upstream seams
-  without guessing about market timestamps or event identity.
+- AGE-146 now provides concrete `pitcher_daily_features`,
+  `lineup_daily_features`, and `game_context_features` tables keyed to the same
+  slate metadata seam
+- AGE-147 can consume those feature tables directly to build the first
+  reproducible expected-strikeout baseline before pricing, ladder probabilities,
+  or walk-forward backtests
 
 ## Constraints For The Next Worktree
 
-- Start the next issue worktree from the current `main`.
-- `ingest-odds-api-lines` expects an existing MLB metadata run for the same date
-  under `data/normalized/mlb_stats_api/...`; do not bypass that dependency by
-  inventing a second game-matching path.
-- Keep Odds API `event_id` and MLB `gamePk` separate. The mapping table is the
-  bridge and should remain explicit.
-- Preserve repeated sportsbook snapshots. The run-specific normalized directories
-  and timestamped raw files are required for replayable line history.
-- Keep unmatched event mappings in the normalized output until the actual live
-  mismatch pattern is understood.
-- Keep `odds-player:...` ids as a fallback only. When the sportsbook event maps
-  cleanly and the probable-starter name matches, prefer the MLB pitcher id.
+- Start the next issue worktree from the current `main` after AGE-146 is merged.
+- Treat `pitch_level_base` as the trace seam from raw Statcast CSV rows to any
+  later model-training row; do not bypass it with ad hoc historical joins.
+- Keep the history window pregame-safe:
+  - no Statcast row from the evaluated official date belongs in the daily
+    feature tables
+- Keep lineup honesty:
+  - only lineup snapshots with `captured_at <= commence_time` are allowed into
+    model inputs unless a later issue explicitly changes that rule
+- Keep missing weather and park factor explicit until a timestamp-valid source
+  lands. Do not silently replace the current null-plus-status contract.
+- If AGE-147 needs wider or different feature windows, expand them deliberately
+  in code or config instead of embedding hidden assumptions in the model layer.
 
 ## Open Questions
 
-- A real-key smoke run is still needed to confirm how often The Odds API
-  `commence_time` misses the exact MLB `odds_matchup_key` join in practice,
-  especially for doubleheaders and late schedule changes.
-- If real sportsbook payloads show frequent player-name variants beyond the
-  current probable-starter names, the repo may need an explicit alias layer
-  before model training consumes these records.
-- `AGE-146` still needs to decide the exact timestamp-valid weather source.
-  Missing weather is currently allowed and should stay explicit rather than
-  silently backfilled.
+- A real Statcast smoke run is still needed against live Baseball Savant CSV
+  pulls to confirm the current query template behaves cleanly for the targeted
+  pitcher and batter workflow.
+- The repo still does not have a timestamp-valid weather source for first pitch.
+  Weather stays intentionally missing until that source is chosen.
+- Park factor is currently just a reserved slot in `game_context_features`; if
+  it becomes important for the baseline model, it should come from a named
+  source in a dedicated follow-up slice rather than a hardcoded constant.

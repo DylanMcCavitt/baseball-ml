@@ -17,6 +17,18 @@ from .odds_api import (
     PropLineSnapshotRecord,
     ingest_odds_api_pitcher_lines_for_date,
 )
+from .statcast_features import (
+    DEFAULT_HISTORY_DAYS,
+    GameContextFeatureRow,
+    LineupDailyFeatureRow,
+    PitcherDailyFeatureRow,
+    StatcastFeatureIngestResult,
+    StatcastPitchRecord,
+    StatcastPullRecord,
+    StatcastSearchClient,
+    build_statcast_search_csv_url,
+    ingest_statcast_features_for_date,
+)
 
 __all__ = [
     "GameRecord",
@@ -29,7 +41,17 @@ __all__ = [
     "OddsEventGameMappingRecord",
     "ProbableStarterRecord",
     "PropLineSnapshotRecord",
+    "DEFAULT_HISTORY_DAYS",
+    "GameContextFeatureRow",
+    "LineupDailyFeatureRow",
+    "PitcherDailyFeatureRow",
+    "StatcastFeatureIngestResult",
+    "StatcastPitchRecord",
+    "StatcastPullRecord",
+    "StatcastSearchClient",
     "build_odds_matchup_key",
+    "build_statcast_search_csv_url",
     "ingest_mlb_metadata_for_date",
     "ingest_odds_api_pitcher_lines_for_date",
+    "ingest_statcast_features_for_date",
 ]

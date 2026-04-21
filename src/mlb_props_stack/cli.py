@@ -8,10 +8,13 @@ from datetime import date
 from .backtest import BACKTEST_CHECKLIST
 from .config import StackConfig
 from .ingest import (
+    DEFAULT_HISTORY_DAYS,
     MLBMetadataIngestResult,
     OddsAPIIngestResult,
+    StatcastFeatureIngestResult,
     ingest_mlb_metadata_for_date,
     ingest_odds_api_pitcher_lines_for_date,
+    ingest_statcast_features_for_date,
 )
 from .tracking import TrackingConfig
 
@@ -68,6 +71,30 @@ def render_odds_api_ingest_summary(result: OddsAPIIngestResult) -> str:
     return "\n".join(lines)
 
 
+def render_statcast_feature_ingest_summary(result: StatcastFeatureIngestResult) -> str:
+    """Return a human-readable summary for one Statcast feature build."""
+    lines = [
+        f"Statcast feature build complete for {result.target_date.isoformat()}",
+        f"run_id={result.run_id}",
+        f"history_start_date={result.history_start_date.isoformat()}",
+        f"history_end_date={result.history_end_date.isoformat()}",
+        f"raw_pulls={result.raw_pull_count}",
+        f"pitch_level_rows={result.pitch_level_record_count}",
+        f"pitcher_daily_features={result.pitcher_feature_count}",
+        f"lineup_daily_features={result.lineup_feature_count}",
+        f"game_context_features={result.game_context_feature_count}",
+        f"mlb_games_path={result.mlb_games_path}",
+        f"mlb_probable_starters_path={result.mlb_probable_starters_path}",
+        f"mlb_lineup_snapshots_path={result.mlb_lineup_snapshots_path}",
+        f"pull_manifest_path={result.pull_manifest_path}",
+        f"pitch_level_base_path={result.pitch_level_base_path}",
+        f"pitcher_daily_features_path={result.pitcher_daily_features_path}",
+        f"lineup_daily_features_path={result.lineup_daily_features_path}",
+        f"game_context_features_path={result.game_context_features_path}",
+    ]
+    return "\n".join(lines)
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     """Create the top-level CLI parser."""
     parser = argparse.ArgumentParser(prog="mlb-props-stack")
@@ -109,6 +136,28 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional Odds API key override. Defaults to ODDS_API_KEY.",
     )
+
+    statcast_parser = subparsers.add_parser(
+        "ingest-statcast-features",
+        help="Fetch targeted Statcast history and build feature tables for one date.",
+    )
+    statcast_parser.add_argument(
+        "--date",
+        dest="target_date",
+        required=True,
+        help="Target MLB schedule date in YYYY-MM-DD format.",
+    )
+    statcast_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where raw and normalized ingest artifacts will be written.",
+    )
+    statcast_parser.add_argument(
+        "--history-days",
+        type=int,
+        default=DEFAULT_HISTORY_DAYS,
+        help="Number of prior official dates to include in the Statcast history window.",
+    )
     return parser
 
 
@@ -131,6 +180,15 @@ def main(argv: list[str] | None = None) -> None:
             api_key=args.api_key,
         )
         print(render_odds_api_ingest_summary(result))
+        return
+
+    if args.command == "ingest-statcast-features":
+        result = ingest_statcast_features_for_date(
+            target_date=date.fromisoformat(args.target_date),
+            output_dir=args.output_dir,
+            history_days=args.history_days,
+        )
+        print(render_statcast_feature_ingest_summary(result))
         return
 
     print(render_runtime_summary())
