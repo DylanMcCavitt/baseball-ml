@@ -46,6 +46,8 @@ That is a math-and-process problem first, and a betting problem second.
   Odds conversion, expected value, devig, and Kelly sizing.
 - `src/mlb_props_stack/markets.py`
   Core data models for props, projections, and decisions.
+- `src/mlb_props_stack/ingest/mlb_stats_api.py`
+  MLB Stats API adapters for schedule, probable starters, and lineup snapshots.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
 - `src/mlb_props_stack/backtest.py`
@@ -87,6 +89,33 @@ uv sync --extra dev
 uv run pytest
 uv run python -m mlb_props_stack
 ```
+
+## MLB Metadata Ingest
+
+`AGE-144` adds the first real source adapter for MLB game context.
+
+Fetch one schedule day, persist raw snapshots, and write normalized JSONL outputs:
+
+```bash
+uv run python -m mlb_props_stack ingest-mlb-metadata --date 2026-04-21
+```
+
+By default that writes:
+
+- raw schedule snapshots under `data/raw/mlb_stats_api/date=YYYY-MM-DD/schedule/`
+- raw `feed/live` snapshots under `data/raw/mlb_stats_api/date=YYYY-MM-DD/feed_live/game_pk=.../`
+- normalized `games.jsonl`, `probable_starters.jsonl`, and `lineup_snapshots.jsonl`
+  under `data/normalized/mlb_stats_api/date=YYYY-MM-DD/run=.../`
+
+The normalized game rows include an `odds_matchup_key` built from:
+
+- `official_date`
+- away team abbreviation
+- home team abbreviation
+- UTC `commence_time`
+
+That key is the bridge AGE-145 will use when mapping sportsbook events back to
+MLB `gamePk` records.
 
 ## CI
 
