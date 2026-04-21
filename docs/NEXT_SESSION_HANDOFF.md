@@ -4,10 +4,11 @@
 
 - Repo: `baseball-ml`
 - Default branch: `main`
-- Current issue branch:
-  `feat/age-144-ingest-schedule-probable-starters-and-confirmed-lineups`
-- `main` already includes the merged `AGE-143` docs work from PR #3.
-- `AGE-144` is complete locally on this branch. The repo now has a working
+- Last completed issue branch:
+  `feat/age-144-ingest-schedule-probable-starters-and-confirmed-lineups` (merged)
+- `main` already includes the merged `AGE-143` docs work from PR #3 and the
+  merged `AGE-144` ingest work from PR #4.
+- The repo now has a working
   stdlib-only MLB Stats API ingest path for:
   - one-day schedule pulls keyed by `gamePk`
   - probable starter normalization
@@ -51,7 +52,7 @@
 
 ## Verification Run
 
-These commands were run successfully from the issue branch:
+These commands were run successfully during AGE-144:
 
 ```bash
 uv sync --extra dev
@@ -97,7 +98,7 @@ Why this should go next:
 
 ## Constraints For The Next Worktree
 
-- Start from `main` after this ingest branch is merged.
+- Start from the current `main`; AGE-144 is already merged.
 - Keep the standard-library-first posture unless the issue explicitly expands
   dependencies.
 - Preserve `python -m mlb_props_stack` as a working local entrypoint.
