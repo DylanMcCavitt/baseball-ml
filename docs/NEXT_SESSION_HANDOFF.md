@@ -4,13 +4,15 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Current issue branch:
+- Last completed issue branch:
   `dylanmccavitt2015/age-145-ingest-sportsbook-pitcher-strikeout-lines-and-capture`
 - `main` already includes the merged `AGE-143` docs work and the merged
   `AGE-144` MLB metadata ingest work.
-- `AGE-145` is implemented in this worktree but not merged yet. The branch now
-  has a working The Odds API ingest path for sportsbook pitcher strikeout props
-  that reuses the latest MLB metadata artifacts for the same official date.
+- `main` now also includes the merged `AGE-145` sportsbook ingest work from
+  PR #5.
+- The repo now has a working The Odds API ingest path for sportsbook pitcher
+  strikeout props that reuses the latest MLB metadata artifacts for the same
+  official date.
 
 ## What Was Completed In AGE-145
 
@@ -78,7 +80,7 @@ Local results:
 - `uv run python -m mlb_props_stack`
   - still prints the runtime summary cleanly
 
-Not run in this worktree:
+Not run during AGE-145:
 
 ```bash
 uv run python -m mlb_props_stack ingest-odds-api-lines --date 2026-04-21
@@ -104,7 +106,7 @@ Why this should go next:
 
 ## Constraints For The Next Worktree
 
-- If AGE-145 is merged, start the next worktree from the updated `main`.
+- Start the next issue worktree from the current `main`.
 - `ingest-odds-api-lines` expects an existing MLB metadata run for the same date
   under `data/normalized/mlb_stats_api/...`; do not bypass that dependency by
   inventing a second game-matching path.
