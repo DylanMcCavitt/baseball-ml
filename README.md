@@ -70,7 +70,7 @@ That is a math-and-process problem first, and a betting problem second.
 
 ## Development
 
-This repo currently targets Python 3.9+ and uses a small standard-library-first
+This repo currently targets Python 3.11+ and uses a small standard-library-first
 scaffold until data connectors and model dependencies are added.
 
 ```bash
