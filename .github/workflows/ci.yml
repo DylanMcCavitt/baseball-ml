@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Sync locked development environment
+        run: uv sync --locked --extra dev
+
+      - name: Compile source and tests
+        run: uv run python -m compileall src tests
+
+      - name: Run test suite
+        run: uv run pytest
+
+      - name: Run CLI smoke test
+        run: uv run python -m mlb_props_stack
+
+      - name: Prune uv cache
+        run: uv cache prune --ci

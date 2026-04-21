@@ -1,8 +1,11 @@
+import pytest
+
 from mlb_props_stack.pricing import (
     american_to_implied_probability,
     devig_two_way,
     expected_value,
     fair_american_odds,
+    quarter_kelly,
 )
 
 
@@ -21,3 +24,13 @@ def test_positive_ev_for_mispriced_plus_money():
 
 def test_fair_odds_for_sixty_percent_probability():
     assert fair_american_odds(0.60) == -150
+
+
+def test_quarter_kelly_rejects_invalid_probability():
+    with pytest.raises(ValueError, match="probability must be in \\[0, 1\\]"):
+        quarter_kelly(1.1, -110)
+
+
+def test_quarter_kelly_rejects_fraction_above_one():
+    with pytest.raises(ValueError, match="fraction must be in \\(0, 1\\]"):
+        quarter_kelly(0.55, -110, fraction=1.1)
