@@ -5,6 +5,7 @@ __all__ = [
     "config",
     "dashboard",
     "edge",
+    "ingest",
     "markets",
     "pricing",
     "tracking",

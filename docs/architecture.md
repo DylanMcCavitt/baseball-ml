@@ -43,6 +43,7 @@ modeling work must honor.
 | --- | --- | --- |
 | Runtime defaults | `src/mlb_props_stack/config.py` | market name, edge threshold, Kelly fraction, bankroll cap, timezone |
 | Prop and projection contracts | `src/mlb_props_stack/markets.py` | `PropLine`, `PropProjection`, `EdgeDecision`, `PropSelectionKey`, `ProjectionInputRef` |
+| Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py` | fetch schedule and `feed/live` payloads, preserve raw snapshots, normalize `games`, `probable_starters`, and `lineup_snapshots` |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, emit the best actionable side |
 | Evaluation guardrails | `src/mlb_props_stack/backtest.py` | walk-forward policy flags and the baseline honesty checklist |
@@ -85,6 +86,39 @@ In code terms, that flow should eventually materialize as:
    projection to the market
 5. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
    considered valid
+
+## Current AGE-144 Output Shape
+
+The first ingest slice now writes both raw and normalized artifacts locally.
+
+- raw schedule payloads:
+  `data/raw/mlb_stats_api/date=YYYY-MM-DD/schedule/captured_at=...json`
+- raw `feed/live` payloads:
+  `data/raw/mlb_stats_api/date=YYYY-MM-DD/feed_live/game_pk=.../captured_at=...json`
+- normalized runs:
+  `data/normalized/mlb_stats_api/date=YYYY-MM-DD/run=.../`
+
+The normalized files are:
+
+- `games.jsonl`
+  one row per `gamePk` with team metadata, venue, schedule status, and
+  `odds_matchup_key`
+- `probable_starters.jsonl`
+  one row per team side per game with the captured probable starter state
+- `lineup_snapshots.jsonl`
+  one row per team side per `feed/live` capture with `lineup_snapshot_id`,
+  `captured_at`, ordered batter IDs, and detailed lineup entries
+
+`odds_matchup_key` is currently:
+
+- `official_date`
+- away team abbreviation
+- home team abbreviation
+- UTC `commence_time`
+
+joined into one deterministic string. That is the bridge for AGE-145 when Odds
+API events have to be matched back to MLB Stats API games without relying on
+shared vendor IDs.
 
 ## Timestamp Authority
 
