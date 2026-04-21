@@ -1,98 +1,133 @@
 # Architecture
 
-## Product Thesis
+## V1 Boundary
 
-The best first MLB betting system is not a broad winner-picking model. It is a
-narrow prop engine centered on measurable baseball process and disciplined
-decision rules.
+This repository is not a generic baseball prediction project.
 
-The first market in scope is `pitcher strikeout props`.
+V1 is a narrow decision system for one market only:
 
-## High-Level Flow
+- pitcher strikeout props
+
+The product question is simple:
+
+1. estimate the probability that a starting pitcher finishes over or under a
+   posted strikeout line
+2. compare that estimate to the actual sportsbook price that was available at
+   decision time
+3. rank only the props that still clear vig, threshold, and sizing rules
+4. evaluate those decisions with timestamp-valid walk-forward backtests
+
+## Trusted Upstream Sources
+
+The system is allowed to trust these source families for v1.
+
+| Source family | Named endpoint or source | What it supplies | What it must not be used for |
+| --- | --- | --- | --- |
+| Pitch-level history | Baseball Savant Statcast Search CSV via `https://baseballsavant.mlb.com/statcast_search` and CSV export from `https://baseballsavant.mlb.com/statcast_search/csv` | pitch outcomes, pitch type, velocity, movement, whiff / called-strike context, pitcher and batter IDs | any row dated after the feature cutoff for the evaluated prop |
+| Metric dictionary | Baseball Savant CSV docs at `https://baseballsavant.mlb.com/csv-docs` | field meanings for Statcast CSV columns | inventing derived metrics without documenting the transformation |
+| Schedule and probable starters | MLB Stats API `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=YYYY-MM-DD&hydrate=probablePitcher` | game IDs, official dates, teams, venues, probable starters | replacing real pregame snapshots with postgame truth |
+| Pregame or confirmed lineups | MLB Stats API `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=YYYY-MM-DD&hydrate=lineups` | lineup snapshots keyed to the game | pretending a confirmed lineup existed before it was published |
+| Game context and official game feed | MLB Stats API `https://statsapi.mlb.com/api/v1.1/game/{gamePk}/feed/live` | final lineup state, official game metadata, scorebook context, player IDs | pregame feature generation once the feed contains in-game or postgame information |
+| Sportsbook prices | sportsbook-specific pitcher strikeout prop snapshots captured into the repo's future `PropLine`-shaped records | sportsbook name, posted line, over odds, under odds, capture timestamp | backfilling missing pregame prices with closing lines or generic market averages |
+
+The sportsbook integration is intentionally not pinned to one vendor yet. What
+matters in v1 is that every decision is backed by a real pregame snapshot with
+the fields required by `PropLine`.
+
+## Repo Contract Spine
+
+The current codebase already defines the seams that future ingestion and
+modeling work must honor.
+
+| Layer | Current module | Current responsibility |
+| --- | --- | --- |
+| Runtime defaults | `src/mlb_props_stack/config.py` | market name, edge threshold, Kelly fraction, bankroll cap, timezone |
+| Prop and projection contracts | `src/mlb_props_stack/markets.py` | `PropLine`, `PropProjection`, `EdgeDecision`, `PropSelectionKey`, `ProjectionInputRef` |
+| Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly |
+| Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, emit the best actionable side |
+| Evaluation guardrails | `src/mlb_props_stack/backtest.py` | walk-forward policy flags and the baseline honesty checklist |
+| Reserved future seams | `src/mlb_props_stack/tracking.py`, `src/mlb_props_stack/dashboard/app.py` | tracking and dashboard entrypoints only, not full implementations yet |
+
+The most important current contract boundary is the join between
+`PropLine.selection_key` and `PropProjection.selection_key`. Future adapters can
+change where data comes from, but they cannot silently weaken that join key or
+drop the timestamp fields that make the backtest honest.
+
+## System Flow
 
 ```text
-schedule + probable starters + confirmed lineups
+Baseball Savant Statcast Search CSV
         +
-Statcast / Baseball Savant pitch-level history
+MLB Stats API schedule / probable starters / lineups
         +
-sportsbook prop lines and prices
+Sportsbook strikeout prop snapshots
         ->
-feature store
+normalized contract records
         ->
-strikeout projection model
+feature row + lineup snapshot references
         ->
-probability calibration
+prop projection
         ->
-price conversion / devig / expected value
+devig + EV + Kelly sizing
         ->
-bet filter + sizing
+edge-ranked candidate decision
         ->
-walk-forward backtest and tracking
+walk-forward evaluation with CLV and ROI reported separately
 ```
 
-## Core Layers
+In code terms, that flow should eventually materialize as:
 
-### 1. Data layer
+1. source adapters produce timestamped records
+2. those records are normalized into `PropLine` plus a versioned feature row and
+   lineup snapshot
+3. the model emits a `PropProjection`
+4. `evaluate_projection()` in `src/mlb_props_stack/edge.py` compares the
+   projection to the market
+5. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
+   considered valid
 
-Owns normalized inputs:
+## Timestamp Authority
 
-- games
-- teams
-- pitchers
-- hitters
-- lineups
-- weather / park context
-- sportsbook lines
-- line movement snapshots
+V1 documentation is only useful if the timestamps are unambiguous.
 
-### 2. Feature layer
+- `features_as_of`
+  newest timestamp of any feature input referenced by `ProjectionInputRef`
+- `generated_at`
+  when the model output was produced
+- `captured_at`
+  when the sportsbook line snapshot was recorded
 
-Owns features that are valid at a specific timestamp:
+Current code already enforces:
 
-- pitcher strikeout skill
-- pitch-type-specific whiff ability
-- hitter K tendency by handedness
-- team chase / contact profiles
-- expected innings / batters faced
-- umpire, park, and weather adjustments
+- `features_as_of <= generated_at`
+- `features_as_of <= captured_at`
+- `generated_at <= captured_at`
 
-### 3. Projection layer
+That means the model may not use a lineup, pitch log, or market state that did
+not exist when the price snapshot was captured.
 
-Owns the actual baseball estimate:
+## Non-Goals
 
-- expected strikeouts
-- strikeout distribution
-- probability of clearing each listed line
+These stay out of scope unless a later issue changes the boundary explicitly.
 
-### 4. Decision layer
+- full-game sides or totals
+- same-game parlay optimization
+- live betting or in-game decisioning
+- automated bet placement
+- portfolio optimization across many correlated markets
+- dependency-heavy platform work such as MLflow, Streamlit, Plotly, schedulers,
+  or storage systems during the bootstrap phase
 
-Owns the market comparison:
+## Live-Use Caveats
 
-- implied probability from book odds
-- optional devig for two-way props
-- expected value
-- thresholding and minimum edge
-- position sizing
+This repo should be treated as a research and decision-support system, not an
+execution bot.
 
-### 5. Evaluation layer
-
-Owns honesty:
-
-- walk-forward splits only
-- no post-lock lineups or prices in feature generation
-- no using closing lines if the simulated bettor could not access them
-- CLV and ROI reported separately
-
-## Why RL Is Not in V1
-
-Reinforcement learning is more appropriate for:
-
-- timing entry in moving markets
-- adaptive sizing
-- in-play decision policies
-- portfolio allocation across multiple correlated bets
-
-It is not the simplest or strongest first tool for estimating pregame pitcher
-strikeout probabilities. V1 should earn the right to add RL by first proving
-that the static probabilistic model is calibrated and that any paper edge
-survives out-of-sample testing.
+- No output is trustworthy unless the upstream line snapshot is real and
+  timestamped.
+- CLV and realized ROI answer different questions and must never be collapsed
+  into one metric.
+- If a prop cannot be tied back to a specific lineup snapshot and feature row,
+  it should not be promoted to live tracking.
+- A model that looks profitable only after substituting later lineups, later
+  prices, or closing lines is invalid, even if the headline ROI is positive.

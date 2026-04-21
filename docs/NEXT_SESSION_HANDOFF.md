@@ -4,90 +4,109 @@
 
 - Repo: `baseball-ml`
 - Default branch: `main`
-- Current issue branch: `dylanmccavitt2015/age-142-define-prop-projection-pricing-and-backtest-contracts`
-- `main` includes the repo-local `AGENTS.md` guide from commit `4027dbd`.
-- `AGE-142` implementation is complete locally, pushed to GitHub, and open as PR #2:
-  - `https://github.com/DylanMcCavitt/baseball-ml/pull/2`
-- This branch now contains:
-  - hardened prop / projection / decision / backtest contracts
-  - explicit `PropSelectionKey` and `ProjectionInputRef` seams for later joins
-  - expanded contract, pricing, and edge tests
-  - a baseline GitHub Actions CI workflow in `.github/workflows/ci.yml`
-  - corrected repo docs for `uv` development commands
+- Current issue branch: `feat/age-143-document-v1-architecture-and-modeling-guardrails`
+- `main` already includes the merged `AGE-142` contract and CI baseline work from
+  PR #2.
+- `AGE-143` is complete locally on this branch. The repo now has tighter docs
+  for:
+  - the v1 product boundary
+  - the allowed upstream source systems and named endpoints
+  - the current contract spine in `src/mlb_props_stack`
+  - the timestamp and leakage rules that future ingestion and modeling work must
+    satisfy
 
-## What Was Completed In AGE-142
+## What Was Completed In AGE-143
 
-- `src/mlb_props_stack/markets.py`
-  - added invariant checks for blank IDs, numeric ranges, odds, and timestamps
-  - added `PropSelectionKey`
-  - added `ProjectionInputRef`
-- `src/mlb_props_stack/edge.py`
-  - enforced line/projection contract matching
-  - enforced feature and generation timestamps relative to market capture
-  - rejected boundary probabilities that cannot produce fair American odds
-- `src/mlb_props_stack/backtest.py`
-  - made future join-ref and rejected-prop expectations explicit
-  - required at least one reporting output to stay enabled
-- `src/mlb_props_stack/pricing.py`
-  - tightened Kelly input validation
-- `tests/test_contracts.py`
-  - added focused contract validation coverage
-- `tests/test_edge.py`
-  - added mismatch and timestamp guardrail coverage
-- `tests/test_pricing.py`
-  - added invalid-input Kelly coverage
-- `.github/workflows/ci.yml`
-  - added baseline CI for locked dependency install, compile, tests, and CLI smoke
-- `README.md`
-  - documented the CI baseline
-  - corrected `uv` usage to `uv sync --extra dev`
-- `AGENTS.md`
-  - corrected the repo verification sequence for the current `uv` setup
+- `docs/architecture.md`
+  - rewrote the architecture doc around the actual repo seams instead of
+    aspirational layers
+  - named the v1 trusted sources:
+    - Baseball Savant Statcast Search CSV
+    - Baseball Savant CSV docs
+    - MLB Stats API schedule / probable starter hydration
+    - MLB Stats API lineup hydration
+    - MLB Stats API `game/{gamePk}/feed/live`
+    - sportsbook strikeout prop snapshots as `PropLine` inputs
+  - documented current contract modules:
+    - `config.py`
+    - `markets.py`
+    - `pricing.py`
+    - `edge.py`
+    - `backtest.py`
+  - made the timestamp chain explicit:
+    - `features_as_of <= generated_at <= captured_at`
+  - added explicit non-goals and live-use caveats
+- `docs/modeling.md`
+  - rewrote the modeling doc as guardrails rather than a loose plan
+  - mapped the decision target directly to `PropLine`, `PropProjection`, and
+    `EdgeDecision`
+  - documented allowed source usage and prohibited usage for:
+    - Statcast CSV inputs
+    - MLB Stats API schedule and lineup inputs
+    - sportsbook line snapshots
+  - made lineup handling, pricing integrity, and backtest leakage rules
+    unambiguous
+  - clarified that the repo is not yet committed to a heavy modeling dependency
+    such as XGBoost or LightGBM
 
 ## Verification Run
 
 These commands were run successfully from the issue branch:
 
 ```bash
-uv sync --locked --extra dev
+uv sync --extra dev
 uv run pytest
-uv run python -m compileall src tests
 uv run python -m mlb_props_stack
 ```
 
+Doc-specific verification was also checked directly:
+
+- named sources and endpoints are present in `docs/architecture.md` and
+  `docs/modeling.md`
+- timestamp rules explicitly mention:
+  - `features_as_of`
+  - `generated_at`
+  - `captured_at`
+- leakage language now explicitly forbids substituting closing lines for missing
+  pregame snapshots
+
 ## Recommended Next Issue
 
-- `AGE-143` — `Document v1 architecture and modeling guardrails`
+- `AGE-144` — `Ingest schedule, probable starters, and confirmed lineups`
 
 Why this should go next:
 
-- the contracts are now explicit enough that the docs can describe the real v1
-  interfaces instead of aspirational placeholders
-- `docs/architecture.md` and `docs/modeling.md` should now be tightened against
-  the actual repo seams, named data sources, and anti-leakage rules
-- this keeps `Phase 1: Repo + Contracts` coherent before ingestion or modeling
-  work starts
+- `AGE-143` locked the trusted MLB Stats API sources and the timestamp rules for
+  lineup snapshots
+- `AGE-144` is the first issue that turns those documented sources into actual
+  normalized records
+- later issues depend on these joins:
+  - `AGE-145` needs deterministic game metadata to map sportsbook events to MLB
+    games
+  - `AGE-146` needs lineup snapshots and game context to build timestamp-valid
+    feature tables
 
 ## Constraints For The Next Worktree
 
-- Start from `main` after PR #2 is merged. Do not branch from this issue branch
-  unless the PR is still open and you are intentionally stacking on top of it.
-- Keep the standard-library-first posture until a later issue explicitly needs
-  data, model, or experiment dependencies.
-- Keep `python -m mlb_props_stack` working.
-- Use the corrected `uv` flow for local verification:
-  - `uv sync --extra dev`
-  - `uv run pytest`
-  - `uv run python -m mlb_props_stack`
-- Keep CI narrow and honest. The current workflow is a bootstrap baseline, not
-  a full training or deployment pipeline.
+- Start from `main` after this docs branch is merged.
+- Keep the standard-library-first posture unless the issue explicitly expands
+  dependencies.
+- Preserve `python -m mlb_props_stack` as a working local entrypoint.
+- When implementing `AGE-144`, preserve raw fetch timestamps on every MLB Stats
+  API snapshot.
+- Normalize lineup snapshots in a way that can satisfy
+  `ProjectionInputRef.lineup_snapshot_id` later without retrofitting IDs.
+- Do not use `feed/live` data as pregame truth after first pitch. Capture the
+  snapshot time and keep pregame and in-game use cases separate.
 
 ## Open Questions
 
-- Once PR #2 merges, confirm that the new GitHub Actions workflow is enabled and
-  reports status on subsequent PRs.
-- If `AGE-143` wants exact endpoint naming for future data sources, use the real
-  source candidates that will likely matter next:
-  - Statcast / Baseball Savant history
-  - MLB schedule / probable starters / lineup metadata
-  - sportsbook prop line snapshots and line movement captures
+- `AGE-144` should settle the exact normalized record shapes for:
+  - `games`
+  - `probable_starters`
+  - `lineup_snapshots`
+- `AGE-145` already names The Odds API as the first sportsbook source, but the
+  MLB game-to-odds event matching key still needs to be implemented and tested
+  against real daily data.
+- Weather and umpire inputs remain optional until a future issue introduces a
+  timestamp-valid source for them.
