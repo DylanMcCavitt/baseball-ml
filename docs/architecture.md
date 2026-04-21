@@ -28,11 +28,11 @@ The system is allowed to trust these source families for v1.
 | Schedule and probable starters | MLB Stats API `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=YYYY-MM-DD&hydrate=probablePitcher` | game IDs, official dates, teams, venues, probable starters | replacing real pregame snapshots with postgame truth |
 | Pregame or confirmed lineups | MLB Stats API `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=YYYY-MM-DD&hydrate=lineups` | lineup snapshots keyed to the game | pretending a confirmed lineup existed before it was published |
 | Game context and official game feed | MLB Stats API `https://statsapi.mlb.com/api/v1.1/game/{gamePk}/feed/live` | final lineup state, official game metadata, scorebook context, player IDs | pregame feature generation once the feed contains in-game or postgame information |
-| Sportsbook prices | sportsbook-specific pitcher strikeout prop snapshots captured into the repo's future `PropLine`-shaped records | sportsbook name, posted line, over odds, under odds, capture timestamp | backfilling missing pregame prices with closing lines or generic market averages |
+| Sportsbook prices | The Odds API MLB event and event-odds endpoints for `pitcher_strikeouts`, normalized into replayable `prop_line_snapshots` | sportsbook name, event id, posted line, over odds, under odds, capture timestamp | backfilling missing pregame prices with closing lines or generic market averages |
 
-The sportsbook integration is intentionally not pinned to one vendor yet. What
-matters in v1 is that every decision is backed by a real pregame snapshot with
-the fields required by `PropLine`.
+The first sportsbook adapter is now The Odds API, but the important v1 rule has
+not changed: every decision still has to be backed by a real pregame snapshot
+with the fields required by `PropLine`.
 
 ## Repo Contract Spine
 
@@ -43,7 +43,7 @@ modeling work must honor.
 | --- | --- | --- |
 | Runtime defaults | `src/mlb_props_stack/config.py` | market name, edge threshold, Kelly fraction, bankroll cap, timezone |
 | Prop and projection contracts | `src/mlb_props_stack/markets.py` | `PropLine`, `PropProjection`, `EdgeDecision`, `PropSelectionKey`, `ProjectionInputRef` |
-| Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py` | fetch schedule and `feed/live` payloads, preserve raw snapshots, normalize `games`, `probable_starters`, and `lineup_snapshots` |
+| Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py`, `src/mlb_props_stack/ingest/odds_api.py` | fetch schedule, `feed/live`, and sportsbook event-odds payloads; preserve raw snapshots; normalize `games`, `probable_starters`, `lineup_snapshots`, `event_game_mappings`, and `prop_line_snapshots` |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, emit the best actionable side |
 | Evaluation guardrails | `src/mlb_props_stack/backtest.py` | walk-forward policy flags and the baseline honesty checklist |
@@ -87,9 +87,9 @@ In code terms, that flow should eventually materialize as:
 5. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
    considered valid
 
-## Current AGE-144 Output Shape
+## Current AGE-144 And AGE-145 Output Shape
 
-The first ingest slice now writes both raw and normalized artifacts locally.
+The first two ingest slices now write both raw and normalized artifacts locally.
 
 - raw schedule payloads:
   `data/raw/mlb_stats_api/date=YYYY-MM-DD/schedule/captured_at=...json`
@@ -119,6 +119,26 @@ The normalized files are:
 joined into one deterministic string. That is the bridge for AGE-145 when Odds
 API events have to be matched back to MLB Stats API games without relying on
 shared vendor IDs.
+
+AGE-145 adds:
+
+- raw Odds API event snapshots:
+  `data/raw/the_odds_api/date=YYYY-MM-DD/events/captured_at=...json`
+- raw event-odds snapshots:
+  `data/raw/the_odds_api/date=YYYY-MM-DD/event_odds/event_id=.../captured_at=...json`
+- normalized runs:
+  `data/normalized/the_odds_api/date=YYYY-MM-DD/run=.../`
+
+The normalized sportsbook files are:
+
+- `event_game_mappings.jsonl`
+  one row per target-date Odds API event candidate with the source `event_id`,
+  the derived `odds_matchup_key`, and the mapped MLB `gamePk` when the join
+  succeeds
+- `prop_line_snapshots.jsonl`
+  one row per sportsbook, pitcher, line, and capture time with paired
+  over/under odds, `market_last_update`, the source `event_id`, and the mapped
+  `gamePk` when available
 
 ## Timestamp Authority
 
