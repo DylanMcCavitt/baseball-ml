@@ -20,6 +20,12 @@ def evaluate_projection(
     """Return the best actionable side if an edge clears the threshold."""
     if config is None:
         config = StackConfig()
+    if line.selection_key != projection.selection_key:
+        raise ValueError("line and projection must reference the same prop contract")
+    if projection.input_ref.features_as_of > line.captured_at:
+        raise ValueError(
+            "projection.input_ref.features_as_of must be on or before line.captured_at"
+        )
 
     market_over, market_under = devig_two_way(line.over_odds, line.under_odds)
     over_edge = projection.over_probability - market_over

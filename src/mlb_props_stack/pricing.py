@@ -53,8 +53,10 @@ def fair_american_odds(probability: float) -> int:
 
 def quarter_kelly(probability: float, odds: int, fraction: float = 0.25) -> float:
     """Return a fractional Kelly stake as a fraction of bankroll."""
-    if fraction <= 0:
-        raise ValueError("fraction must be positive")
+    if not 0.0 <= probability <= 1.0:
+        raise ValueError("probability must be in [0, 1]")
+    if not 0.0 < fraction <= 1.0:
+        raise ValueError("fraction must be in (0, 1]")
     decimal = american_to_decimal(odds)
     b = decimal - 1.0
     q = 1.0 - probability
