@@ -114,8 +114,39 @@ The normalized game rows include an `odds_matchup_key` built from:
 - home team abbreviation
 - UTC `commence_time`
 
-That key is the bridge AGE-145 will use when mapping sportsbook events back to
+That key is the bridge AGE-145 now uses when mapping sportsbook events back to
 MLB `gamePk` records.
+
+## Sportsbook Line Ingest
+
+`AGE-145` adds the first sportsbook source adapter via The Odds API MLB
+event and event-odds endpoints.
+
+This command expects a prior MLB metadata run for the same date under
+`data/normalized/mlb_stats_api/...`, because it reuses the latest `games.jsonl`
+and `probable_starters.jsonl` artifacts to map Odds API `event_id` values back
+to MLB `gamePk` records and resolve pitcher identities when possible.
+
+Fetch current pitcher strikeout lines for one official date:
+
+```bash
+ODDS_API_KEY=YOUR_KEY uv run python -m mlb_props_stack ingest-odds-api-lines --date 2026-04-21
+```
+
+By default that writes:
+
+- raw events snapshots under `data/raw/the_odds_api/date=YYYY-MM-DD/events/`
+- raw event-odds snapshots under
+  `data/raw/the_odds_api/date=YYYY-MM-DD/event_odds/event_id=.../`
+- normalized `event_game_mappings.jsonl` and `prop_line_snapshots.jsonl` under
+  `data/normalized/the_odds_api/date=YYYY-MM-DD/run=.../`
+
+Each normalized `prop_line_snapshots` row preserves:
+
+- the sportsbook and source `event_id`
+- the mapped MLB `gamePk` when the `odds_matchup_key` join succeeds
+- the exact two-way line and `market_last_update`
+- the ingest `captured_at` timestamp for replayable line history
 
 ## CI
 

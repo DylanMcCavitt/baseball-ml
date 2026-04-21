@@ -2,120 +2,129 @@
 
 ## Current State
 
-- Repo: `baseball-ml`
+- Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Last completed issue branch:
-  `feat/age-144-ingest-schedule-probable-starters-and-confirmed-lineups` (merged)
-- `main` already includes the merged `AGE-143` docs work from PR #3 and the
-  merged `AGE-144` ingest work from PR #4.
-- The repo now has a working
-  stdlib-only MLB Stats API ingest path for:
-  - one-day schedule pulls keyed by `gamePk`
-  - probable starter normalization
-  - per-team lineup snapshots from `feed/live`
-  - raw JSON snapshot persistence
-  - normalized JSONL outputs for `games`, `probable_starters`, and
-    `lineup_snapshots`
+- Current issue branch:
+  `dylanmccavitt2015/age-145-ingest-sportsbook-pitcher-strikeout-lines-and-capture`
+- `main` already includes the merged `AGE-143` docs work and the merged
+  `AGE-144` MLB metadata ingest work.
+- `AGE-145` is implemented in this worktree but not merged yet. The branch now
+  has a working The Odds API ingest path for sportsbook pitcher strikeout props
+  that reuses the latest MLB metadata artifacts for the same official date.
 
-## What Was Completed In AGE-144
+## What Was Completed In AGE-145
 
-- `src/mlb_props_stack/ingest/mlb_stats_api.py`
-  - added the first real source adapter in the repo
-  - fetches:
-    - `schedule?sportId=1&date=...&hydrate=probablePitcher(note),team`
-    - `game/{gamePk}/feed/live`
-  - preserves raw schedule and feed payloads under `data/raw/mlb_stats_api/...`
-  - normalizes typed records for:
-    - `games`
-    - `probable_starters`
-    - `lineup_snapshots`
-  - emits a deterministic `odds_matchup_key` from:
-    - `official_date`
-    - away team abbreviation
-    - home team abbreviation
-    - UTC `commence_time`
+- `src/mlb_props_stack/ingest/odds_api.py`
+  - added a stdlib-only `OddsAPIClient` with:
+    - `GET /v4/sports/baseball_mlb/events`
+    - `GET /v4/sports/baseball_mlb/events/{eventId}/odds?regions=us&markets=pitcher_strikeouts&oddsFormat=american`
+  - loads the latest normalized MLB metadata run for the target date from:
+    - `games.jsonl`
+    - `probable_starters.jsonl`
+  - preserves raw Odds API event snapshots under:
+    - `data/raw/the_odds_api/date=YYYY-MM-DD/events/`
+  - preserves raw event-odds snapshots under:
+    - `data/raw/the_odds_api/date=YYYY-MM-DD/event_odds/event_id=.../`
+  - writes normalized sportsbook artifacts under:
+    - `data/normalized/the_odds_api/date=YYYY-MM-DD/run=.../`
+  - emits:
+    - `event_game_mappings.jsonl`
+    - `prop_line_snapshots.jsonl`
+  - reuses the existing `odds_matchup_key` contract to map Odds API `event_id`
+    values back to MLB `gamePk`
+  - resolves `player_id` from probable starters when the event-to-game join is
+    clean, and falls back to deterministic `odds-player:...` ids when the join
+    is still unresolved
+  - keeps unmatched event rows instead of discarding them so schedule / time
+    mismatches can be inspected later
 - `src/mlb_props_stack/ingest/__init__.py`
-  - exported the new ingest API surface for CLI and future adapters
+  - exported the new sportsbook ingest surface
 - `src/mlb_props_stack/cli.py`
-  - kept the no-arg runtime summary intact
   - added:
-    - `ingest-mlb-metadata --date YYYY-MM-DD [--output-dir ...]`
-  - prints the run id plus artifact paths and record counts
-- `tests/test_mlb_stats_api_ingest.py`
-  - added normalization and filesystem-write coverage for AGE-144
+    - `ingest-odds-api-lines --date YYYY-MM-DD [--output-dir ...] [--api-key ...]`
+  - prints a sportsbook ingest summary with event counts, mapping counts, and
+    normalized artifact paths
+- `tests/test_odds_api_ingest.py`
+  - added end-to-end coverage for:
+    - writing raw and normalized sportsbook artifacts
+    - preserving prior run directories and raw snapshots across repeated ingests
+    - unmatched event mappings and deterministic fallback player ids
 - `tests/test_cli.py`
-  - added CLI coverage for the new ingest command
+  - added CLI coverage for the new sportsbook ingest command
 - `README.md`
-  - documented the new ingest command and output layout
+  - documented the new sportsbook ingest command, env var requirement, and
+    output layout
 - `docs/architecture.md`
-  - documented the new ingest seam and the normalized artifact shape
+  - updated the trusted sportsbook source, source-adapter table, and current
+    ingest artifact shape to include AGE-145
+- `docs/modeling.md`
+  - documented current `player_id` resolution behavior for sportsbook snapshots
 
 ## Verification Run
 
-These commands were run successfully during AGE-144:
+These commands were run successfully during AGE-145:
 
 ```bash
 uv sync --extra dev
+python3 -m compileall src tests
 uv run pytest
 uv run python -m mlb_props_stack
-uv run python -m mlb_props_stack ingest-mlb-metadata --date 2026-04-21 --output-dir /tmp/mlb-props-stack-age144-check
 ```
 
-The live ingest smoke run against the real MLB Stats API produced:
+Local results:
 
-- `games=15`
-- `probable_starters=30`
-- `lineup_snapshots=30`
+- `uv run pytest`
+  - `30 passed`
+- `uv run python -m mlb_props_stack`
+  - still prints the runtime summary cleanly
 
-Row-count verification on the normalized outputs confirmed:
+Not run in this worktree:
 
-- one `games` row per schedule game
-- two `probable_starters` rows per game
-- two `lineup_snapshots` rows per game
+```bash
+uv run python -m mlb_props_stack ingest-odds-api-lines --date 2026-04-21
+```
 
-Sample normalized rows were checked directly for:
+Reason:
 
-- `captured_at`
-- `game_pk`
-- `odds_matchup_key`
-- ordered lineup entries and player names
+- `ODDS_API_KEY` was not present in the environment during this session, so the
+  live sportsbook smoke run could not be exercised against the real API.
 
 ## Recommended Next Issue
 
-- `AGE-145` — `Ingest sportsbook pitcher strikeout lines and capture snapshots`
+- `AGE-146` — `Build Statcast-derived pitcher and opponent strikeout feature tables`
 
 Why this should go next:
 
-- AGE-144 now produces the MLB-side join material AGE-145 needs:
-  - `gamePk`
-  - away and home team metadata
-  - UTC `commence_time`
-  - deterministic `odds_matchup_key`
-- the next blocker is the sportsbook side of the same join:
-  - raw Odds API event and market snapshots
-  - normalized `prop_line_snapshots`
-  - mapping Odds API event ids back to MLB `gamePk`
+- AGE-144 now provides timestamped MLB game, probable-starter, and lineup
+  artifacts.
+- AGE-145 now provides replayable sportsbook line snapshots plus event-to-game
+  mappings for the same official date.
+- AGE-146 can build the first real feature tables against those upstream seams
+  without guessing about market timestamps or event identity.
 
 ## Constraints For The Next Worktree
 
-- Start from the current `main`; AGE-144 is already merged.
-- Keep the standard-library-first posture unless the issue explicitly expands
-  dependencies.
-- Preserve `python -m mlb_props_stack` as a working local entrypoint.
-- Reuse `odds_matchup_key` exactly as implemented in
-  `src/mlb_props_stack/ingest/mlb_stats_api.py`; do not invent a second game
-  matching key on the sportsbook side.
-- Preserve repeated sportsbook snapshots instead of overwriting prior line
-  states; AGE-145 needs replayable line history.
-- Keep sportsbook event ids and MLB `gamePk` separate. The mapping table should
-  bridge them, not collapse them into one field.
+- If AGE-145 is merged, start the next worktree from the updated `main`.
+- `ingest-odds-api-lines` expects an existing MLB metadata run for the same date
+  under `data/normalized/mlb_stats_api/...`; do not bypass that dependency by
+  inventing a second game-matching path.
+- Keep Odds API `event_id` and MLB `gamePk` separate. The mapping table is the
+  bridge and should remain explicit.
+- Preserve repeated sportsbook snapshots. The run-specific normalized directories
+  and timestamped raw files are required for replayable line history.
+- Keep unmatched event mappings in the normalized output until the actual live
+  mismatch pattern is understood.
+- Keep `odds-player:...` ids as a fallback only. When the sportsbook event maps
+  cleanly and the probable-starter name matches, prefer the MLB pitcher id.
 
 ## Open Questions
 
-- Some pregame `feed/live` captures still have one team lineup populated and the
-  other empty. AGE-145 and AGE-146 should treat `is_confirmed=False` snapshots as
-  real captured state, not as ingest failures.
-- AGE-145 still has to confirm how strictly The Odds API `commence_time` matches
-  MLB schedule `gameDate` in practice for doubleheaders and late schedule moves.
-- Weather and umpire inputs remain optional until a future issue introduces a
-  timestamp-valid source for them.
+- A real-key smoke run is still needed to confirm how often The Odds API
+  `commence_time` misses the exact MLB `odds_matchup_key` join in practice,
+  especially for doubleheaders and late schedule changes.
+- If real sportsbook payloads show frequent player-name variants beyond the
+  current probable-starter names, the repo may need an explicit alias layer
+  before model training consumes these records.
+- `AGE-146` still needs to decide the exact timestamp-valid weather source.
+  Missing weather is currently allowed and should stay explicit rather than
+  silently backfilled.

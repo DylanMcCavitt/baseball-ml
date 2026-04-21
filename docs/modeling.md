@@ -90,6 +90,14 @@ Required fields:
 - `under_odds`
 - `captured_at`
 
+Current ingest behavior:
+
+- AGE-145 resolves `player_id` from the latest MLB probable-starter artifact
+  when the sportsbook event maps cleanly to one `gamePk`
+- if that join is still unresolved, the ingest keeps the snapshot with a
+  deterministic name-based fallback `player_id` so the raw market history is
+  preserved instead of discarded
+
 Allowed uses:
 
 - direct market comparison
