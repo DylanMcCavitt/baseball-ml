@@ -82,3 +82,39 @@ def test_projection_features_must_precede_market_capture():
         match="projection.input_ref.features_as_of must be on or before line.captured_at",
     ):
         evaluate_projection(line, projection)
+
+
+def test_projection_generation_must_precede_market_capture():
+    line = make_line(captured_at=datetime(2026, 4, 20, 12, 0, 0))
+    projection = make_projection(generated_at=datetime(2026, 4, 20, 12, 1, 0))
+
+    with pytest.raises(
+        ValueError, match="projection.generated_at must be on or before line.captured_at"
+    ):
+        evaluate_projection(line, projection)
+
+
+def test_decision_rejects_boundary_probabilities_without_fair_odds():
+    line = make_line()
+    projection = PropProjection(
+        event_id="game-1",
+        player_id="pitcher-1",
+        market="pitcher_strikeouts",
+        line=5.5,
+        mean=7.0,
+        over_probability=1.0,
+        under_probability=0.0,
+        model_version="v0",
+        input_ref=ProjectionInputRef(
+            lineup_snapshot_id="lineup-snapshot-1",
+            feature_row_id="feature-row-1",
+            features_as_of=datetime(2026, 4, 20, 11, 45, 0),
+        ),
+        generated_at=datetime(2026, 4, 20, 11, 50, 0),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="chosen_probability must be strictly between 0 and 1 to derive fair_odds",
+    ):
+        evaluate_projection(line, projection)

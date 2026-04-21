@@ -26,6 +26,8 @@ def evaluate_projection(
         raise ValueError(
             "projection.input_ref.features_as_of must be on or before line.captured_at"
         )
+    if projection.generated_at > line.captured_at:
+        raise ValueError("projection.generated_at must be on or before line.captured_at")
 
     market_over, market_under = devig_two_way(line.over_odds, line.under_odds)
     over_edge = projection.over_probability - market_over
@@ -44,6 +46,10 @@ def evaluate_projection(
 
     if edge_pct < config.min_edge_pct:
         return None
+    if not 0.0 < chosen_probability < 1.0:
+        raise ValueError(
+            "chosen_probability must be strictly between 0 and 1 to derive fair_odds"
+        )
 
     ev = expected_value(chosen_probability, chosen_odds)
     stake_fraction = min(
