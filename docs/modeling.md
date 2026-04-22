@@ -415,14 +415,12 @@ Current AGE-147 training matrix intentionally excludes:
 
 ## Promotion Criteria
 
-A model is not ready for live tracking until it can demonstrate all of the
-following on held-out, walk-forward evaluation:
+The exact go or no-go thresholds now live in `docs/stage_gates.md`.
 
-- stable calibration across multiple line buckets
-- positive median CLV
-- positive ROI over a meaningful sample
-- no dependence on one short time window or one narrow team cluster
-- sensible degradation when vig assumptions tighten
+High-level rule:
 
-If those conditions are not met, the system is still research code, even if a
-few backtest slices look good.
+- the repo stays `research_only` until held-out model quality, walk-forward
+  coverage, paper-tracked sample size, CLV, and ROI all pass together
+- positive short-run ROI alone never promotes the system
+- next-market expansion requires a stricter second-stage sample than live-use
+  discussion on the current pitcher strikeout market

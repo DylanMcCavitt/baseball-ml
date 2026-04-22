@@ -67,6 +67,9 @@ That is a math-and-process problem first, and a betting problem second.
   Product and system architecture.
 - `docs/modeling.md`
   Data, features, targets, and validation rules.
+- `docs/stage_gates.md`
+  Numeric go or no-go thresholds for live usage discussion and next-market
+  expansion.
 
 ## Recommended Build Order
 
