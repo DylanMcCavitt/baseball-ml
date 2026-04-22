@@ -10,6 +10,7 @@ from types import ModuleType
 from mlb_props_stack.cli import main
 from mlb_props_stack.ingest import ingest_statcast_features_for_date
 from mlb_props_stack.modeling import train_starter_strikeout_baseline
+from mlb_props_stack.tracking import TrackingConfig
 from tests.test_modeling import FakeStatcastClient, _build_outcome_csv, _seed_feature_run
 from tests.test_statcast_feature_ingest import (
     StubStatcastClient,
@@ -23,6 +24,10 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
         "".join(f"{json.dumps(row, sort_keys=True)}\n" for row in rows),
         encoding="utf-8",
     )
+
+
+def _tracking_config(tmp_path: Path) -> TrackingConfig:
+    return TrackingConfig(tracking_uri=f"file:{tmp_path / 'artifacts' / 'mlruns'}")
 
 
 def _dashboard_app_path() -> Path:
@@ -322,6 +327,7 @@ def test_training_cli_smoke_writes_seeded_baseline_artifacts(
             output_dir=output_dir,
             client=stub_client,
             now=fixed_now,
+            tracking_config=_tracking_config(Path(output_dir)),
         )
         captured["result"] = result
         return result

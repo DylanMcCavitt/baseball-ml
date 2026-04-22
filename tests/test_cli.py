@@ -17,6 +17,8 @@ def test_runtime_summary_includes_future_hooks():
 
     assert "MLB Props Stack" in summary
     assert "tracking_uri=file:./artifacts/mlruns" in summary
+    assert "training_experiment_name=mlb-props-stack-starter-strikeout-training" in summary
+    assert "backtest_experiment_name=mlb-props-stack-walk-forward-backtest" in summary
     assert "dashboard_module=mlb_props_stack.dashboard.app" in summary
 
 
@@ -146,6 +148,8 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
         start_date=date(2026, 4, 1),
         end_date=date(2026, 4, 20),
         run_id="20260421T180000Z",
+        mlflow_run_id="mlflow-training-run-1",
+        mlflow_experiment_name="mlb-props-stack-starter-strikeout-training",
         row_count=48,
         outcome_count=48,
         dispersion_alpha=0.183742,
@@ -160,6 +164,7 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
         calibration_summary_path=tmp_path / "calibration_summary.json",
         evaluation_summary_path=tmp_path / "evaluation_summary.json",
         evaluation_summary_markdown_path=tmp_path / "evaluation_summary.md",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
         held_out_status="beating_benchmark",
         held_out_model_rmse=2.113245,
         held_out_benchmark_rmse=2.418881,
@@ -187,6 +192,8 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
     output = capsys.readouterr().out
 
     assert "Starter strikeout baseline training complete for 2026-04-01 -> 2026-04-20" in output
+    assert "mlflow_run_id=mlflow-training-run-1" in output
+    assert "mlflow_experiment_name=mlb-props-stack-starter-strikeout-training" in output
     assert "training_rows=48" in output
     assert "dispersion_alpha=0.183742" in output
     assert "held_out_status=beating_benchmark" in output
@@ -200,6 +207,7 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
     assert "calibration_summary_path=" in output
     assert "evaluation_summary_path=" in output
     assert "evaluation_summary_markdown_path=" in output
+    assert "reproducibility_notes_path=" in output
 
 
 def test_edge_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
@@ -283,6 +291,8 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
         start_date=date(2026, 4, 19),
         end_date=date(2026, 4, 20),
         run_id="20260421T190000Z",
+        mlflow_run_id="mlflow-backtest-run-1",
+        mlflow_experiment_name="mlb-props-stack-walk-forward-backtest",
         model_version="starter-strikeout-baseline-v1",
         model_run_id="20260421T180000Z",
         cutoff_minutes_before_first_pitch=30,
@@ -293,6 +303,7 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
         clv_summary_path=tmp_path / "clv_summary.jsonl",
         roi_summary_path=tmp_path / "roi_summary.jsonl",
         edge_bucket_summary_path=tmp_path / "edge_bucket_summary.jsonl",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
         snapshot_group_count=8,
         actionable_bet_count=3,
         below_threshold_count=2,
@@ -320,6 +331,8 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
     output = capsys.readouterr().out
 
     assert "Walk-forward backtest complete for 2026-04-19 -> 2026-04-20" in output
+    assert "mlflow_run_id=mlflow-backtest-run-1" in output
+    assert "mlflow_experiment_name=mlb-props-stack-walk-forward-backtest" in output
     assert "snapshot_groups=8" in output
     assert "actionable_bets=3" in output
     assert "bet_reporting_path=" in output
@@ -327,3 +340,4 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
     assert "clv_summary_path=" in output
     assert "roi_summary_path=" in output
     assert "edge_bucket_summary_path=" in output
+    assert "reproducibility_notes_path=" in output

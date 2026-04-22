@@ -263,18 +263,23 @@ The normalized outputs include:
 - `raw_vs_calibrated_probabilities.jsonl`
   honest held-out probability rows with raw and calibrated over/under values
 - `calibration_summary.json`
-  reliability bins and probability diagnostics formatted for later MLflow or
-  dashboard logging
+  reliability bins and probability diagnostics mirrored into the tracked
+  training run
 - `evaluation_summary.json`
   a compact machine-readable offline report with held-out benchmark-vs-model
-  metrics, top feature importance, and same-window previous-run deltas
+  metrics, top feature importance, MLflow run metadata, and same-window
+  previous-run deltas
 - `evaluation_summary.md`
   a human-readable markdown version of the same offline report for quick local
   review after each training run
+- `reproducibility_notes.md`
+  the exact rerun command, MLflow experiment name, MLflow run ID, and local run
+  directory for the saved training slice
 
 The training CLI summary also now prints the held-out RMSE and MAE for both the
-benchmark and the model, plus the previous run ID when the same date window has
-already been trained before.
+benchmark and the model, plus the MLflow run metadata, reproducibility-note
+path, and previous run ID when the same date window has already been trained
+before.
 
 The current baseline fit is intentionally conservative on short windows:
 
@@ -361,7 +366,7 @@ The normalized outputs are:
   edge bucket, and model-vs-market scatter fields already broken out
 - `backtest_runs.jsonl`
   one summary row for the requested window with placed-bet counts, ROI, CLV,
-  and edge-bucket rollups
+  edge-bucket rollups, and the associated MLflow run ID
 - `join_audit.jsonl`
   one audit row per backtest entry showing cutoff compliance, feature and lineup
   refs, train-window freshness, and outcome traceability
@@ -373,6 +378,9 @@ The normalized outputs are:
   ROI
 - `edge_bucket_summary.jsonl`
   one row per configured edge bucket with realized PnL and CLV hit counts
+- `reproducibility_notes.md`
+  the exact rerun command, pinned source model run directory, and MLflow
+  metadata for the backtest slice
 
 The current backtest runner stays honest in two important ways:
 
@@ -457,12 +465,12 @@ checks in [`docs/review_runtime_checks.md`](docs/review_runtime_checks.md).
 
 ## Future Hooks
 
-- `mlb_props_stack.tracking.TrackingConfig` is the reserved place for future
-  MLflow tracking configuration.
+- `mlb_props_stack.tracking.TrackingConfig` now owns the local MLflow store plus
+  the separate training and backtest experiment names.
 - `mlb_props_stack.dashboard.app` now hosts the first local Streamlit page for
   current slate review and recent paper performance.
-- MLflow is still not installed in v1; the repo keeps the tracking seam clean
-  without adding experiment infrastructure yet.
+- Training and walk-forward backtest runs now log params, metrics, and local
+  artifacts into `file:./artifacts/mlruns`.
 
 ## Risk
 

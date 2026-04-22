@@ -3,6 +3,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 from mlb_props_stack.backtest import build_walk_forward_backtest
+from mlb_props_stack.tracking import TrackingConfig
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -27,6 +28,10 @@ def _load_jsonl(path: Path) -> list[dict]:
         for line in path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
+
+
+def _tracking_config(tmp_path: Path) -> TrackingConfig:
+    return TrackingConfig(tracking_uri=f"file:{tmp_path / 'artifacts' / 'mlruns'}")
 
 
 def _seed_model_run(output_dir: Path) -> Path:
@@ -273,6 +278,7 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
         output_dir=tmp_path,
         cutoff_minutes_before_first_pitch=30,
         now=fixed_now,
+        tracking_config=_tracking_config(tmp_path),
     )
     first_rows = _load_jsonl(result.backtest_bets_path)
     second_result = build_walk_forward_backtest(
@@ -281,6 +287,7 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
         output_dir=tmp_path,
         cutoff_minutes_before_first_pitch=30,
         now=fixed_now,
+        tracking_config=_tracking_config(tmp_path),
     )
     second_rows = _load_jsonl(second_result.backtest_bets_path)
     reporting_rows = _load_jsonl(result.bet_reporting_path)
@@ -292,6 +299,7 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
 
     assert first_rows == second_rows
     assert result.run_id == "20260421T190000Z"
+    assert result.mlflow_run_id != second_result.mlflow_run_id
     assert result.snapshot_group_count == 2
     assert result.actionable_bet_count == 1
     assert result.skipped_count == 1
@@ -335,12 +343,14 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
         "skipped": 1,
         "snapshot_groups": 2,
     }
+    assert summary_rows[0]["mlflow_run_id"] == second_result.mlflow_run_id
     assert summary_rows[0]["bet_outcomes"]["placed_bets"] == 1
     assert summary_rows[0]["clv_summary"]["sample_count"] == 1
     assert summary_rows[0]["roi_summary"]["placed_bets"] == 1
     assert summary_rows[0]["reporting_artifacts"]["bet_reporting_path"].endswith(
         "bet_reporting.jsonl"
     )
+    assert result.reproducibility_notes_path.exists()
     assert clv_summary_rows[0]["summary_scope"] == "date"
     assert clv_summary_rows[0]["beat_closing_line_count"] == 1
     assert clv_summary_rows[1]["summary_scope"] == "overall"
@@ -364,6 +374,7 @@ def test_build_walk_forward_backtest_skips_train_split_rows(tmp_path) -> None:
         output_dir=tmp_path,
         cutoff_minutes_before_first_pitch=30,
         now=lambda: datetime(2026, 4, 21, 19, 5, tzinfo=UTC),
+        tracking_config=_tracking_config(tmp_path),
     )
     rows = _load_jsonl(result.backtest_bets_path)
     reporting_rows = _load_jsonl(result.bet_reporting_path)
