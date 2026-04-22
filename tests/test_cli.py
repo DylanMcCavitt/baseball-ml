@@ -147,6 +147,9 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
         model_path=tmp_path / "baseline_model.json",
         evaluation_path=tmp_path / "evaluation.json",
         ladder_probabilities_path=tmp_path / "ladder_probabilities.jsonl",
+        probability_calibrator_path=tmp_path / "probability_calibrator.json",
+        raw_vs_calibrated_path=tmp_path / "raw_vs_calibrated_probabilities.jsonl",
+        calibration_summary_path=tmp_path / "calibration_summary.json",
     )
 
     monkeypatch.setattr(
@@ -172,3 +175,6 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
     assert "dispersion_alpha=0.183742" in output
     assert "model_path=" in output
     assert "ladder_probabilities_path=" in output
+    assert "probability_calibrator_path=" in output
+    assert "raw_vs_calibrated_path=" in output
+    assert "calibration_summary_path=" in output

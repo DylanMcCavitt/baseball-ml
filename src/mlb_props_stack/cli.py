@@ -118,6 +118,9 @@ def render_starter_strikeout_training_summary(
         f"model_path={result.model_path}",
         f"evaluation_path={result.evaluation_path}",
         f"ladder_probabilities_path={result.ladder_probabilities_path}",
+        f"probability_calibrator_path={result.probability_calibrator_path}",
+        f"raw_vs_calibrated_path={result.raw_vs_calibrated_path}",
+        f"calibration_summary_path={result.calibration_summary_path}",
     ]
     return "\n".join(lines)
 

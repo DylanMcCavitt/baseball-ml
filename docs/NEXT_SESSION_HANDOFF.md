@@ -5,68 +5,61 @@
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
 - Current issue branch:
-  `dylanmccavitt2015/age-148-fit-strikeout-count-distribution-and-ladder-probabilities`
+  `dylanmccavitt2015/age-149-add-calibration-and-probability-diagnostics`
 - `main` already includes the merged `AGE-143` docs work, `AGE-144` MLB
   metadata ingest, `AGE-145` sportsbook ingest, `AGE-146` Statcast feature
-  tables, and `AGE-147` starter strikeout baseline mean training
-- This branch adds `AGE-148`: the first fitted strikeout-count distribution and
-  ladder-probability layer on top of the AGE-147 mean model
+  tables, `AGE-147` starter strikeout baseline mean training, and `AGE-148`
+  count-distribution ladder probabilities
+- This branch adds `AGE-149`: an explicit probability-calibration layer and
+  reliability diagnostics on top of AGE-148’s raw ladder outputs
 
-## What Was Completed In AGE-148
+## What Was Completed In AGE-149
 
 - `src/mlb_props_stack/modeling.py`
-  - kept AGE-147 as the only source of the baseline mean expectation
-  - added a fitted global negative-binomial count-distribution layer on top of
-    the ridge mean predictions
-  - fits one global dispersion parameter with a standard-library
-    method-of-moments pass over the train split
-  - adds reusable helpers for:
-    - one-line over or under probability lookup
-    - full half-strikeout ladder generation
-  - extends `baseline_model.json` with durable distribution metadata:
-    - distribution name
-    - fit method
-    - fitted dispersion alpha
-    - variance formula
-  - extends `evaluation.json` with count-distribution metrics on train,
-    validation, test, and combined held-out rows:
-    - mean negative log likelihood
-    - mean ranked probability score
-    - held-out comparison against a Poisson fallback using the same mean model
-  - writes `ladder_probabilities.jsonl` under:
+  - keeps AGE-147 as the only source of the baseline mean expectation
+  - generates expanding-window out-of-fold ladder-event probabilities so each
+    predicted date only uses prior dates in the base fit
+  - fits and stores an isotonic probability calibrator from those out-of-fold
+    ladder events
+  - writes new durable artifacts under:
     - `data/normalized/starter_strikeout_baseline/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
-  - each ladder row includes:
-    - starter-game identifiers
-    - split name
-    - realized strikeout count
-    - naive benchmark mean
-    - model mean
-    - fitted dispersion alpha
-    - half-strikeout ladder over or under probabilities
+    - `probability_calibrator.json`
+    - `raw_vs_calibrated_probabilities.jsonl`
+    - `calibration_summary.json`
+  - extends `baseline_model.json` with the stored probability-calibration
+    metadata
+  - extends `evaluation.json` with honest held-out raw-vs-calibrated
+    probability diagnostics:
+    - mean Brier score
+    - mean log loss
+    - expected calibration error
+    - reliability bins
+  - extends `ladder_probabilities.jsonl` so each row now carries:
+    - the raw ladder probabilities
+    - the calibrated ladder probabilities
+    - calibration metadata for downstream consumption
 - `src/mlb_props_stack/cli.py`
   - extends the training summary with:
-    - fitted dispersion alpha
-    - `ladder_probabilities.jsonl` path
+    - `probability_calibrator.json`
+    - `raw_vs_calibrated_probabilities.jsonl`
+    - `calibration_summary.json`
 - `tests/test_modeling.py`
   - adds deterministic coverage for:
-    - ladder artifact creation
-    - persisted distribution metadata
-    - reusable line and ladder probability helper behavior
-    - ladder monotonicity and probability complement checks
+    - stored calibrator artifacts
+    - honest prior-only calibration windows on held-out rows
+    - calibrated ladder monotonicity and complement behavior
 - `tests/test_cli.py`
-  - adds CLI coverage for the new distribution summary fields
+  - adds CLI coverage for the new calibration artifact paths
 - `README.md`
-  - documents the new distribution metadata and `ladder_probabilities.jsonl`
-    artifact
+  - documents the new calibration artifacts and calibrated ladder outputs
 - `docs/architecture.md`
-  - documents the new count-distribution layer inside the modeling seam
+  - documents the AGE-149 calibration layer in the modeling flow
 - `docs/modeling.md`
-  - documents the current negative-binomial ladder path and new evaluation
-    metrics
+  - documents the out-of-fold calibration path and probability diagnostics
 
 ## Verification Run
 
-These commands were run successfully during AGE-148:
+These commands were run successfully during AGE-149:
 
 ```bash
 uv sync --extra dev
@@ -78,11 +71,11 @@ uv run python -m mlb_props_stack
 Local results:
 
 - `uv run pytest`
-  - `39 passed`
+  - `40 passed`
 - `uv run python -m mlb_props_stack`
   - still prints the runtime summary cleanly
 
-Not run during AGE-148:
+Not run during AGE-149:
 
 ```bash
 uv run python -m mlb_props_stack train-starter-strikeout-baseline \
@@ -98,28 +91,30 @@ Reason:
 
 ## Recommended Next Issue
 
-- Wire `AGE-145` line snapshots plus the `AGE-147` or `AGE-148` model outputs
-  into actual `PropProjection` records and edge evaluation
+- Wire `AGE-145` line snapshots plus the AGE-149 calibrated ladder outputs into
+  actual `PropProjection` records and edge evaluation
 
 Why this should go next:
 
-- the repo now has an explicit expected-strikeout mean plus bookmaker-usable
-  over or under ladder probabilities
-- the next missing seam is turning that output into real `PropProjection`
-  records keyed to sportsbook lines so `edge.py` can rank candidate props
+- the repo now has calibrated over/under probabilities for each half-strikeout
+  ladder line, not just raw count-distribution outputs
+- the next missing seam is turning those calibrated probabilities into real
+  `PropProjection` records keyed to sportsbook lines so `edge.py` can rank
+  candidate props
 
 ## Constraints For The Next Worktree
 
-- Start the next issue worktree from the current `main` after AGE-148 is
+- Start the next issue worktree from the current `main` after AGE-149 is
   merged.
 - Keep AGE-147 as the only source of the baseline mean expectation.
-- Reuse the AGE-148 ladder helpers instead of re-deriving line probabilities in
-  a separate pricing or edge module.
+- Reuse the AGE-149 calibrated ladder artifact instead of recalibrating
+  probabilities inside pricing or edge code.
 - Preserve the current leakage rules:
   - no IDs, target columns, or postgame timestamps in the training matrix
   - no same-day pitch rows in the feature inputs themselves
-- Treat `baseline_model.json`, `evaluation.json`, and
-  `ladder_probabilities.jsonl` as durable debug artifacts, not throwaway local
+- Treat `baseline_model.json`, `evaluation.json`, `ladder_probabilities.jsonl`,
+  `probability_calibrator.json`, `raw_vs_calibrated_probabilities.jsonl`, and
+  `calibration_summary.json` as durable debug artifacts, not throwaway local
   output.
 
 ## Open Questions
@@ -127,9 +122,9 @@ Why this should go next:
 - A real local smoke run of `train-starter-strikeout-baseline` still needs a
   non-test date span with AGE-146 feature runs already materialized under
   `data/normalized/statcast_search/...`.
-- The current distribution fit is global. A future issue may decide to compare
-  that against line-bucket or feature-conditioned calibration once the
-  `PropProjection` path exists.
+- The current calibrator is global across ladder events. A future issue may
+  decide to compare that against line-bucket or richer walk-forward
+  calibration once real prop pricing and backtests exist.
 - Same-day Statcast outcome pulls still hit Baseball Savant directly for the
   training label. If that path becomes rate-limited in practice, the repo may
   need a cached label-build slice later rather than changing the model contract

@@ -9,6 +9,7 @@ from math import exp, floor, log, sqrt
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .config import StackConfig
 from .ingest.mlb_stats_api import format_utc_timestamp, parse_api_datetime, utc_now
 from .ingest.statcast_features import (
     StatcastSearchClient,
@@ -20,6 +21,8 @@ MODEL_VERSION = "starter-strikeout-baseline-v1"
 BENCHMARK_NAME = "pitcher_k_rate_x_expected_leash_batters_faced"
 COUNT_DISTRIBUTION_NAME = "negative_binomial_global_dispersion_v1"
 COUNT_DISTRIBUTION_FIT_METHOD = "method_of_moments"
+PROBABILITY_CALIBRATOR_NAME = "isotonic_ladder_probability_calibrator_v1"
+PROBABILITY_CALIBRATOR_SOURCE = "out_of_fold_ladder_events"
 RIDGE_ALPHA = 1.0
 OUTCOME_QUERY_PADDING_DAYS = 1
 DISTRIBUTION_TAIL_TOLERANCE = 1e-9
@@ -27,6 +30,8 @@ MIN_DISTRIBUTION_MEAN = 1e-6
 MIN_DISPERSION_ALPHA = 1e-6
 MIN_PROBABILITY = 1e-12
 MAX_DISTRIBUTION_SUPPORT = 250
+OOF_MIN_TRAIN_DATES = 2
+RELIABILITY_BIN_COUNT = 10
 BASE_NUMERIC_FEATURES = (
     "pitch_sample_size",
     "plate_appearance_sample_size",
@@ -171,6 +176,9 @@ class StarterStrikeoutBaselineTrainingResult:
     model_path: Path
     evaluation_path: Path
     ladder_probabilities_path: Path
+    probability_calibrator_path: Path
+    raw_vs_calibrated_path: Path
+    calibration_summary_path: Path
 
 
 @dataclass(frozen=True)
@@ -187,6 +195,29 @@ class _LinearModel:
     intercept: float
     coefficients: tuple[float, ...]
     vectorizer: _FeatureVectorizer
+
+
+@dataclass(frozen=True)
+class _ProbabilityCalibratorBucket:
+    raw_probability_min: float
+    raw_probability_max: float
+    calibrated_probability: float
+    sample_count: int
+    positive_count: int
+
+
+@dataclass(frozen=True)
+class _ProbabilityCalibrator:
+    name: str
+    source: str
+    configured_min_sample: int
+    sample_count: int
+    fitted_from_date: str | None
+    fitted_through_date: str | None
+    is_identity: bool
+    reason: str | None
+    sample_warning: str | None
+    buckets: tuple[_ProbabilityCalibratorBucket, ...]
 
 
 def _json_ready(value: Any) -> Any:
@@ -232,6 +263,197 @@ def _load_jsonl_rows(path: Path) -> list[dict[str, Any]]:
         if line.strip():
             rows.append(json.loads(line))
     return rows
+
+
+def _clip_probability(probability: float) -> float:
+    if probability <= 0.0:
+        return MIN_PROBABILITY
+    if probability >= 1.0:
+        return 1.0 - MIN_PROBABILITY
+    return probability
+
+
+def _identity_probability_calibrator(
+    *,
+    configured_min_sample: int,
+    reason: str,
+    sample_count: int,
+    fitted_from_date: str | None,
+    fitted_through_date: str | None,
+) -> _ProbabilityCalibrator:
+    sample_warning = None
+    if sample_count < configured_min_sample:
+        sample_warning = (
+            f"sample_count {sample_count} is below configured minimum "
+            f"{configured_min_sample}; using identity calibration."
+        )
+    return _ProbabilityCalibrator(
+        name=PROBABILITY_CALIBRATOR_NAME,
+        source=PROBABILITY_CALIBRATOR_SOURCE,
+        configured_min_sample=configured_min_sample,
+        sample_count=sample_count,
+        fitted_from_date=fitted_from_date,
+        fitted_through_date=fitted_through_date,
+        is_identity=True,
+        reason=reason,
+        sample_warning=sample_warning,
+        buckets=(),
+    )
+
+
+def _coerce_probability_calibrator(
+    calibrator: _ProbabilityCalibrator | dict[str, Any],
+) -> _ProbabilityCalibrator:
+    if isinstance(calibrator, _ProbabilityCalibrator):
+        return calibrator
+    buckets = tuple(
+        _ProbabilityCalibratorBucket(
+            raw_probability_min=float(bucket["raw_probability_min"]),
+            raw_probability_max=float(bucket["raw_probability_max"]),
+            calibrated_probability=float(bucket["calibrated_probability"]),
+            sample_count=int(bucket["sample_count"]),
+            positive_count=int(bucket["positive_count"]),
+        )
+        for bucket in calibrator.get("buckets", [])
+    )
+    return _ProbabilityCalibrator(
+        name=str(calibrator["name"]),
+        source=str(calibrator["source"]),
+        configured_min_sample=int(calibrator["configured_min_sample"]),
+        sample_count=int(calibrator["sample_count"]),
+        fitted_from_date=calibrator.get("fitted_from_date"),
+        fitted_through_date=calibrator.get("fitted_through_date"),
+        is_identity=bool(calibrator["is_identity"]),
+        reason=calibrator.get("reason"),
+        sample_warning=calibrator.get("sample_warning"),
+        buckets=buckets,
+    )
+
+
+def _fit_probability_calibrator(
+    *,
+    probabilities: list[float],
+    outcomes: list[int],
+    configured_min_sample: int,
+    fitted_from_date: str | None,
+    fitted_through_date: str | None,
+) -> _ProbabilityCalibrator:
+    if len(probabilities) != len(outcomes):
+        raise ValueError("probabilities and outcomes must be aligned")
+    if not probabilities:
+        return _identity_probability_calibrator(
+            configured_min_sample=configured_min_sample,
+            reason="no_prior_out_of_fold_probability_rows",
+            sample_count=0,
+            fitted_from_date=fitted_from_date,
+            fitted_through_date=fitted_through_date,
+        )
+
+    blocks: list[dict[str, float | int]] = []
+    for raw_probability, outcome in sorted(zip(probabilities, outcomes), key=lambda item: item[0]):
+        clipped_probability = _clip_probability(raw_probability)
+        if blocks and clipped_probability == blocks[-1]["raw_probability_min"]:
+            blocks[-1]["sample_count"] = int(blocks[-1]["sample_count"]) + 1
+            blocks[-1]["positive_count"] = int(blocks[-1]["positive_count"]) + outcome
+            continue
+        blocks.append(
+            {
+                "raw_probability_min": clipped_probability,
+                "raw_probability_max": clipped_probability,
+                "sample_count": 1,
+                "positive_count": outcome,
+            }
+        )
+
+    pooled_blocks: list[dict[str, float | int]] = []
+    for block in blocks:
+        pooled_blocks.append(block)
+        while len(pooled_blocks) >= 2:
+            previous = pooled_blocks[-2]
+            current = pooled_blocks[-1]
+            previous_mean = int(previous["positive_count"]) / int(previous["sample_count"])
+            current_mean = int(current["positive_count"]) / int(current["sample_count"])
+            if previous_mean <= current_mean:
+                break
+            pooled_blocks[-2] = {
+                "raw_probability_min": previous["raw_probability_min"],
+                "raw_probability_max": current["raw_probability_max"],
+                "sample_count": int(previous["sample_count"]) + int(current["sample_count"]),
+                "positive_count": int(previous["positive_count"])
+                + int(current["positive_count"]),
+            }
+            pooled_blocks.pop()
+
+    buckets = tuple(
+        _ProbabilityCalibratorBucket(
+            raw_probability_min=float(block["raw_probability_min"]),
+            raw_probability_max=float(block["raw_probability_max"]),
+            calibrated_probability=round(
+                int(block["positive_count"]) / int(block["sample_count"]),
+                6,
+            ),
+            sample_count=int(block["sample_count"]),
+            positive_count=int(block["positive_count"]),
+        )
+        for block in pooled_blocks
+    )
+    sample_warning = None
+    if len(probabilities) < configured_min_sample:
+        sample_warning = (
+            f"sample_count {len(probabilities)} is below configured minimum "
+            f"{configured_min_sample}; retain calibration as a bootstrap diagnostic."
+        )
+    return _ProbabilityCalibrator(
+        name=PROBABILITY_CALIBRATOR_NAME,
+        source=PROBABILITY_CALIBRATOR_SOURCE,
+        configured_min_sample=configured_min_sample,
+        sample_count=len(probabilities),
+        fitted_from_date=fitted_from_date,
+        fitted_through_date=fitted_through_date,
+        is_identity=False,
+        reason=None,
+        sample_warning=sample_warning,
+        buckets=buckets,
+    )
+
+
+def _apply_probability_calibrator(
+    probability: float,
+    calibrator: _ProbabilityCalibrator | dict[str, Any],
+) -> float:
+    typed_calibrator = _coerce_probability_calibrator(calibrator)
+    clipped_probability = _clip_probability(probability)
+    if typed_calibrator.is_identity or not typed_calibrator.buckets:
+        return clipped_probability
+    for bucket in typed_calibrator.buckets:
+        if clipped_probability <= bucket.raw_probability_max:
+            return bucket.calibrated_probability
+    return typed_calibrator.buckets[-1].calibrated_probability
+
+
+def calibrate_starter_strikeout_ladder_probabilities(
+    ladder_probabilities: list[dict[str, float]],
+    calibrator: _ProbabilityCalibrator | dict[str, Any],
+) -> list[dict[str, float]]:
+    """Apply a probability calibrator to a raw strikeout ladder."""
+    typed_calibrator = _coerce_probability_calibrator(calibrator)
+    calibrated_rows: list[dict[str, float]] = []
+    previous_over_probability = 1.0
+    for row in ladder_probabilities:
+        calibrated_over_probability = min(
+            previous_over_probability,
+            _apply_probability_calibrator(row["over_probability"], typed_calibrator),
+        )
+        calibrated_under_probability = 1.0 - calibrated_over_probability
+        calibrated_rows.append(
+            {
+                "line": round(float(row["line"]), 6),
+                "over_probability": round(calibrated_over_probability, 6),
+                "under_probability": round(calibrated_under_probability, 6),
+            }
+        )
+        previous_over_probability = calibrated_over_probability
+    return calibrated_rows
 
 
 def _latest_feature_run_dir(root: Path) -> Path:
@@ -849,6 +1071,339 @@ def _distribution_metrics(
     }
 
 
+def _observed_over_probability(actual_strikeouts: int, line: float) -> int:
+    return int(actual_strikeouts >= (int(floor(line)) + 1))
+
+
+def _ladder_probability_event_rows(
+    rows: list[StarterStrikeoutTrainingRow],
+    mean_predictions: list[float],
+    *,
+    dispersion_alpha: float,
+    split_by_date: dict[str, str],
+    model_train_dates: list[str],
+) -> list[dict[str, Any]]:
+    if len(rows) != len(mean_predictions):
+        raise ValueError("rows and mean_predictions must be aligned")
+    event_rows: list[dict[str, Any]] = []
+    fitted_from_date = model_train_dates[0] if model_train_dates else None
+    fitted_through_date = model_train_dates[-1] if model_train_dates else None
+    for row, mean_prediction in zip(rows, mean_predictions):
+        raw_ladder = starter_strikeout_ladder_probabilities(
+            mean=mean_prediction,
+            dispersion_alpha=dispersion_alpha,
+        )
+        for ladder_row in raw_ladder:
+            event_rows.append(
+                {
+                    "training_row_id": row.training_row_id,
+                    "official_date": row.official_date,
+                    "split": split_by_date[row.official_date],
+                    "game_pk": row.game_pk,
+                    "pitcher_id": row.pitcher_id,
+                    "pitcher_name": row.pitcher_name,
+                    "actual_strikeouts": row.starter_strikeouts,
+                    "model_mean": round(mean_prediction, 6),
+                    "model_train_from_date": fitted_from_date,
+                    "model_train_through_date": fitted_through_date,
+                    "count_distribution": {
+                        "name": COUNT_DISTRIBUTION_NAME,
+                        "dispersion_alpha": round(dispersion_alpha, 6),
+                    },
+                    "line": ladder_row["line"],
+                    "observed_over": _observed_over_probability(
+                        row.starter_strikeouts,
+                        ladder_row["line"],
+                    ),
+                    "raw_over_probability": ladder_row["over_probability"],
+                    "raw_under_probability": ladder_row["under_probability"],
+                }
+            )
+    return event_rows
+
+
+def _out_of_fold_probability_rows(
+    rows: list[StarterStrikeoutTrainingRow],
+    *,
+    date_splits: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    unique_dates = sorted({row.official_date for row in rows})
+    split_by_date = {
+        split_date: split_name
+        for split_name, split_dates in date_splits.items()
+        for split_date in split_dates
+    }
+    oof_rows: list[dict[str, Any]] = []
+    for prediction_index in range(OOF_MIN_TRAIN_DATES, len(unique_dates)):
+        prediction_date = unique_dates[prediction_index]
+        prior_dates = unique_dates[:prediction_index]
+        prior_rows = _rows_for_dates(rows, prior_dates)
+        prediction_rows = _rows_for_dates(rows, [prediction_date])
+        if not prior_rows or not prediction_rows:
+            continue
+        model = _fit_ridge_regression(prior_rows)
+        prior_predictions = [_predict_mean(row, model) for row in prior_rows]
+        dispersion_alpha = _fit_negative_binomial_dispersion_alpha(
+            prior_rows,
+            prior_predictions,
+        )
+        prediction_mean_predictions = [_predict_mean(row, model) for row in prediction_rows]
+        oof_rows.extend(
+            _ladder_probability_event_rows(
+                prediction_rows,
+                prediction_mean_predictions,
+                dispersion_alpha=dispersion_alpha,
+                split_by_date=split_by_date,
+                model_train_dates=prior_dates,
+            )
+        )
+    return oof_rows
+
+
+def _mean_brier_score(outcomes: list[int], probabilities: list[float]) -> float:
+    return round(
+        sum((probability - outcome) ** 2 for outcome, probability in zip(outcomes, probabilities))
+        / len(probabilities),
+        6,
+    )
+
+
+def _mean_log_loss(outcomes: list[int], probabilities: list[float]) -> float:
+    losses = []
+    for outcome, probability in zip(outcomes, probabilities):
+        clipped_probability = _clip_probability(probability)
+        if outcome:
+            losses.append(-log(clipped_probability))
+        else:
+            losses.append(-log(1.0 - clipped_probability))
+    return round(sum(losses) / len(losses), 6)
+
+
+def _reliability_bins(
+    rows: list[dict[str, Any]],
+    *,
+    probability_key: str,
+) -> list[dict[str, Any]]:
+    binned_rows: list[dict[str, Any]] = []
+    for bucket_index in range(RELIABILITY_BIN_COUNT):
+        lower_bound = bucket_index / RELIABILITY_BIN_COUNT
+        upper_bound = (bucket_index + 1) / RELIABILITY_BIN_COUNT
+        bucket_rows = [
+            row
+            for row in rows
+            if (
+                lower_bound <= float(row[probability_key]) < upper_bound
+                or (
+                    bucket_index == RELIABILITY_BIN_COUNT - 1
+                    and float(row[probability_key]) == 1.0
+                )
+            )
+        ]
+        if not bucket_rows:
+            continue
+        sample_count = len(bucket_rows)
+        mean_predicted_probability = sum(float(row[probability_key]) for row in bucket_rows) / sample_count
+        observed_rate = sum(int(row["observed_over"]) for row in bucket_rows) / sample_count
+        binned_rows.append(
+            {
+                "bin_start": round(lower_bound, 6),
+                "bin_end": round(upper_bound, 6),
+                "sample_count": sample_count,
+                "mean_predicted_probability": round(mean_predicted_probability, 6),
+                "observed_rate": round(observed_rate, 6),
+            }
+        )
+    return binned_rows
+
+
+def _expected_calibration_error(reliability_bins: list[dict[str, Any]]) -> float:
+    total_count = sum(int(bucket["sample_count"]) for bucket in reliability_bins)
+    if total_count == 0:
+        return 0.0
+    weighted_error = sum(
+        abs(
+            float(bucket["mean_predicted_probability"]) - float(bucket["observed_rate"])
+        )
+        * int(bucket["sample_count"])
+        for bucket in reliability_bins
+    )
+    return round(weighted_error / total_count, 6)
+
+
+def _probability_metrics_for_rows(
+    rows: list[dict[str, Any]],
+    *,
+    probability_key: str,
+) -> dict[str, Any]:
+    if not rows:
+        return {
+            "sample_count": 0,
+            "mean_brier_score": None,
+            "mean_log_loss": None,
+            "expected_calibration_error": None,
+        }
+    outcomes = [int(row["observed_over"]) for row in rows]
+    probabilities = [float(row[probability_key]) for row in rows]
+    reliability_bins = _reliability_bins(rows, probability_key=probability_key)
+    return {
+        "sample_count": len(rows),
+        "mean_brier_score": _mean_brier_score(outcomes, probabilities),
+        "mean_log_loss": _mean_log_loss(outcomes, probabilities),
+        "expected_calibration_error": _expected_calibration_error(reliability_bins),
+    }
+
+
+def _calibration_improvement_summary(
+    raw_metrics: dict[str, Any],
+    calibrated_metrics: dict[str, Any],
+    *,
+    sample_warning: str | None,
+) -> dict[str, Any]:
+    improvement = {
+        "mean_brier_score": (
+            calibrated_metrics["mean_brier_score"] is not None
+            and raw_metrics["mean_brier_score"] is not None
+            and calibrated_metrics["mean_brier_score"] <= raw_metrics["mean_brier_score"]
+        ),
+        "mean_log_loss": (
+            calibrated_metrics["mean_log_loss"] is not None
+            and raw_metrics["mean_log_loss"] is not None
+            and calibrated_metrics["mean_log_loss"] <= raw_metrics["mean_log_loss"]
+        ),
+        "expected_calibration_error": (
+            calibrated_metrics["expected_calibration_error"] is not None
+            and raw_metrics["expected_calibration_error"] is not None
+            and calibrated_metrics["expected_calibration_error"]
+            <= raw_metrics["expected_calibration_error"]
+        ),
+    }
+    explanation = None
+    if not all(improvement.values()):
+        explanation = (
+            "Calibrated probabilities did not beat raw probabilities on every bootstrap "
+            "reliability metric for this split; keep the raw-vs-calibrated table for inspection."
+        )
+    if sample_warning:
+        explanation = (
+            sample_warning
+            if explanation is None
+            else f"{sample_warning} {explanation}"
+        )
+    return {
+        "improved": improvement,
+        "explanation": explanation,
+    }
+
+
+def _evaluation_probability_rows(
+    rows: list[dict[str, Any]],
+    *,
+    split_name: str,
+    calibrator: _ProbabilityCalibrator,
+    calibration_training_splits: list[str],
+) -> list[dict[str, Any]]:
+    evaluation_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if row["split"] != split_name:
+            continue
+        calibrated_over_probability = _apply_probability_calibrator(
+            float(row["raw_over_probability"]),
+            calibrator,
+        )
+        evaluation_rows.append(
+            {
+                **row,
+                "calibrated_over_probability": round(calibrated_over_probability, 6),
+                "calibrated_under_probability": round(1.0 - calibrated_over_probability, 6),
+                "calibration_method": calibrator.name,
+                "calibration_training_splits": calibration_training_splits,
+                "calibration_sample_count": calibrator.sample_count,
+                "calibration_fit_from_date": calibrator.fitted_from_date,
+                "calibration_fit_through_date": calibrator.fitted_through_date,
+                "calibration_is_identity": calibrator.is_identity,
+            }
+        )
+    return evaluation_rows
+
+
+def _calibration_summary(
+    rows: list[dict[str, Any]],
+    *,
+    calibration_splits: list[str],
+    calibrator: _ProbabilityCalibrator,
+) -> dict[str, Any]:
+    raw_metrics = _probability_metrics_for_rows(rows, probability_key="raw_over_probability")
+    calibrated_metrics = _probability_metrics_for_rows(
+        rows,
+        probability_key="calibrated_over_probability",
+    )
+    return {
+        "calibration_training_splits": calibration_splits,
+        "calibrator": _json_ready(calibrator),
+        "raw": {
+            **raw_metrics,
+            "reliability_bins": _reliability_bins(rows, probability_key="raw_over_probability"),
+        },
+        "calibrated": {
+            **calibrated_metrics,
+            "reliability_bins": _reliability_bins(
+                rows,
+                probability_key="calibrated_over_probability",
+            ),
+        },
+        "improvement": _calibration_improvement_summary(
+            raw_metrics,
+            calibrated_metrics,
+            sample_warning=calibrator.sample_warning,
+        ),
+    }
+
+
+def _training_ladder_artifact_rows(
+    rows: list[StarterStrikeoutTrainingRow],
+    *,
+    model: _LinearModel,
+    dispersion_alpha: float,
+    split_by_date: dict[str, str],
+    probability_calibrator: _ProbabilityCalibrator,
+) -> list[dict[str, Any]]:
+    artifact_rows: list[dict[str, Any]] = []
+    for row in rows:
+        model_mean = _predict_mean(row, model)
+        raw_ladder = starter_strikeout_ladder_probabilities(
+            mean=model_mean,
+            dispersion_alpha=dispersion_alpha,
+        )
+        artifact_rows.append(
+            {
+                "training_row_id": row.training_row_id,
+                "official_date": row.official_date,
+                "game_pk": row.game_pk,
+                "pitcher_id": row.pitcher_id,
+                "pitcher_name": row.pitcher_name,
+                "split": split_by_date[row.official_date],
+                "actual_strikeouts": row.starter_strikeouts,
+                "naive_benchmark_mean": round(row.naive_benchmark_mean, 6),
+                "model_mean": round(model_mean, 6),
+                "count_distribution": {
+                    "name": COUNT_DISTRIBUTION_NAME,
+                    "dispersion_alpha": round(dispersion_alpha, 6),
+                },
+                "probability_calibration": {
+                    "name": probability_calibrator.name,
+                    "sample_count": probability_calibrator.sample_count,
+                    "is_identity": probability_calibrator.is_identity,
+                },
+                "ladder_probabilities": raw_ladder,
+                "calibrated_ladder_probabilities": calibrate_starter_strikeout_ladder_probabilities(
+                    raw_ladder,
+                    probability_calibrator,
+                ),
+            }
+        )
+    return artifact_rows
+
+
 def _rmse(actuals: list[float], predictions: list[float]) -> float:
     return round(sqrt(sum((actual - prediction) ** 2 for actual, prediction in zip(actuals, predictions)) / len(actuals)), 6)
 
@@ -926,7 +1481,15 @@ def _feature_importance(model: _LinearModel) -> list[dict[str, float | str]]:
     return sorted(importances, key=lambda item: (-float(item["absolute_importance"]), str(item["feature"])))
 
 
-def _model_artifact(model: _LinearModel, *, dispersion_alpha: float) -> dict[str, Any]:
+def _model_artifact(
+    model: _LinearModel,
+    *,
+    dispersion_alpha: float,
+    probability_calibrator: _ProbabilityCalibrator | dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    calibrator_payload = None
+    if probability_calibrator is not None:
+        calibrator_payload = _json_ready(_coerce_probability_calibrator(probability_calibrator))
     return {
         "model_version": MODEL_VERSION,
         "ridge_alpha": RIDGE_ALPHA,
@@ -956,6 +1519,7 @@ def _model_artifact(model: _LinearModel, *, dispersion_alpha: float) -> dict[str
             feature_name: list(levels)
             for feature_name, levels in model.vectorizer.categorical_levels.items()
         },
+        "probability_calibration": calibrator_payload,
     }
 
 
@@ -971,6 +1535,7 @@ def train_starter_strikeout_baseline(
     if client is None:
         client = StatcastSearchClient()
 
+    config = StackConfig()
     output_root = Path(output_dir)
     feature_rows: list[StarterStrikeoutTrainingRow] = []
     for target_date in _requested_dates(start_date, end_date):
@@ -1008,6 +1573,29 @@ def train_starter_strikeout_baseline(
         train_rows,
         train_model_predictions,
     )
+    split_by_date = {
+        split_date: split_name
+        for split_name, split_dates in date_splits.items()
+        for split_date in split_dates
+    }
+    oof_probability_rows = _out_of_fold_probability_rows(
+        rows_with_outcomes,
+        date_splits=date_splits,
+    )
+    production_calibrator = _fit_probability_calibrator(
+        probabilities=[
+            float(row["raw_over_probability"])
+            for row in oof_probability_rows
+        ],
+        outcomes=[int(row["observed_over"]) for row in oof_probability_rows],
+        configured_min_sample=config.min_sample_for_calibration,
+        fitted_from_date=(
+            min((str(row["official_date"]) for row in oof_probability_rows), default=None)
+        ),
+        fitted_through_date=(
+            max((str(row["official_date"]) for row in oof_probability_rows), default=None)
+        ),
+    )
     evaluation_rows = {
         "train": train_rows,
         "validation": validation_rows,
@@ -1033,6 +1621,13 @@ def train_starter_strikeout_baseline(
             "variance_formula": "variance = mean + alpha * mean^2",
             "poisson": {},
             "negative_binomial": {},
+        },
+        "probability_calibration": {
+            "name": PROBABILITY_CALIBRATOR_NAME,
+            "source": PROBABILITY_CALIBRATOR_SOURCE,
+            "configured_min_sample": config.min_sample_for_calibration,
+            "production_calibrator": _json_ready(production_calibrator),
+            "honest_held_out": {},
         },
     }
     for split_name, split_rows in evaluation_rows.items():
@@ -1074,6 +1669,151 @@ def train_starter_strikeout_baseline(
         ),
     }
 
+    validation_calibrator_rows = [
+        row
+        for row in oof_probability_rows
+        if row["split"] == "train"
+    ]
+    validation_calibrator = _fit_probability_calibrator(
+        probabilities=[
+            float(row["raw_over_probability"])
+            for row in validation_calibrator_rows
+        ],
+        outcomes=[int(row["observed_over"]) for row in validation_calibrator_rows],
+        configured_min_sample=config.min_sample_for_calibration,
+        fitted_from_date=(
+            min((str(row["official_date"]) for row in validation_calibrator_rows), default=None)
+        ),
+        fitted_through_date=(
+            max((str(row["official_date"]) for row in validation_calibrator_rows), default=None)
+        ),
+    )
+    validation_probability_rows = _evaluation_probability_rows(
+        oof_probability_rows,
+        split_name="validation",
+        calibrator=validation_calibrator,
+        calibration_training_splits=["train"],
+    )
+    evaluation["probability_calibration"]["honest_held_out"]["validation"] = _calibration_summary(
+        validation_probability_rows,
+        calibration_splits=["train"],
+        calibrator=validation_calibrator,
+    )
+
+    test_calibrator_rows = [
+        row
+        for row in oof_probability_rows
+        if row["split"] in {"train", "validation"}
+    ]
+    test_calibrator = _fit_probability_calibrator(
+        probabilities=[
+            float(row["raw_over_probability"])
+            for row in test_calibrator_rows
+        ],
+        outcomes=[int(row["observed_over"]) for row in test_calibrator_rows],
+        configured_min_sample=config.min_sample_for_calibration,
+        fitted_from_date=(
+            min((str(row["official_date"]) for row in test_calibrator_rows), default=None)
+        ),
+        fitted_through_date=(
+            max((str(row["official_date"]) for row in test_calibrator_rows), default=None)
+        ),
+    )
+    test_probability_rows = _evaluation_probability_rows(
+        oof_probability_rows,
+        split_name="test",
+        calibrator=test_calibrator,
+        calibration_training_splits=["train", "validation"],
+    )
+    evaluation["probability_calibration"]["honest_held_out"]["test"] = _calibration_summary(
+        test_probability_rows,
+        calibration_splits=["train", "validation"],
+        calibrator=test_calibrator,
+    )
+
+    honest_held_out_probability_rows = [
+        *validation_probability_rows,
+        *test_probability_rows,
+    ]
+    evaluation["probability_calibration"]["honest_held_out"]["held_out"] = {
+        "raw": {
+            **_probability_metrics_for_rows(
+                honest_held_out_probability_rows,
+                probability_key="raw_over_probability",
+            ),
+            "reliability_bins": _reliability_bins(
+                honest_held_out_probability_rows,
+                probability_key="raw_over_probability",
+            ),
+        },
+        "calibrated": {
+            **_probability_metrics_for_rows(
+                honest_held_out_probability_rows,
+                probability_key="calibrated_over_probability",
+            ),
+            "reliability_bins": _reliability_bins(
+                honest_held_out_probability_rows,
+                probability_key="calibrated_over_probability",
+            ),
+        },
+        "row_count": len(honest_held_out_probability_rows),
+    }
+    evaluation["probability_calibration"]["held_out_improves_raw"] = {
+        "mean_brier_score": (
+            evaluation["probability_calibration"]["honest_held_out"]["held_out"]["calibrated"][
+                "mean_brier_score"
+            ]
+            is not None
+            and evaluation["probability_calibration"]["honest_held_out"]["held_out"]["raw"][
+                "mean_brier_score"
+            ]
+            is not None
+            and evaluation["probability_calibration"]["honest_held_out"]["held_out"]["calibrated"][
+                "mean_brier_score"
+            ]
+            <= evaluation["probability_calibration"]["honest_held_out"]["held_out"]["raw"][
+                "mean_brier_score"
+            ]
+        ),
+        "mean_log_loss": (
+            evaluation["probability_calibration"]["honest_held_out"]["held_out"]["calibrated"][
+                "mean_log_loss"
+            ]
+            is not None
+            and evaluation["probability_calibration"]["honest_held_out"]["held_out"]["raw"][
+                "mean_log_loss"
+            ]
+            is not None
+            and evaluation["probability_calibration"]["honest_held_out"]["held_out"]["calibrated"][
+                "mean_log_loss"
+            ]
+            <= evaluation["probability_calibration"]["honest_held_out"]["held_out"]["raw"][
+                "mean_log_loss"
+            ]
+        ),
+        "expected_calibration_error": (
+            evaluation["probability_calibration"]["honest_held_out"]["held_out"]["calibrated"][
+                "expected_calibration_error"
+            ]
+            is not None
+            and evaluation["probability_calibration"]["honest_held_out"]["held_out"]["raw"][
+                "expected_calibration_error"
+            ]
+            is not None
+            and evaluation["probability_calibration"]["honest_held_out"]["held_out"]["calibrated"][
+                "expected_calibration_error"
+            ]
+            <= evaluation["probability_calibration"]["honest_held_out"]["held_out"]["raw"][
+                "expected_calibration_error"
+            ]
+        ),
+    }
+    if not all(evaluation["probability_calibration"]["held_out_improves_raw"].values()):
+        evaluation["probability_calibration"]["held_out_explanation"] = (
+            "Held-out calibrated probabilities are stored alongside raw probabilities so the next "
+            "pricing issue can inspect where reliability improved and where it did not."
+        )
+
     run_id = now().astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     normalized_root = (
         output_root
@@ -1088,40 +1828,33 @@ def train_starter_strikeout_baseline(
     model_path = normalized_root / "baseline_model.json"
     evaluation_path = normalized_root / "evaluation.json"
     ladder_probabilities_path = normalized_root / "ladder_probabilities.jsonl"
+    probability_calibrator_path = normalized_root / "probability_calibrator.json"
+    raw_vs_calibrated_path = normalized_root / "raw_vs_calibrated_probabilities.jsonl"
+    calibration_summary_path = normalized_root / "calibration_summary.json"
     _write_jsonl(dataset_path, rows_with_outcomes)
     _write_jsonl(outcomes_path, outcome_records)
     _write_json(date_splits_path, date_splits)
-    _write_json(model_path, _model_artifact(model, dispersion_alpha=dispersion_alpha))
+    _write_json(
+        model_path,
+        _model_artifact(
+            model,
+            dispersion_alpha=dispersion_alpha,
+            probability_calibrator=production_calibrator,
+        ),
+    )
+    _write_json(probability_calibrator_path, production_calibrator)
     _write_json(evaluation_path, evaluation)
-    split_by_date = {
-        split_date: split_name
-        for split_name, split_dates in date_splits.items()
-        for split_date in split_dates
-    }
+    _write_json(calibration_summary_path, evaluation["probability_calibration"])
+    _write_jsonl(raw_vs_calibrated_path, honest_held_out_probability_rows)
     _write_jsonl(
         ladder_probabilities_path,
-        [
-            {
-                "training_row_id": row.training_row_id,
-                "official_date": row.official_date,
-                "game_pk": row.game_pk,
-                "pitcher_id": row.pitcher_id,
-                "pitcher_name": row.pitcher_name,
-                "split": split_by_date[row.official_date],
-                "actual_strikeouts": row.starter_strikeouts,
-                "naive_benchmark_mean": round(row.naive_benchmark_mean, 6),
-                "model_mean": round(_predict_mean(row, model), 6),
-                "count_distribution": {
-                    "name": COUNT_DISTRIBUTION_NAME,
-                    "dispersion_alpha": round(dispersion_alpha, 6),
-                },
-                "ladder_probabilities": starter_strikeout_ladder_probabilities(
-                    mean=_predict_mean(row, model),
-                    dispersion_alpha=dispersion_alpha,
-                ),
-            }
-            for row in rows_with_outcomes
-        ],
+        _training_ladder_artifact_rows(
+            rows_with_outcomes,
+            model=model,
+            dispersion_alpha=dispersion_alpha,
+            split_by_date=split_by_date,
+            probability_calibrator=production_calibrator,
+        ),
     )
     return StarterStrikeoutBaselineTrainingResult(
         start_date=start_date,
@@ -1136,4 +1869,7 @@ def train_starter_strikeout_baseline(
         model_path=model_path,
         evaluation_path=evaluation_path,
         ladder_probabilities_path=ladder_probabilities_path,
+        probability_calibrator_path=probability_calibrator_path,
+        raw_vs_calibrated_path=raw_vs_calibrated_path,
+        calibration_summary_path=calibration_summary_path,
     )

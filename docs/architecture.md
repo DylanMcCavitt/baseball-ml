@@ -204,6 +204,21 @@ AGE-148 extends those same baseline runs with:
   so the fitted distribution can be compared against a Poisson fallback using
   the same mean predictions
 
+AGE-149 adds a calibration layer on top of those ladder probabilities:
+
+- `probability_calibrator.json`
+  a stored isotonic calibrator fit from out-of-fold ladder-event probabilities
+- `raw_vs_calibrated_probabilities.jsonl`
+  honest held-out ladder-event rows with raw and calibrated probabilities side
+  by side
+- `calibration_summary.json`
+  reliability bins plus Brier, log-loss, and calibration-error diagnostics that
+  later tracking and dashboard code can log directly
+- `ladder_probabilities.jsonl`
+  now preserves both the raw ladder and a calibrated ladder so downstream
+  pricing work can consume calibrated probabilities without recomputing the
+  calibration layer
+
 The lineup guardrail in AGE-146 is intentionally strict:
 
 - only lineup snapshots with `captured_at <= commence_time` are allowed into the
