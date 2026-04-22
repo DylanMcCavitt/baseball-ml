@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 import json
 from math import exp, floor, log, sqrt
 from pathlib import Path
+from shlex import quote
 from typing import Any, Callable, Iterable
 
 from .config import StackConfig
@@ -15,6 +16,13 @@ from .ingest.statcast_features import (
     StatcastSearchClient,
     build_statcast_search_csv_url,
     normalize_statcast_csv_text,
+)
+from .tracking import (
+    TrackingConfig,
+    log_run_artifact,
+    log_run_metrics,
+    log_run_params,
+    start_experiment_run,
 )
 
 MODEL_VERSION = "starter-strikeout-baseline-v1"
@@ -153,6 +161,8 @@ class StarterStrikeoutBaselineTrainingResult:
     start_date: date
     end_date: date
     run_id: str
+    mlflow_run_id: str
+    mlflow_experiment_name: str
     row_count: int
     outcome_count: int
     dispersion_alpha: float
@@ -167,6 +177,7 @@ class StarterStrikeoutBaselineTrainingResult:
     calibration_summary_path: Path
     evaluation_summary_path: Path
     evaluation_summary_markdown_path: Path
+    reproducibility_notes_path: Path
     held_out_status: str
     held_out_model_rmse: float | None
     held_out_benchmark_rmse: float | None
@@ -1681,8 +1692,13 @@ def _evaluation_summary_payload(
     start_date: date,
     end_date: date,
     run_id: str,
+    mlflow_run_id: str,
+    mlflow_experiment_name: str,
+    tracking_uri: str,
     evaluation: dict[str, Any],
     evaluation_path: Path,
+    reproducibility_notes_path: Path,
+    rerun_command: str,
     previous_run_dir: Path | None,
 ) -> dict[str, Any]:
     held_out_status = _held_out_status(evaluation["held_out_beats_benchmark"])
@@ -1694,11 +1710,18 @@ def _evaluation_summary_payload(
         "model_version": evaluation["model_version"],
         "benchmark_name": evaluation["benchmark_name"],
         "run_id": run_id,
+        "mlflow_run_id": mlflow_run_id,
+        "mlflow_experiment_name": mlflow_experiment_name,
+        "tracking_uri": tracking_uri,
         "date_window": {
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
         },
         "evaluation_path": str(evaluation_path),
+        "reproducibility": {
+            "notes_path": str(reproducibility_notes_path),
+            "rerun_command": rerun_command,
+        },
         "row_counts": evaluation["row_counts"],
         "date_splits": evaluation["date_splits"],
         "held_out_performance": {
@@ -1878,10 +1901,14 @@ def _render_evaluation_summary_markdown(summary: dict[str, Any]) -> str:
         "# Starter Strikeout Baseline Evaluation Summary",
         "",
         f"- Run ID: `{summary['run_id']}`",
+        f"- MLflow run ID: `{summary['mlflow_run_id']}`",
+        f"- MLflow experiment: `{summary['mlflow_experiment_name']}`",
+        f"- Tracking URI: `{summary['tracking_uri']}`",
         (
             "- Date window: "
             f"`{summary['date_window']['start_date']}` -> `{summary['date_window']['end_date']}`"
         ),
+        f"- Reproducibility notes: `{summary['reproducibility']['notes_path']}`",
         (
             "- Row counts: "
             f"train={row_counts['train']}, validation={row_counts['validation']}, "
@@ -2020,6 +2047,7 @@ def _model_artifact(
     *,
     dispersion_alpha: float,
     probability_calibrator: _ProbabilityCalibrator | dict[str, Any] | None = None,
+    tracking: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     calibrator_payload = None
     if probability_calibrator is not None:
@@ -2054,6 +2082,163 @@ def _model_artifact(
             for feature_name, levels in model.vectorizer.categorical_levels.items()
         },
         "probability_calibration": calibrator_payload,
+        "tracking": tracking,
+    }
+
+
+def _training_rerun_command(
+    *,
+    start_date: date,
+    end_date: date,
+    output_dir: Path | str,
+) -> str:
+    return (
+        "uv run python -m mlb_props_stack train-starter-strikeout-baseline "
+        f"--start-date {start_date.isoformat()} "
+        f"--end-date {end_date.isoformat()} "
+        f"--output-dir {quote(str(output_dir))}"
+    )
+
+
+def _render_training_reproducibility_notes(
+    *,
+    start_date: date,
+    end_date: date,
+    run_id: str,
+    normalized_root: Path,
+    tracking_uri: str,
+    mlflow_experiment_name: str,
+    mlflow_run_id: str,
+    rerun_command: str,
+) -> str:
+    return "\n".join(
+        [
+            "# Training Reproducibility Notes",
+            "",
+            f"- Local run ID: `{run_id}`",
+            f"- MLflow run ID: `{mlflow_run_id}`",
+            f"- MLflow experiment: `{mlflow_experiment_name}`",
+            f"- Tracking URI: `{tracking_uri}`",
+            f"- Local run directory: `{normalized_root}`",
+            (
+                "- Date window: "
+                f"`{start_date.isoformat()}` -> `{end_date.isoformat()}`"
+            ),
+            f"- CLI rerun command: `{rerun_command}`",
+            (
+                "- Inputs: saved AGE-146 Statcast feature rows already written under "
+                "`data/normalized/statcast_search/date=...` inside the requested window."
+            ),
+            (
+                "- Honest rules: date splits stay chronological and same-game outcome rows "
+                "are fetched without using post-game features."
+            ),
+            "",
+        ]
+    )
+
+
+def _training_tracking_params(
+    *,
+    start_date: date,
+    end_date: date,
+    output_dir: Path | str,
+    row_count: int,
+    outcome_count: int,
+    evaluation: dict[str, Any],
+    held_out_status: str,
+    min_sample_for_calibration: int,
+) -> dict[str, Any]:
+    return {
+        "pipeline": "train_starter_strikeout_baseline",
+        "model_version": MODEL_VERSION,
+        "benchmark_name": BENCHMARK_NAME,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "output_dir": str(output_dir),
+        "row_count": row_count,
+        "outcome_count": outcome_count,
+        "train_date_count": len(evaluation["date_splits"]["train"]),
+        "validation_date_count": len(evaluation["date_splits"]["validation"]),
+        "test_date_count": len(evaluation["date_splits"]["test"]),
+        "ridge_alpha": RIDGE_ALPHA,
+        "min_sample_for_calibration": min_sample_for_calibration,
+        "held_out_status": held_out_status,
+    }
+
+
+def _training_tracking_metrics(
+    *,
+    evaluation: dict[str, Any],
+    dispersion_alpha: float,
+) -> dict[str, float | int | None]:
+    held_out_probability_metrics = evaluation["probability_calibration"]["honest_held_out"]["held_out"]
+    return {
+        "training_rows": evaluation["row_counts"]["train"],
+        "validation_rows": evaluation["row_counts"]["validation"],
+        "test_rows": evaluation["row_counts"]["test"],
+        "held_out_rows": evaluation["row_counts"]["held_out"],
+        "dispersion_alpha": round(dispersion_alpha, 6),
+        "held_out_model_rmse": _metric_value(evaluation, "model", "held_out", "rmse"),
+        "held_out_benchmark_rmse": _metric_value(evaluation, "benchmark", "held_out", "rmse"),
+        "held_out_model_mae": _metric_value(evaluation, "model", "held_out", "mae"),
+        "held_out_benchmark_mae": _metric_value(evaluation, "benchmark", "held_out", "mae"),
+        "held_out_model_spearman": _metric_value(
+            evaluation,
+            "model",
+            "held_out",
+            "spearman_rank_correlation",
+        ),
+        "held_out_benchmark_spearman": _metric_value(
+            evaluation,
+            "benchmark",
+            "held_out",
+            "spearman_rank_correlation",
+        ),
+        "held_out_negative_binomial_mean_negative_log_likelihood": _metric_value(
+            evaluation,
+            "count_distribution",
+            "negative_binomial",
+            "held_out",
+            "mean_negative_log_likelihood",
+        ),
+        "held_out_poisson_mean_negative_log_likelihood": _metric_value(
+            evaluation,
+            "count_distribution",
+            "poisson",
+            "held_out",
+            "mean_negative_log_likelihood",
+        ),
+        "held_out_raw_mean_brier_score": _metric_value(
+            held_out_probability_metrics,
+            "raw",
+            "mean_brier_score",
+        ),
+        "held_out_calibrated_mean_brier_score": _metric_value(
+            held_out_probability_metrics,
+            "calibrated",
+            "mean_brier_score",
+        ),
+        "held_out_raw_mean_log_loss": _metric_value(
+            held_out_probability_metrics,
+            "raw",
+            "mean_log_loss",
+        ),
+        "held_out_calibrated_mean_log_loss": _metric_value(
+            held_out_probability_metrics,
+            "calibrated",
+            "mean_log_loss",
+        ),
+        "held_out_raw_expected_calibration_error": _metric_value(
+            held_out_probability_metrics,
+            "raw",
+            "expected_calibration_error",
+        ),
+        "held_out_calibrated_expected_calibration_error": _metric_value(
+            held_out_probability_metrics,
+            "calibrated",
+            "expected_calibration_error",
+        ),
     }
 
 
@@ -2203,12 +2388,14 @@ def train_starter_strikeout_baseline(
     output_dir: Path | str = "data",
     client: StatcastSearchClient | None = None,
     now: Callable[[], datetime] = utc_now,
+    tracking_config: TrackingConfig | None = None,
 ) -> StarterStrikeoutBaselineTrainingResult:
     """Train the first deterministic starter strikeout baseline model."""
     if client is None:
         client = StatcastSearchClient()
 
     config = StackConfig()
+    tracking = tracking_config or TrackingConfig()
     output_root = Path(output_dir)
     feature_rows: list[StarterStrikeoutTrainingRow] = []
     for target_date in _requested_dates(start_date, end_date):
@@ -2506,53 +2693,123 @@ def train_starter_strikeout_baseline(
     calibration_summary_path = normalized_root / "calibration_summary.json"
     evaluation_summary_path = normalized_root / "evaluation_summary.json"
     evaluation_summary_markdown_path = normalized_root / "evaluation_summary.md"
+    reproducibility_notes_path = normalized_root / "reproducibility_notes.md"
     previous_run_dir = _latest_previous_training_run(
         output_root,
         start_date=start_date,
         end_date=end_date,
     )
-    evaluation_summary = _evaluation_summary_payload(
+    rerun_command = _training_rerun_command(
         start_date=start_date,
         end_date=end_date,
-        run_id=run_id,
-        evaluation=evaluation,
-        evaluation_path=evaluation_path,
-        previous_run_dir=previous_run_dir,
+        output_dir=output_dir,
     )
-    _write_jsonl(dataset_path, rows_with_outcomes)
-    _write_jsonl(outcomes_path, outcome_records)
-    _write_json(date_splits_path, date_splits)
-    _write_json(
-        model_path,
-        _model_artifact(
-            model,
-            dispersion_alpha=dispersion_alpha,
-            probability_calibrator=production_calibrator,
-        ),
+    run_name = (
+        f"starter-strikeout-baseline-{start_date.isoformat()}-"
+        f"{end_date.isoformat()}-{run_id}"
     )
-    _write_json(probability_calibrator_path, production_calibrator)
-    _write_json(evaluation_path, evaluation)
-    _write_json(calibration_summary_path, evaluation["probability_calibration"])
-    _write_json(evaluation_summary_path, evaluation_summary)
-    _write_text(
-        evaluation_summary_markdown_path,
-        _render_evaluation_summary_markdown(evaluation_summary),
-    )
-    _write_jsonl(raw_vs_calibrated_path, honest_held_out_probability_rows)
-    _write_jsonl(
-        ladder_probabilities_path,
-        _training_ladder_artifact_rows(
-            rows_with_outcomes,
-            model=model,
-            dispersion_alpha=dispersion_alpha,
-            split_by_date=split_by_date,
-            probability_calibrator=production_calibrator,
-        ),
-    )
+    with start_experiment_run(
+        experiment_name=tracking.training_experiment_name,
+        run_name=run_name,
+        tags={
+            "run_kind": "training",
+            "pipeline": "train_starter_strikeout_baseline",
+            "model_version": MODEL_VERSION,
+        },
+        config=tracking,
+    ) as tracking_run:
+        tracking_payload = {
+            "tracking_uri": tracking_run.tracking_uri,
+            "mlflow_experiment_name": tracking_run.experiment_name,
+            "mlflow_run_id": tracking_run.run_id,
+        }
+        evaluation["tracking"] = tracking_payload
+        evaluation["reproducibility"] = {
+            "notes_path": reproducibility_notes_path,
+            "rerun_command": rerun_command,
+        }
+        evaluation_summary = _evaluation_summary_payload(
+            start_date=start_date,
+            end_date=end_date,
+            run_id=run_id,
+            mlflow_run_id=tracking_run.run_id,
+            mlflow_experiment_name=tracking_run.experiment_name,
+            tracking_uri=tracking_run.tracking_uri,
+            evaluation=evaluation,
+            evaluation_path=evaluation_path,
+            reproducibility_notes_path=reproducibility_notes_path,
+            rerun_command=rerun_command,
+            previous_run_dir=previous_run_dir,
+        )
+        _write_jsonl(dataset_path, rows_with_outcomes)
+        _write_jsonl(outcomes_path, outcome_records)
+        _write_json(date_splits_path, date_splits)
+        _write_json(
+            model_path,
+            _model_artifact(
+                model,
+                dispersion_alpha=dispersion_alpha,
+                probability_calibrator=production_calibrator,
+                tracking=tracking_payload,
+            ),
+        )
+        _write_json(probability_calibrator_path, production_calibrator)
+        _write_json(evaluation_path, evaluation)
+        _write_json(calibration_summary_path, evaluation["probability_calibration"])
+        _write_json(evaluation_summary_path, evaluation_summary)
+        _write_text(
+            evaluation_summary_markdown_path,
+            _render_evaluation_summary_markdown(evaluation_summary),
+        )
+        _write_text(
+            reproducibility_notes_path,
+            _render_training_reproducibility_notes(
+                start_date=start_date,
+                end_date=end_date,
+                run_id=run_id,
+                normalized_root=normalized_root,
+                tracking_uri=tracking_run.tracking_uri,
+                mlflow_experiment_name=tracking_run.experiment_name,
+                mlflow_run_id=tracking_run.run_id,
+                rerun_command=rerun_command,
+            ),
+        )
+        _write_jsonl(raw_vs_calibrated_path, honest_held_out_probability_rows)
+        _write_jsonl(
+            ladder_probabilities_path,
+            _training_ladder_artifact_rows(
+                rows_with_outcomes,
+                model=model,
+                dispersion_alpha=dispersion_alpha,
+                split_by_date=split_by_date,
+                probability_calibrator=production_calibrator,
+            ),
+        )
+        log_run_params(
+            _training_tracking_params(
+                start_date=start_date,
+                end_date=end_date,
+                output_dir=output_dir,
+                row_count=len(rows_with_outcomes),
+                outcome_count=len(outcome_records),
+                evaluation=evaluation,
+                held_out_status=str(evaluation_summary["held_out_performance"]["status"]),
+                min_sample_for_calibration=config.min_sample_for_calibration,
+            )
+        )
+        log_run_metrics(
+            _training_tracking_metrics(
+                evaluation=evaluation,
+                dispersion_alpha=dispersion_alpha,
+            )
+        )
+        log_run_artifact(normalized_root)
     return StarterStrikeoutBaselineTrainingResult(
         start_date=start_date,
         end_date=end_date,
         run_id=run_id,
+        mlflow_run_id=tracking_run.run_id,
+        mlflow_experiment_name=tracking_run.experiment_name,
         row_count=len(rows_with_outcomes),
         outcome_count=len(outcome_records),
         dispersion_alpha=round(dispersion_alpha, 6),
@@ -2567,6 +2824,7 @@ def train_starter_strikeout_baseline(
         calibration_summary_path=calibration_summary_path,
         evaluation_summary_path=evaluation_summary_path,
         evaluation_summary_markdown_path=evaluation_summary_markdown_path,
+        reproducibility_notes_path=reproducibility_notes_path,
         held_out_status=str(evaluation_summary["held_out_performance"]["status"]),
         held_out_model_rmse=_metric_value(evaluation, "model", "held_out", "rmse"),
         held_out_benchmark_rmse=_metric_value(evaluation, "benchmark", "held_out", "rmse"),

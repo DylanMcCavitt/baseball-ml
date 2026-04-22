@@ -43,6 +43,8 @@ def render_runtime_summary() -> str:
         f"min_edge_pct={config.min_edge_pct:.2%}",
         f"kelly_fraction={config.kelly_fraction:.2f}",
         f"tracking_uri={tracking.tracking_uri}",
+        f"training_experiment_name={tracking.training_experiment_name}",
+        f"backtest_experiment_name={tracking.backtest_experiment_name}",
         f"dashboard_module={tracking.dashboard_module}",
         "backtest_checklist:",
     ]
@@ -126,6 +128,8 @@ def render_starter_strikeout_training_summary(
             f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
         ),
         f"run_id={result.run_id}",
+        f"mlflow_run_id={result.mlflow_run_id}",
+        f"mlflow_experiment_name={result.mlflow_experiment_name}",
         f"training_rows={result.row_count}",
         f"starter_outcomes={result.outcome_count}",
         f"dispersion_alpha={result.dispersion_alpha:.6f}",
@@ -146,6 +150,7 @@ def render_starter_strikeout_training_summary(
         f"calibration_summary_path={result.calibration_summary_path}",
         f"evaluation_summary_path={result.evaluation_summary_path}",
         f"evaluation_summary_markdown_path={result.evaluation_summary_markdown_path}",
+        f"reproducibility_notes_path={result.reproducibility_notes_path}",
     ]
     return "\n".join(lines)
 
@@ -214,6 +219,8 @@ def render_walk_forward_backtest_summary(result: WalkForwardBacktestResult) -> s
             f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
         ),
         f"run_id={result.run_id}",
+        f"mlflow_run_id={result.mlflow_run_id}",
+        f"mlflow_experiment_name={result.mlflow_experiment_name}",
         f"model_version={result.model_version}",
         f"model_run_id={result.model_run_id}",
         (
@@ -231,6 +238,7 @@ def render_walk_forward_backtest_summary(result: WalkForwardBacktestResult) -> s
         f"clv_summary_path={result.clv_summary_path}",
         f"roi_summary_path={result.roi_summary_path}",
         f"edge_bucket_summary_path={result.edge_bucket_summary_path}",
+        f"reproducibility_notes_path={result.reproducibility_notes_path}",
     ]
     return "\n".join(lines)
 

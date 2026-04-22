@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 import json
 from pathlib import Path
+from shlex import quote
 from statistics import median
 from typing import Any, Callable, Optional
 
@@ -13,6 +14,13 @@ from .config import StackConfig
 from .edge import analyze_projection
 from .markets import PropLine, PropProjection, ProjectionInputRef
 from .pricing import american_to_decimal, devig_two_way
+from .tracking import (
+    TrackingConfig,
+    log_run_artifact,
+    log_run_metrics,
+    log_run_params,
+    start_experiment_run,
+)
 
 EDGE_BUCKETS = (
     (0.0, 0.02, "0_to_2_pct"),
@@ -65,6 +73,8 @@ class WalkForwardBacktestResult:
     start_date: date
     end_date: date
     run_id: str
+    mlflow_run_id: str
+    mlflow_experiment_name: str
     model_version: str
     model_run_id: str
     cutoff_minutes_before_first_pitch: int
@@ -75,6 +85,7 @@ class WalkForwardBacktestResult:
     clv_summary_path: Path
     roi_summary_path: Path
     edge_bucket_summary_path: Path
+    reproducibility_notes_path: Path
     snapshot_group_count: int
     actionable_bet_count: int
     below_threshold_count: int
@@ -109,6 +120,11 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
         for row in rows:
             handle.write(json.dumps(_json_ready(row), sort_keys=True))
             handle.write("\n")
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -821,6 +837,7 @@ def build_walk_forward_backtest(
     model_run_dir: Path | str | None = None,
     cutoff_minutes_before_first_pitch: int = 30,
     now: Callable[[], datetime] | None = None,
+    tracking_config: TrackingConfig | None = None,
 ) -> WalkForwardBacktestResult:
     """Build timestamp-safe walk-forward backtest artifacts for one date range."""
     if cutoff_minutes_before_first_pitch <= 0:
@@ -830,6 +847,7 @@ def build_walk_forward_backtest(
 
     policy = BacktestPolicy()
     config = StackConfig()
+    tracking = tracking_config or TrackingConfig()
     output_root = Path(output_dir)
     target_dates = _requested_dates(start_date, end_date)
     resolved_model_run_dir = (
@@ -1429,6 +1447,7 @@ def build_walk_forward_backtest(
     clv_summary_path = normalized_root / "clv_summary.jsonl"
     roi_summary_path = normalized_root / "roi_summary.jsonl"
     edge_bucket_summary_path = normalized_root / "edge_bucket_summary.jsonl"
+    reproducibility_notes_path = normalized_root / "reproducibility_notes.md"
 
     placed_bets = [row for row in backtest_rows if bool(row.get("bet_placed"))]
     total_stake = round(sum(float(row["stake_fraction"]) for row in placed_bets), 6)
@@ -1455,97 +1474,195 @@ def build_walk_forward_backtest(
     overall_roi_summary = next(
         row for row in roi_summary_rows if row["summary_scope"] == "overall"
     )
+    rerun_command = (
+        "uv run python -m mlb_props_stack build-walk-forward-backtest "
+        f"--start-date {start_date.isoformat()} "
+        f"--end-date {end_date.isoformat()} "
+        f"--output-dir {quote(str(output_dir))} "
+        f"--model-run-dir {quote(str(resolved_model_run_dir))} "
+        "--cutoff-minutes-before-first-pitch "
+        f"{cutoff_minutes_before_first_pitch}"
+    )
+    run_name = (
+        f"walk-forward-backtest-{start_date.isoformat()}-"
+        f"{end_date.isoformat()}-{run_id}"
+    )
 
-    summary_row = {
-        "backtest_run_id": run_id,
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "evaluated_dates": [target_date.isoformat() for target_date in target_dates],
-        "model_version": model_version,
-        "model_run_id": model_run_id,
-        "cutoff_minutes_before_first_pitch": cutoff_minutes_before_first_pitch,
-        "policy": asdict(policy),
-        "row_counts": {
-            "snapshot_groups": len(snapshot_groups),
-            "actionable": actionable_bet_count,
-            "below_threshold": below_threshold_count,
-            "skipped": skipped_count,
+    with start_experiment_run(
+        experiment_name=tracking.backtest_experiment_name,
+        run_name=run_name,
+        tags={
+            "run_kind": "backtest",
+            "pipeline": "build_walk_forward_backtest",
+            "model_version": model_version,
+            "model_run_id": model_run_id,
         },
-        "bet_outcomes": {
-            "placed_bets": len(placed_bets),
-            "wins": sum(1 for row in placed_bets if row["settlement_status"] == "win"),
-            "losses": sum(1 for row in placed_bets if row["settlement_status"] == "loss"),
-            "pushes": sum(1 for row in placed_bets if row["settlement_status"] == "push"),
-            "total_stake_units": total_stake,
-            "total_profit_units": total_profit,
-            "roi": round(total_profit / total_stake, 6) if total_stake > 0.0 else None,
-        },
-        "clv_summary": (
+        config=tracking,
+    ) as tracking_run:
+        summary_row = {
+            "backtest_run_id": run_id,
+            "mlflow_run_id": tracking_run.run_id,
+            "mlflow_experiment_name": tracking_run.experiment_name,
+            "tracking_uri": tracking_run.tracking_uri,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "evaluated_dates": [target_date.isoformat() for target_date in target_dates],
+            "model_version": model_version,
+            "model_run_id": model_run_id,
+            "cutoff_minutes_before_first_pitch": cutoff_minutes_before_first_pitch,
+            "policy": asdict(policy),
+            "row_counts": {
+                "snapshot_groups": len(snapshot_groups),
+                "actionable": actionable_bet_count,
+                "below_threshold": below_threshold_count,
+                "skipped": skipped_count,
+            },
+            "bet_outcomes": {
+                "placed_bets": len(placed_bets),
+                "wins": sum(1 for row in placed_bets if row["settlement_status"] == "win"),
+                "losses": sum(1 for row in placed_bets if row["settlement_status"] == "loss"),
+                "pushes": sum(1 for row in placed_bets if row["settlement_status"] == "push"),
+                "total_stake_units": total_stake,
+                "total_profit_units": total_profit,
+                "roi": round(total_profit / total_stake, 6) if total_stake > 0.0 else None,
+            },
+            "clv_summary": (
+                {
+                    "sample_count": overall_clv_summary["sample_count"],
+                    "mean_probability_delta": overall_clv_summary["mean_probability_delta"],
+                    "median_probability_delta": overall_clv_summary["median_probability_delta"],
+                    "beat_closing_line_count": overall_clv_summary[
+                        "beat_closing_line_count"
+                    ],
+                    "missing_close_count": overall_clv_summary["missing_close_count"],
+                }
+                if policy.report_clv
+                else {
+                    "sample_count": 0,
+                    "mean_probability_delta": None,
+                    "median_probability_delta": None,
+                    "beat_closing_line_count": 0,
+                    "missing_close_count": len(placed_bets),
+                }
+            ),
+            "roi_summary": (
+                {
+                    "placed_bets": overall_roi_summary["placed_bets"],
+                    "wins": overall_roi_summary["wins"],
+                    "losses": overall_roi_summary["losses"],
+                    "pushes": overall_roi_summary["pushes"],
+                    "total_stake_units": overall_roi_summary["total_stake_units"],
+                    "total_profit_units": overall_roi_summary["total_profit_units"],
+                    "roi": overall_roi_summary["roi"],
+                }
+                if policy.report_roi
+                else {
+                    "placed_bets": 0,
+                    "wins": 0,
+                    "losses": 0,
+                    "pushes": 0,
+                    "total_stake_units": 0.0,
+                    "total_profit_units": 0.0,
+                    "roi": None,
+                }
+            ),
+            "edge_bucket_summary": edge_bucket_summary_rows,
+            "source_artifacts": {
+                "training_dataset_path": training_dataset_path,
+                "raw_vs_calibrated_path": raw_vs_calibrated_path,
+                "outcomes_path": outcomes_path,
+            },
+            "reporting_artifacts": {
+                "bet_reporting_path": bet_reporting_path,
+                "clv_summary_path": clv_summary_path,
+                "roi_summary_path": roi_summary_path,
+                "edge_bucket_summary_path": edge_bucket_summary_path,
+            },
+            "reproducibility": {
+                "notes_path": str(reproducibility_notes_path),
+                "rerun_command": rerun_command,
+            },
+        }
+
+        _write_jsonl(backtest_bets_path, backtest_rows)
+        _write_jsonl(bet_reporting_path, reporting_rows)
+        _write_jsonl(backtest_runs_path, [summary_row])
+        _write_jsonl(join_audit_path, audit_rows)
+        _write_jsonl(clv_summary_path, clv_summary_rows)
+        _write_jsonl(roi_summary_path, roi_summary_rows)
+        _write_jsonl(edge_bucket_summary_path, edge_bucket_summary_rows)
+        _write_text(
+            reproducibility_notes_path,
+            "\n".join(
+                [
+                    "# Walk-Forward Backtest Reproducibility Notes",
+                    "",
+                    f"- Local backtest run ID: `{run_id}`",
+                    f"- MLflow run ID: `{tracking_run.run_id}`",
+                    f"- MLflow experiment: `{tracking_run.experiment_name}`",
+                    f"- Tracking URI: `{tracking_run.tracking_uri}`",
+                    f"- Local run directory: `{normalized_root}`",
+                    (
+                        "- Date window: "
+                        f"`{start_date.isoformat()}` -> `{end_date.isoformat()}`"
+                    ),
+                    f"- Source model run ID: `{model_run_id}`",
+                    f"- Source model run directory: `{resolved_model_run_dir}`",
+                    (
+                        "- Cutoff minutes before first pitch: "
+                        f"`{cutoff_minutes_before_first_pitch}`"
+                    ),
+                    f"- CLI rerun command: `{rerun_command}`",
+                    (
+                        "- Honest rules: the rerun pins the exact model run directory so the "
+                        "same saved historical probabilities and timestamps are replayed."
+                    ),
+                    "",
+                ]
+            ),
+        )
+        log_run_params(
             {
-                "sample_count": overall_clv_summary["sample_count"],
-                "mean_probability_delta": overall_clv_summary["mean_probability_delta"],
-                "median_probability_delta": overall_clv_summary["median_probability_delta"],
-                "beat_closing_line_count": overall_clv_summary[
+                "pipeline": "build_walk_forward_backtest",
+                "model_version": model_version,
+                "model_run_id": model_run_id,
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
+                "output_dir": str(output_dir),
+                "resolved_model_run_dir": str(resolved_model_run_dir),
+                "cutoff_minutes_before_first_pitch": cutoff_minutes_before_first_pitch,
+            }
+        )
+        log_run_metrics(
+            {
+                "snapshot_groups": len(snapshot_groups),
+                "actionable_bets": actionable_bet_count,
+                "below_threshold": below_threshold_count,
+                "skipped": skipped_count,
+                "placed_bets": summary_row["bet_outcomes"]["placed_bets"],
+                "wins": summary_row["bet_outcomes"]["wins"],
+                "losses": summary_row["bet_outcomes"]["losses"],
+                "pushes": summary_row["bet_outcomes"]["pushes"],
+                "total_stake_units": summary_row["bet_outcomes"]["total_stake_units"],
+                "total_profit_units": summary_row["bet_outcomes"]["total_profit_units"],
+                "roi": summary_row["bet_outcomes"]["roi"],
+                "clv_sample_count": summary_row["clv_summary"]["sample_count"],
+                "clv_mean_probability_delta": summary_row["clv_summary"][
+                    "mean_probability_delta"
+                ],
+                "clv_beat_closing_line_count": summary_row["clv_summary"][
                     "beat_closing_line_count"
                 ],
-                "missing_close_count": overall_clv_summary["missing_close_count"],
             }
-            if policy.report_clv
-            else {
-                "sample_count": 0,
-                "mean_probability_delta": None,
-                "median_probability_delta": None,
-                "beat_closing_line_count": 0,
-                "missing_close_count": len(placed_bets),
-            }
-        ),
-        "roi_summary": (
-            {
-                "placed_bets": overall_roi_summary["placed_bets"],
-                "wins": overall_roi_summary["wins"],
-                "losses": overall_roi_summary["losses"],
-                "pushes": overall_roi_summary["pushes"],
-                "total_stake_units": overall_roi_summary["total_stake_units"],
-                "total_profit_units": overall_roi_summary["total_profit_units"],
-                "roi": overall_roi_summary["roi"],
-            }
-            if policy.report_roi
-            else {
-                "placed_bets": 0,
-                "wins": 0,
-                "losses": 0,
-                "pushes": 0,
-                "total_stake_units": 0.0,
-                "total_profit_units": 0.0,
-                "roi": None,
-            }
-        ),
-        "edge_bucket_summary": edge_bucket_summary_rows,
-        "source_artifacts": {
-            "training_dataset_path": training_dataset_path,
-            "raw_vs_calibrated_path": raw_vs_calibrated_path,
-            "outcomes_path": outcomes_path,
-        },
-        "reporting_artifacts": {
-            "bet_reporting_path": bet_reporting_path,
-            "clv_summary_path": clv_summary_path,
-            "roi_summary_path": roi_summary_path,
-            "edge_bucket_summary_path": edge_bucket_summary_path,
-        },
-    }
-
-    _write_jsonl(backtest_bets_path, backtest_rows)
-    _write_jsonl(bet_reporting_path, reporting_rows)
-    _write_jsonl(backtest_runs_path, [summary_row])
-    _write_jsonl(join_audit_path, audit_rows)
-    _write_jsonl(clv_summary_path, clv_summary_rows)
-    _write_jsonl(roi_summary_path, roi_summary_rows)
-    _write_jsonl(edge_bucket_summary_path, edge_bucket_summary_rows)
+        )
+        log_run_artifact(normalized_root)
 
     return WalkForwardBacktestResult(
         start_date=start_date,
         end_date=end_date,
         run_id=run_id,
+        mlflow_run_id=tracking_run.run_id,
+        mlflow_experiment_name=tracking_run.experiment_name,
         model_version=model_version,
         model_run_id=model_run_id,
         cutoff_minutes_before_first_pitch=cutoff_minutes_before_first_pitch,
@@ -1556,6 +1673,7 @@ def build_walk_forward_backtest(
         clv_summary_path=clv_summary_path,
         roi_summary_path=roi_summary_path,
         edge_bucket_summary_path=edge_bucket_summary_path,
+        reproducibility_notes_path=reproducibility_notes_path,
         snapshot_group_count=len(snapshot_groups),
         actionable_bet_count=actionable_bet_count,
         below_threshold_count=below_threshold_count,

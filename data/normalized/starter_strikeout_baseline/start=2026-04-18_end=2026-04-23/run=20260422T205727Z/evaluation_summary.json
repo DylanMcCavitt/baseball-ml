@@ -1,0 +1,138 @@
+{
+  "benchmark_name": "pitcher_k_rate_x_expected_leash_batters_faced",
+  "date_splits": {
+    "test": [
+      "2026-04-21"
+    ],
+    "train": [
+      "2026-04-18",
+      "2026-04-19"
+    ],
+    "validation": [
+      "2026-04-20"
+    ]
+  },
+  "date_window": {
+    "end_date": "2026-04-23",
+    "start_date": "2026-04-18"
+  },
+  "evaluation_path": "data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-23/run=20260422T205727Z/evaluation.json",
+  "held_out_count_distribution": {
+    "beats_poisson": {
+      "mean_negative_log_likelihood": false,
+      "mean_ranked_probability_score": true
+    },
+    "dispersion_alpha": 0.0,
+    "negative_binomial": {
+      "mean_negative_log_likelihood": 2.193437,
+      "mean_ranked_probability_score": 0.052975
+    },
+    "poisson": {
+      "mean_negative_log_likelihood": 2.193437,
+      "mean_ranked_probability_score": 0.052975
+    }
+  },
+  "held_out_performance": {
+    "beats_benchmark": {
+      "mae": true,
+      "rmse": true
+    },
+    "benchmark": {
+      "mae": 2.047866,
+      "rmse": 2.518693,
+      "spearman_rank_correlation": 0.321431
+    },
+    "model": {
+      "mae": 1.960881,
+      "rmse": 2.322574,
+      "spearman_rank_correlation": 0.275293
+    },
+    "status": "beating_benchmark"
+  },
+  "held_out_probability_calibration": {
+    "calibrated": {
+      "expected_calibration_error": 0.02285,
+      "mean_brier_score": 0.051112,
+      "mean_log_loss": 0.346381
+    },
+    "improves_raw": {
+      "expected_calibration_error": true,
+      "mean_brier_score": true,
+      "mean_log_loss": false
+    },
+    "raw": {
+      "expected_calibration_error": 0.028622,
+      "mean_brier_score": 0.052066,
+      "mean_log_loss": 0.164896
+    }
+  },
+  "mlflow_experiment_name": "mlb-props-stack-starter-strikeout-training",
+  "mlflow_run_id": "5fbc851c3c7643daa4add2fb6706eee5",
+  "model_version": "starter-strikeout-baseline-v1",
+  "previous_run_comparison": null,
+  "reproducibility": {
+    "notes_path": "data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-23/run=20260422T205727Z/reproducibility_notes.md",
+    "rerun_command": "uv run python -m mlb_props_stack train-starter-strikeout-baseline --start-date 2026-04-18 --end-date 2026-04-23 --output-dir data"
+  },
+  "row_counts": {
+    "held_out": 48,
+    "test": 28,
+    "train": 60,
+    "validation": 20
+  },
+  "run_id": "20260422T205727Z",
+  "summary_version": "starter_strikeout_baseline_evaluation_v1",
+  "top_feature_importance": [
+    {
+      "absolute_importance": 0.627519,
+      "coefficient": 0.627519,
+      "feature": "rest_days"
+    },
+    {
+      "absolute_importance": 0.545975,
+      "coefficient": 0.545975,
+      "feature": "pitcher_k_rate"
+    },
+    {
+      "absolute_importance": 0.370838,
+      "coefficient": 0.370838,
+      "feature": "recent_pitch_count"
+    },
+    {
+      "absolute_importance": 0.338268,
+      "coefficient": 0.338268,
+      "feature": "csw_rate"
+    },
+    {
+      "absolute_importance": 0.316851,
+      "coefficient": 0.316851,
+      "feature": "pitch_sample_size"
+    },
+    {
+      "absolute_importance": 0.177839,
+      "coefficient": 0.177839,
+      "feature": "expected_leash_batters_faced"
+    },
+    {
+      "absolute_importance": 0.176321,
+      "coefficient": -0.176321,
+      "feature": "recent_batters_faced"
+    },
+    {
+      "absolute_importance": 0.077162,
+      "coefficient": 0.077162,
+      "feature": "plate_appearance_sample_size"
+    },
+    {
+      "absolute_importance": 0.058488,
+      "coefficient": -0.058488,
+      "feature": "swinging_strike_rate"
+    },
+    {
+      "absolute_importance": 0.027478,
+      "coefficient": -0.027478,
+      "feature": "last_start_batters_faced"
+    }
+  ],
+  "tracking_uri": "file:./artifacts/mlruns"
+}

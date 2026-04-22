@@ -251,7 +251,8 @@ first dashboard-ready reporting artifacts on top of those decision seams:
   stores a flat per-bet table with paper-result, CLV, edge-bucket, and
   model-vs-market scatter fields broken out for downstream dashboards
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../backtest_runs.jsonl`
-  stores the run-level summary for one requested historical window
+  stores the run-level summary for one requested historical window, including
+  the associated MLflow run ID and rerun metadata
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../join_audit.jsonl`
   stores the freshness and cutoff audit for every kept or rejected backtest row
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../clv_summary.jsonl`

@@ -11,7 +11,9 @@ requires-python = ">=3.11"
 authors = [
   { name = "Dylan McCavitt" }
 ]
-dependencies = []
+dependencies = [
+  "mlflow-skinny>=2.20,<3",
+]
 
 [project.optional-dependencies]
 dev = [

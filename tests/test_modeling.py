@@ -13,6 +13,7 @@ from mlb_props_stack.modeling import (
     starter_strikeout_line_probability,
     train_starter_strikeout_baseline,
 )
+from mlb_props_stack.tracking import TrackingConfig
 
 
 STATCAST_HEADERS = [
@@ -49,6 +50,10 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
         "".join(f"{json.dumps(row, sort_keys=True)}\n" for row in rows),
         encoding="utf-8",
     )
+
+
+def _tracking_config(tmp_path: Path) -> TrackingConfig:
+    return TrackingConfig(tracking_uri=f"file:{tmp_path / 'artifacts' / 'mlruns'}")
 
 
 def _csv_text(rows: list[dict[str, object]]) -> str:
@@ -351,6 +356,7 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
         output_dir=tmp_path,
         client=FakeStatcastClient(outcome_csv_by_pitcher_and_date),
         now=lambda: datetime(2026, 4, 21, 18, 0, tzinfo=UTC),
+        tracking_config=_tracking_config(tmp_path),
     )
 
     evaluation = json.loads(result.evaluation_path.read_text(encoding="utf-8"))
@@ -436,6 +442,7 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     assert "features_as_of" not in model_artifact["encoded_feature_names"]
     assert "projected_lineup_k_rate" in model_artifact["encoded_feature_names"]
     assert model_artifact["count_distribution"]["dispersion_alpha"] == result.dispersion_alpha
+    assert model_artifact["tracking"]["mlflow_run_id"] == result.mlflow_run_id
     assert model_artifact["probability_calibration"]["name"] == (
         "isotonic_ladder_probability_calibrator_v1"
     )
@@ -443,7 +450,13 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     assert calibration_summary["production_calibrator"]["name"] == (
         "isotonic_ladder_probability_calibrator_v1"
     )
+    assert evaluation["tracking"]["mlflow_run_id"] == result.mlflow_run_id
     assert evaluation_summary["held_out_performance"]["status"] == "beating_benchmark"
+    assert evaluation_summary["mlflow_run_id"] == result.mlflow_run_id
+    assert (
+        evaluation_summary["mlflow_experiment_name"]
+        == "mlb-props-stack-starter-strikeout-training"
+    )
     assert evaluation_summary["previous_run_comparison"]["previous_run_id"] == "20260420T170000Z"
     assert (
         evaluation_summary["previous_run_comparison"]["held_out_model"]["rmse"]["status"]
@@ -455,9 +468,11 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     )
     assert len(evaluation_summary["top_feature_importance"]) == 10
     assert "Starter Strikeout Baseline Evaluation Summary" in evaluation_summary_markdown
+    assert "MLflow run ID" in evaluation_summary_markdown
     assert "Held-Out Performance" in evaluation_summary_markdown
     assert "Comparison To Previous Run" in evaluation_summary_markdown
     assert "projected_lineup_k_rate" in evaluation_summary_markdown
+    assert result.reproducibility_notes_path.exists()
     assert raw_vs_calibrated_rows
     assert all(
         row["calibration_fit_through_date"] < row["official_date"]
@@ -549,6 +564,7 @@ def test_train_starter_strikeout_baseline_skips_rows_without_same_game_outcomes(
             datetime(2026, 4, 22, 18, 0, tzinfo=UTC) + timedelta(minutes=index)
             for index in range(20)
         ).__next__,
+        tracking_config=_tracking_config(tmp_path),
     )
 
     assert result.row_count == 3
@@ -642,6 +658,7 @@ def test_train_starter_strikeout_baseline_excludes_sparse_optional_lineup_featur
         output_dir=tmp_path,
         client=FakeStatcastClient(responses),
         now=lambda: datetime(2026, 4, 21, 18, 0, tzinfo=UTC),
+        tracking_config=_tracking_config(tmp_path),
     )
     model_artifact = json.loads(result.model_path.read_text(encoding="utf-8"))
 

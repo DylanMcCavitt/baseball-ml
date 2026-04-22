@@ -311,6 +311,21 @@ AGE-153 adds the first target-date inference and paper-tracking layer:
   stores only the actionable paper bets from the latest sheet per date, with
   same-line CLV where available and pending vs settled result status
 
+AGE-154 adds the first explicit experiment-tracking layer:
+
+- `TrackingConfig` now defines a local MLflow store at
+  `file:./artifacts/mlruns`
+- training runs log into
+  `mlb-props-stack-starter-strikeout-training`
+- walk-forward backtests log into
+  `mlb-props-stack-walk-forward-backtest`
+- `evaluation_summary.json` now stores the MLflow run ID, experiment name, and
+  the exact rerun command for the saved training slice
+- `backtest_runs.jsonl` now stores the associated MLflow run ID for each
+  backtest window summary row
+- both training and backtest run directories now include
+  `reproducibility_notes.md` so the exact CLI inputs can be relaunched later
+
 ## Model Shape
 
 The docs should define the modeling job without pretending the implementation
