@@ -7,7 +7,11 @@ from io import StringIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from mlb_props_stack.modeling import train_starter_strikeout_baseline
+from mlb_props_stack.modeling import (
+    starter_strikeout_ladder_probabilities,
+    starter_strikeout_line_probability,
+    train_starter_strikeout_baseline,
+)
 
 
 STATCAST_HEADERS = [
@@ -314,6 +318,11 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
 
     evaluation = json.loads(result.evaluation_path.read_text(encoding="utf-8"))
     model_artifact = json.loads(result.model_path.read_text(encoding="utf-8"))
+    ladder_rows = [
+        json.loads(line)
+        for line in result.ladder_probabilities_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
     dataset_rows = [
         json.loads(line)
         for line in result.dataset_path.read_text(encoding="utf-8").splitlines()
@@ -322,17 +331,59 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
 
     assert result.row_count == 10
     assert result.outcome_count == 10
+    assert result.dispersion_alpha >= 0.0
     assert evaluation["held_out_beats_benchmark"] == {"rmse": True, "mae": True}
     assert evaluation["model"]["held_out"]["rmse"] < evaluation["benchmark"]["held_out"]["rmse"]
     assert evaluation["model"]["held_out"]["mae"] <= evaluation["benchmark"]["held_out"]["mae"]
+    assert evaluation["count_distribution"]["name"] == "negative_binomial_global_dispersion_v1"
+    assert set(evaluation["count_distribution"]["held_out_beats_poisson"]) == {
+        "mean_negative_log_likelihood",
+        "mean_ranked_probability_score",
+    }
     assert evaluation["date_splits"]["train"] == ["2026-04-16", "2026-04-17", "2026-04-18"]
     assert evaluation["date_splits"]["validation"] == ["2026-04-19"]
     assert evaluation["date_splits"]["test"] == ["2026-04-20"]
     assert dataset_rows[0]["starter_strikeouts"] > 0
+    assert ladder_rows[0]["count_distribution"]["dispersion_alpha"] == result.dispersion_alpha
+    assert ladder_rows[0]["ladder_probabilities"][0]["line"] == 0.5
+    assert ladder_rows[0]["ladder_probabilities"][0]["over_probability"] < 1.0
     assert "starter_strikeouts" not in model_artifact["encoded_feature_names"]
     assert "features_as_of" not in model_artifact["encoded_feature_names"]
     assert "projected_lineup_k_rate" in model_artifact["encoded_feature_names"]
+    assert model_artifact["count_distribution"]["dispersion_alpha"] == result.dispersion_alpha
     assert any(
         item["feature"] == "projected_lineup_k_rate"
         for item in evaluation["feature_importance"]
     )
+
+
+def test_line_and_ladder_probability_helpers_are_monotonic_and_complementary():
+    over_probability, under_probability = starter_strikeout_line_probability(
+        mean=6.2,
+        line=5.5,
+        dispersion_alpha=0.24,
+    )
+
+    assert round(over_probability + under_probability, 6) == 1.0
+    ladder = starter_strikeout_ladder_probabilities(
+        mean=6.2,
+        dispersion_alpha=0.24,
+    )
+
+    assert ladder[0]["line"] == 0.5
+    assert ladder[0]["over_probability"] > ladder[-1]["over_probability"]
+    assert ladder[0]["under_probability"] < ladder[-1]["under_probability"]
+    assert all(
+        left["over_probability"] >= right["over_probability"]
+        and left["under_probability"] <= right["under_probability"]
+        for left, right in zip(ladder, ladder[1:])
+    )
+    assert next(
+        item
+        for item in ladder
+        if item["line"] == 5.5
+    ) == {
+        "line": 5.5,
+        "over_probability": round(over_probability, 6),
+        "under_probability": round(under_probability, 6),
+    }

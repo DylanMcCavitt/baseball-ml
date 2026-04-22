@@ -140,11 +140,13 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
         run_id="20260421T180000Z",
         row_count=48,
         outcome_count=48,
+        dispersion_alpha=0.183742,
         dataset_path=tmp_path / "training_dataset.jsonl",
         outcomes_path=tmp_path / "starter_outcomes.jsonl",
         date_splits_path=tmp_path / "date_splits.json",
         model_path=tmp_path / "baseline_model.json",
         evaluation_path=tmp_path / "evaluation.json",
+        ladder_probabilities_path=tmp_path / "ladder_probabilities.jsonl",
     )
 
     monkeypatch.setattr(
@@ -167,4 +169,6 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
 
     assert "Starter strikeout baseline training complete for 2026-04-01 -> 2026-04-20" in output
     assert "training_rows=48" in output
+    assert "dispersion_alpha=0.183742" in output
     assert "model_path=" in output
+    assert "ladder_probabilities_path=" in output

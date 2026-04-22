@@ -224,6 +224,17 @@ Current AGE-147 behavior:
 - reports RMSE, MAE, and Spearman rank correlation plus coefficient-based
   feature importance in `evaluation.json`
 
+AGE-148 adds the first explicit count-distribution layer on top of that mean:
+
+- the ridge baseline still owns the expected strikeout mean
+- a single global negative-binomial dispersion parameter is then fit from the
+  training rows using method-of-moments
+- half-strikeout ladder probabilities are derived from that fitted count
+  distribution and written per starter-game to `ladder_probabilities.jsonl`
+- `evaluation.json` now compares the fitted negative-binomial layer against a
+  Poisson fallback using the same mean predictions on train, validation, test,
+  and combined held-out rows
+
 ## Model Shape
 
 The docs should define the modeling job without pretending the implementation
@@ -243,6 +254,10 @@ Current implementation path:
 - current trainable baseline:
   deterministic ridge-style linear regression implemented in the standard
   library so the repo stays dependency-light during bootstrap
+- current count-distribution layer:
+  a fitted global negative-binomial dispersion parameter with variance
+  `mean + alpha * mean^2`, used to turn the ridge mean into over or under line
+  probabilities and adjacent ladder rungs
 - later production candidate:
   tree-based regressor or classifier in a dedicated issue that expands
   dependencies deliberately

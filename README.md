@@ -227,10 +227,16 @@ The normalized outputs include:
   train, validation, and test dates saved explicitly instead of random row
   splits
 - `baseline_model.json`
-  the serialized ridge-style linear baseline model and feature schema
+  the serialized ridge-style linear baseline model, feature schema, and fitted
+  global count-distribution dispersion parameter
 - `evaluation.json`
   RMSE, MAE, and Spearman rank correlation for both the naive benchmark and the
-  trainable baseline, plus coefficient-based feature importance
+  trainable baseline, plus coefficient-based feature importance and held-out
+  count-distribution metrics
+- `ladder_probabilities.jsonl`
+  one row per starter-game with the predicted mean, fitted negative-binomial
+  dispersion, and half-strikeout ladder over/under probabilities derived from
+  that distribution
 
 ## CI
 
