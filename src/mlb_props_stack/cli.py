@@ -22,8 +22,13 @@ from .ingest import (
     ingest_statcast_features_for_date,
 )
 from .modeling import (
+    StarterStrikeoutInferenceResult,
     StarterStrikeoutBaselineTrainingResult,
     train_starter_strikeout_baseline,
+)
+from .paper_tracking import (
+    DailyCandidateWorkflowResult,
+    build_daily_candidate_workflow,
 )
 from .tracking import TrackingConfig
 
@@ -130,6 +135,23 @@ def render_starter_strikeout_training_summary(
     return "\n".join(lines)
 
 
+def render_starter_strikeout_inference_summary(
+    result: StarterStrikeoutInferenceResult,
+) -> str:
+    """Return a human-readable summary for one target-date inference run."""
+    lines = [
+        f"Starter strikeout inference complete for {result.target_date.isoformat()}",
+        f"run_id={result.run_id}",
+        f"source_model_run_id={result.source_model_run_id}",
+        f"projection_count={result.projection_count}",
+        f"source_model_path={result.source_model_path}",
+        f"feature_run_dir={result.feature_run_dir}",
+        f"model_path={result.model_path}",
+        f"ladder_probabilities_path={result.ladder_probabilities_path}",
+    ]
+    return "\n".join(lines)
+
+
 def render_edge_candidate_summary(result: EdgeCandidateBuildResult) -> str:
     """Return a human-readable summary for one edge-candidate build."""
     lines = [
@@ -146,6 +168,25 @@ def render_edge_candidate_summary(result: EdgeCandidateBuildResult) -> str:
         f"model_path={result.model_path}",
         f"ladder_probabilities_path={result.ladder_probabilities_path}",
         f"edge_candidates_path={result.edge_candidates_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_daily_candidate_workflow_summary(
+    result: DailyCandidateWorkflowResult,
+) -> str:
+    """Return a human-readable summary for one daily candidate workflow run."""
+    lines = [
+        f"Daily candidate workflow complete for {result.target_date.isoformat()}",
+        f"run_id={result.run_id}",
+        f"inference_run_id={result.inference_run_id}",
+        f"edge_candidate_run_id={result.edge_candidate_run_id}",
+        f"scored_candidates={result.scored_candidate_count}",
+        f"actionable_candidates={result.actionable_candidate_count}",
+        f"settled_paper_results={result.settled_result_count}",
+        f"pending_paper_results={result.pending_result_count}",
+        f"daily_candidates_path={result.daily_candidates_path}",
+        f"paper_results_path={result.paper_results_path}",
     ]
     return "\n".join(lines)
 
@@ -263,6 +304,36 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Directory where feature inputs and training artifacts live.",
     )
 
+    daily_candidates_parser = subparsers.add_parser(
+        "build-daily-candidates",
+        help=(
+            "Score one target-date slate from the latest honest model run and "
+            "refresh paper-tracking results."
+        ),
+    )
+    daily_candidates_parser.add_argument(
+        "--date",
+        dest="target_date",
+        default=None,
+        help=(
+            "Official date to evaluate in YYYY-MM-DD format. "
+            "Defaults to today in the configured stack timezone."
+        ),
+    )
+    daily_candidates_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where normalized features, odds, and paper-tracking artifacts live.",
+    )
+    daily_candidates_parser.add_argument(
+        "--source-model-run-dir",
+        default=None,
+        help=(
+            "Optional explicit starter_strikeout_baseline run directory to use for "
+            "pregame inference. Defaults to the latest run ending before the target date."
+        ),
+    )
+
     edge_parser = subparsers.add_parser(
         "build-edge-candidates",
         help="Join latest odds snapshots to saved model ladders and score edges.",
@@ -360,6 +431,19 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=args.output_dir,
         )
         print(render_starter_strikeout_training_summary(result))
+        return
+
+    if args.command == "build-daily-candidates":
+        result = build_daily_candidate_workflow(
+            target_date=(
+                date.fromisoformat(args.target_date)
+                if args.target_date is not None
+                else None
+            ),
+            output_dir=args.output_dir,
+            source_model_run_dir=args.source_model_run_dir,
+        )
+        print(render_daily_candidate_workflow_summary(result))
         return
 
     if args.command == "build-edge-candidates":

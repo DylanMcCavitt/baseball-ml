@@ -286,6 +286,24 @@ evaluation plus the first dashboard-ready reporting outputs:
   `raw_vs_calibrated_probabilities.jsonl`, not the production calibrator stored
   alongside `ladder_probabilities.jsonl`
 
+AGE-153 adds the first target-date inference and paper-tracking layer:
+
+- `generate_starter_strikeout_inference_for_date(target_date=...)`
+  loads the latest saved baseline run whose historical coverage still ends
+  before the requested slate, then scores one target date from the latest
+  AGE-146 feature rows
+- `data/normalized/starter_strikeout_inference/date=YYYY-MM-DD/run=.../ladder_probabilities.jsonl`
+  stores those target-date raw and calibrated ladder probabilities
+- `build-daily-candidates --date YYYY-MM-DD`
+  uses that target-date inference output plus the latest saved line snapshots
+  to write `daily_candidates.jsonl` and refresh `paper_results.jsonl`
+- `daily_candidates.jsonl`
+  stores ranked scored props for the slate, including actionable and
+  below-threshold rows
+- `paper_results.jsonl`
+  stores only the actionable paper bets from the latest sheet per date, with
+  same-line CLV where available and pending vs settled result status
+
 ## Model Shape
 
 The docs should define the modeling job without pretending the implementation
@@ -332,9 +350,10 @@ For every evaluated prop:
 
 If that ordering cannot be proven, the record is invalid.
 
-Current AGE-150 historical candidate generation uses
-`projection_generated_at = features_as_of` as the conservative default until a
-dedicated live inference artifact exists.
+Current AGE-153 target-date inference writes a separate
+`inference_generated_at` timestamp for the run itself, while
+`projection_generated_at` still stays equal to `features_as_of` so the saved
+projection timestamp remains conservative against the quoted line snapshot.
 
 ### Lineup handling
 
