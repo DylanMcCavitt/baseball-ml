@@ -265,6 +265,16 @@ The normalized outputs include:
 - `calibration_summary.json`
   reliability bins and probability diagnostics formatted for later MLflow or
   dashboard logging
+- `evaluation_summary.json`
+  a compact machine-readable offline report with held-out benchmark-vs-model
+  metrics, top feature importance, and same-window previous-run deltas
+- `evaluation_summary.md`
+  a human-readable markdown version of the same offline report for quick local
+  review after each training run
+
+The training CLI summary also now prints the held-out RMSE and MAE for both the
+benchmark and the model, plus the previous run ID when the same date window has
+already been trained before.
 
 ## Edge Candidate Build
 

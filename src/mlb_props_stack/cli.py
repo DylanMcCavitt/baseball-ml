@@ -117,6 +117,9 @@ def render_starter_strikeout_training_summary(
     result: StarterStrikeoutBaselineTrainingResult,
 ) -> str:
     """Return a human-readable summary for one baseline training run."""
+    def _render_metric(value: float | None) -> str:
+        return "n/a" if value is None else f"{value:.6f}"
+
     lines = [
         (
             "Starter strikeout baseline training complete for "
@@ -126,6 +129,12 @@ def render_starter_strikeout_training_summary(
         f"training_rows={result.row_count}",
         f"starter_outcomes={result.outcome_count}",
         f"dispersion_alpha={result.dispersion_alpha:.6f}",
+        f"held_out_status={result.held_out_status}",
+        f"held_out_model_rmse={_render_metric(result.held_out_model_rmse)}",
+        f"held_out_benchmark_rmse={_render_metric(result.held_out_benchmark_rmse)}",
+        f"held_out_model_mae={_render_metric(result.held_out_model_mae)}",
+        f"held_out_benchmark_mae={_render_metric(result.held_out_benchmark_mae)}",
+        f"previous_run_id={result.previous_run_id or 'n/a'}",
         f"dataset_path={result.dataset_path}",
         f"outcomes_path={result.outcomes_path}",
         f"date_splits_path={result.date_splits_path}",
@@ -135,6 +144,8 @@ def render_starter_strikeout_training_summary(
         f"probability_calibrator_path={result.probability_calibrator_path}",
         f"raw_vs_calibrated_path={result.raw_vs_calibrated_path}",
         f"calibration_summary_path={result.calibration_summary_path}",
+        f"evaluation_summary_path={result.evaluation_summary_path}",
+        f"evaluation_summary_markdown_path={result.evaluation_summary_markdown_path}",
     ]
     return "\n".join(lines)
 

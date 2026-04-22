@@ -228,6 +228,42 @@ class FakeStatcastClient:
 def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(tmp_path):
     outcome_csv_by_pitcher_and_date: dict[tuple[str, int], str] = {}
     start_date = date(2026, 4, 16)
+    end_date = start_date + timedelta(days=4)
+    previous_run_dir = (
+        tmp_path
+        / "normalized"
+        / "starter_strikeout_baseline"
+        / f"start={start_date.isoformat()}_end={end_date.isoformat()}"
+        / "run=20260420T170000Z"
+    )
+    previous_run_dir.mkdir(parents=True, exist_ok=True)
+    (previous_run_dir / "evaluation.json").write_text(
+        json.dumps(
+            {
+                "model": {
+                    "held_out": {
+                        "rmse": 3.9,
+                        "mae": 3.1,
+                        "spearman_rank_correlation": 0.12,
+                    }
+                },
+                "probability_calibration": {
+                    "honest_held_out": {
+                        "held_out": {
+                            "calibrated": {
+                                "mean_brier_score": 0.245,
+                                "mean_log_loss": 0.691,
+                                "expected_calibration_error": 0.133,
+                            }
+                        }
+                    }
+                },
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     all_feature_rows = []
     for date_index in range(5):
         official_date = start_date + timedelta(days=date_index)
@@ -311,7 +347,7 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
 
     result = train_starter_strikeout_baseline(
         start_date=start_date,
-        end_date=start_date + timedelta(days=4),
+        end_date=end_date,
         output_dir=tmp_path,
         client=FakeStatcastClient(outcome_csv_by_pitcher_and_date),
         now=lambda: datetime(2026, 4, 21, 18, 0, tzinfo=UTC),
@@ -324,6 +360,12 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     )
     calibration_summary = json.loads(
         result.calibration_summary_path.read_text(encoding="utf-8")
+    )
+    evaluation_summary = json.loads(
+        result.evaluation_summary_path.read_text(encoding="utf-8")
+    )
+    evaluation_summary_markdown = result.evaluation_summary_markdown_path.read_text(
+        encoding="utf-8"
     )
     ladder_rows = [
         json.loads(line)
@@ -344,9 +386,17 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     assert result.row_count == 10
     assert result.outcome_count == 10
     assert result.dispersion_alpha >= 0.0
+    assert result.held_out_status == "beating_benchmark"
+    assert result.previous_run_id == "20260420T170000Z"
+    assert result.evaluation_summary_path.exists()
+    assert result.evaluation_summary_markdown_path.exists()
     assert evaluation["held_out_beats_benchmark"] == {"rmse": True, "mae": True}
     assert evaluation["model"]["held_out"]["rmse"] < evaluation["benchmark"]["held_out"]["rmse"]
     assert evaluation["model"]["held_out"]["mae"] <= evaluation["benchmark"]["held_out"]["mae"]
+    assert result.held_out_model_rmse == evaluation["model"]["held_out"]["rmse"]
+    assert result.held_out_benchmark_rmse == evaluation["benchmark"]["held_out"]["rmse"]
+    assert result.held_out_model_mae == evaluation["model"]["held_out"]["mae"]
+    assert result.held_out_benchmark_mae == evaluation["benchmark"]["held_out"]["mae"]
     assert evaluation["count_distribution"]["name"] == "negative_binomial_global_dispersion_v1"
     assert set(evaluation["count_distribution"]["held_out_beats_poisson"]) == {
         "mean_negative_log_likelihood",
@@ -393,6 +443,21 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     assert calibration_summary["production_calibrator"]["name"] == (
         "isotonic_ladder_probability_calibrator_v1"
     )
+    assert evaluation_summary["held_out_performance"]["status"] == "beating_benchmark"
+    assert evaluation_summary["previous_run_comparison"]["previous_run_id"] == "20260420T170000Z"
+    assert (
+        evaluation_summary["previous_run_comparison"]["held_out_model"]["rmse"]["status"]
+        == "improved"
+    )
+    assert (
+        evaluation_summary["previous_run_comparison"]["held_out_model"]["mae"]["status"]
+        == "improved"
+    )
+    assert len(evaluation_summary["top_feature_importance"]) == 10
+    assert "Starter Strikeout Baseline Evaluation Summary" in evaluation_summary_markdown
+    assert "Held-Out Performance" in evaluation_summary_markdown
+    assert "Comparison To Previous Run" in evaluation_summary_markdown
+    assert "projected_lineup_k_rate" in evaluation_summary_markdown
     assert raw_vs_calibrated_rows
     assert all(
         row["calibration_fit_through_date"] < row["official_date"]

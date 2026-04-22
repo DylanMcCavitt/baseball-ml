@@ -96,6 +96,8 @@ Do not stop at process exit code. Inspect the outputs.
 For training and calibration work, open:
 
 - `evaluation.json`
+- `evaluation_summary.json`
+- `evaluation_summary.md`
 - `calibration_summary.json`
 - `raw_vs_calibrated_probabilities.jsonl`
 - `ladder_probabilities.jsonl`
