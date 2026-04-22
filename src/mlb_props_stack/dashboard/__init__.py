@@ -1,1 +1,1 @@
-"""Dashboard package reserved for the future Streamlit app."""
+"""Dashboard package for the Streamlit strikeout-props workbench."""

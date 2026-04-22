@@ -48,7 +48,7 @@ modeling work must honor.
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
 | Evaluation guardrails | `src/mlb_props_stack/backtest.py` | cutoff-safe snapshot selection, walk-forward backtest joins, join-audit artifacts, chart-ready reporting tables, and the baseline honesty checklist |
-| Tracking and dashboard seams | `src/mlb_props_stack/tracking.py`, `src/mlb_props_stack/dashboard/app.py` | reserved tracking config plus the first Streamlit slate-review page and its future expansion point |
+| Tracking and dashboard seams | `src/mlb_props_stack/tracking.py`, `src/mlb_props_stack/dashboard/app.py` | reserved tracking config plus the Strike Ops Streamlit workbench for board review, pitcher drill-down, backtests, registry, feature inspection, and config controls |
 
 The most important current contract boundary is the join between
 `PropLine.selection_key` and `PropProjection.selection_key`. Future adapters can
@@ -285,6 +285,13 @@ The Streamlit dashboard now reads those AGE-153 artifacts directly:
   powers the current-slate table and slate-level counts
 - `paper_results`
   powers recent paper performance and per-bet result review
+- `evaluation_summary.json` and `calibration_summary.json`
+  power the backtest KPI strip, reliability plot, and feature inspection
+- `roi_summary.jsonl`, `clv_summary.jsonl`, and `bet_reporting.jsonl`
+  power the walk-forward charts and model-vs-market scatter when those artifacts
+  exist
+- the local MLflow tracking store
+  powers the registry screen and run-diff actions
 
 The first backtest slice intentionally uses held-out probabilities from
 `raw_vs_calibrated_probabilities.jsonl` rather than the production calibrator
