@@ -48,6 +48,9 @@ That is a math-and-process problem first, and a betting problem second.
   Core data models for props, projections, and decisions.
 - `src/mlb_props_stack/ingest/mlb_stats_api.py`
   MLB Stats API adapters for schedule, probable starters, and lineup snapshots.
+- `src/mlb_props_stack/ingest/statcast_features.py`
+  Targeted Statcast pulls plus normalized pitcher, lineup, and game-context
+  feature tables for one slate date.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
 - `src/mlb_props_stack/backtest.py`
@@ -147,6 +150,43 @@ Each normalized `prop_line_snapshots` row preserves:
 - the mapped MLB `gamePk` when the `odds_matchup_key` join succeeds
 - the exact two-way line and `market_last_update`
 - the ingest `captured_at` timestamp for replayable line history
+
+## Statcast Feature Build
+
+`AGE-146` adds the first feature-table build that turns MLB metadata plus
+targeted Statcast pulls into model-ready daily rows.
+
+This command expects a prior MLB metadata run for the same target date under
+`data/normalized/mlb_stats_api/...`, because it uses the latest pregame-valid
+metadata run for the slate and only accepts lineup snapshots whose
+`captured_at` is still on or before the scheduled `commence_time`.
+
+Build one slate's feature tables from the previous `--history-days` official
+dates of Statcast history:
+
+```bash
+uv run python -m mlb_props_stack ingest-statcast-features --date 2026-04-21
+```
+
+By default that writes:
+
+- raw Statcast CSV pulls under
+  `data/raw/statcast_search/date=YYYY-MM-DD/player_type=.../player_id=.../`
+- a pull manifest under
+  `data/normalized/statcast_search/date=YYYY-MM-DD/run=.../pull_manifest.jsonl`
+- a normalized `pitch_level_base.jsonl` table
+- `pitcher_daily_features.jsonl`
+- `lineup_daily_features.jsonl`
+- `game_context_features.jsonl`
+
+The current feature build is intentionally explicit about missing inputs:
+
+- lineups captured after first pitch are treated as unavailable for pregame
+  feature rows
+- weather stays null with `missing_weather_source` until a timestamp-valid
+  source is added
+- park factor stays null with `missing_park_factor_source` rather than being
+  silently backfilled
 
 ## CI
 

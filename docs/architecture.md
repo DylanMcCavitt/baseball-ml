@@ -43,7 +43,7 @@ modeling work must honor.
 | --- | --- | --- |
 | Runtime defaults | `src/mlb_props_stack/config.py` | market name, edge threshold, Kelly fraction, bankroll cap, timezone |
 | Prop and projection contracts | `src/mlb_props_stack/markets.py` | `PropLine`, `PropProjection`, `EdgeDecision`, `PropSelectionKey`, `ProjectionInputRef` |
-| Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py`, `src/mlb_props_stack/ingest/odds_api.py` | fetch schedule, `feed/live`, and sportsbook event-odds payloads; preserve raw snapshots; normalize `games`, `probable_starters`, `lineup_snapshots`, `event_game_mappings`, and `prop_line_snapshots` |
+| Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py`, `src/mlb_props_stack/ingest/odds_api.py`, `src/mlb_props_stack/ingest/statcast_features.py` | fetch schedule, `feed/live`, sportsbook event-odds payloads, and targeted Statcast CSV pulls; preserve raw snapshots; normalize `games`, `probable_starters`, `lineup_snapshots`, `event_game_mappings`, `prop_line_snapshots`, `pitch_level_base`, `pitcher_daily_features`, `lineup_daily_features`, and `game_context_features` |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, emit the best actionable side |
 | Evaluation guardrails | `src/mlb_props_stack/backtest.py` | walk-forward policy flags and the baseline honesty checklist |
@@ -87,9 +87,9 @@ In code terms, that flow should eventually materialize as:
 5. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
    considered valid
 
-## Current AGE-144 And AGE-145 Output Shape
+## Current AGE-144, AGE-145, And AGE-146 Output Shape
 
-The first two ingest slices now write both raw and normalized artifacts locally.
+The first three ingest slices now write both raw and normalized artifacts locally.
 
 - raw schedule payloads:
   `data/raw/mlb_stats_api/date=YYYY-MM-DD/schedule/captured_at=...json`
@@ -139,6 +139,39 @@ The normalized sportsbook files are:
   one row per sportsbook, pitcher, line, and capture time with paired
   over/under odds, `market_last_update`, the source `event_id`, and the mapped
   `gamePk` when available
+
+AGE-146 adds:
+
+- raw Statcast CSV pulls:
+  `data/raw/statcast_search/date=YYYY-MM-DD/player_type=.../player_id=.../captured_at=...csv`
+- normalized runs:
+  `data/normalized/statcast_search/date=YYYY-MM-DD/run=.../`
+
+The normalized Statcast feature files are:
+
+- `pull_manifest.jsonl`
+  one row per targeted pitcher or batter pull with the exact CSV URL, history
+  window, raw path, and row count
+- `pitch_level_base.jsonl`
+  one normalized pitch row per unique `(gamePk, at_bat_number, pitch_number,
+  pitcher, batter)` across all raw pulls, with chase/contact flags preserved for
+  feature tracing
+- `pitcher_daily_features.jsonl`
+  one row per probable starter with rolling strikeout, whiff, CSW, pitch mix,
+  velocity, extension, workload, and rest features
+- `lineup_daily_features.jsonl`
+  one row per probable starter keyed to the opponent lineup snapshot when a
+  pregame-valid lineup exists
+- `game_context_features.jsonl`
+  one row per probable starter with venue, rest, expected leash proxies, and
+  explicit missing-value markers for unsourced park-factor and weather fields
+
+The lineup guardrail in AGE-146 is intentionally strict:
+
+- only lineup snapshots with `captured_at <= commence_time` are allowed into the
+  pregame feature tables
+- if the latest lineup snapshot is late, the feature row keeps a missing-lineup
+  status instead of silently leaking a post-lock lineup
 
 ## Timestamp Authority
 

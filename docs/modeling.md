@@ -169,6 +169,36 @@ Weather and umpire adjustments stay optional until they can be sourced with
 their own timestamp-valid snapshots. They are not excuses to inject vague or
 manually remembered context.
 
+## Current AGE-146 Feature Tables
+
+The current feature build writes four concrete artifacts for one target date:
+
+- `pitch_level_base`
+  normalized pitch rows from targeted Statcast pulls for the slate's probable
+  starters and any pregame-valid opponent lineup hitters
+- `pitcher_daily_features`
+  one row per probable starter with rolling strikeout rate, whiff rate, CSW,
+  pitch mix, release-speed deltas, release-extension deltas, recent workload,
+  and rest
+- `lineup_daily_features`
+  one row per probable starter with opponent-lineup strikeout, chase, contact,
+  continuity, and confirmation fields
+- `game_context_features`
+  one row per probable starter with venue, home/away, rest, and expected leash
+  proxies
+
+Current implementation details that later issues must preserve unless they
+explicitly replace them:
+
+- the Statcast history window stops at the prior official date, never the
+  evaluated date itself
+- lineup features only use lineup snapshots whose `captured_at` is still on or
+  before the scheduled first pitch
+- lineup rows stay explicit when the lineup is missing or late; they do not
+  silently swap in a later confirmed lineup
+- weather and park factor currently remain null with explicit status fields
+  until a timestamp-valid source is added
+
 ## Model Shape
 
 The docs should define the modeling job without pretending the implementation
