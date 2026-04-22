@@ -1,5 +1,6 @@
 from datetime import date
 
+from mlb_props_stack.backtest import WalkForwardBacktestResult
 from mlb_props_stack.cli import main, render_runtime_summary
 from mlb_props_stack.edge import EdgeCandidateBuildResult
 from mlb_props_stack.ingest import (
@@ -218,3 +219,46 @@ def test_edge_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsys
     assert "model_version=starter-strikeout-baseline-v1" in output
     assert "actionable_candidates=3" in output
     assert "edge_candidates_path=" in output
+
+
+def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = WalkForwardBacktestResult(
+        start_date=date(2026, 4, 19),
+        end_date=date(2026, 4, 20),
+        run_id="20260421T190000Z",
+        model_version="starter-strikeout-baseline-v1",
+        model_run_id="20260421T180000Z",
+        cutoff_minutes_before_first_pitch=30,
+        backtest_bets_path=tmp_path / "backtest_bets.jsonl",
+        backtest_runs_path=tmp_path / "backtest_runs.jsonl",
+        join_audit_path=tmp_path / "join_audit.jsonl",
+        snapshot_group_count=8,
+        actionable_bet_count=3,
+        below_threshold_count=2,
+        skipped_count=3,
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.build_walk_forward_backtest",
+        lambda **_: result,
+    )
+
+    main(
+        [
+            "build-walk-forward-backtest",
+            "--start-date",
+            "2026-04-19",
+            "--end-date",
+            "2026-04-20",
+            "--output-dir",
+            str(tmp_path),
+            "--cutoff-minutes-before-first-pitch",
+            "30",
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Walk-forward backtest complete for 2026-04-19 -> 2026-04-20" in output
+    assert "snapshot_groups=8" in output
+    assert "actionable_bets=3" in output
+    assert "join_audit_path=" in output

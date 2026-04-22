@@ -260,6 +260,21 @@ AGE-150 turns those saved ladders into replayable pricing rows:
   market probabilities, EV, fair odds, capped Kelly sizing, and an evaluation
   status for every replayable line snapshot
 
+AGE-151 turns those pricing seams into the first honest historical evaluation:
+
+- `build-walk-forward-backtest --start-date YYYY-MM-DD --end-date YYYY-MM-DD`
+  replays all saved odds runs for each evaluated date and selects the latest
+  exact-line snapshot at or before the configured pregame cutoff
+- `backtest_bets.jsonl` stores the selected cutoff-safe line snapshot,
+  feature-row and lineup refs, honest held-out over or under probabilities,
+  final outcome joins, and realized decision result
+- `backtest_runs.jsonl` stores window-level ROI, CLV, and edge-bucket summaries
+- `join_audit.jsonl` stores cutoff compliance, train-window freshness, and
+  outcome traceability for both kept and rejected rows
+- headline backtest rows use held-out calibrated probabilities from
+  `raw_vs_calibrated_probabilities.jsonl`, not the production calibrator stored
+  alongside `ladder_probabilities.jsonl`
+
 ## Model Shape
 
 The docs should define the modeling job without pretending the implementation
@@ -336,8 +351,13 @@ Current AGE-147 training matrix intentionally excludes:
 
 - compare the model only to the actual book line snapshot that existed at
   decision time
+- use the latest exact-line snapshot that existed at or before the configured
+  pregame cutoff; later snapshots should be preserved as rejected rows, not
+  substituted into the decision record
 - report CLV separately from realized ROI
 - keep vig in the pricing path instead of treating the board as fair by default
+- keep headline backtest calibration honest by using held-out calibration rows
+  rather than the production calibrator fit across the full out-of-fold table
 - keep rejected or skipped rows so later threshold or join changes can be
   audited against the same saved market history
 
