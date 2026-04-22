@@ -157,9 +157,9 @@ Each normalized `prop_line_snapshots` row preserves:
 targeted Statcast pulls into model-ready daily rows.
 
 This command expects a prior MLB metadata run for the same target date under
-`data/normalized/mlb_stats_api/...`, because it uses the latest probable
-starters and only accepts lineup snapshots whose `captured_at` is still on or
-before the scheduled `commence_time`.
+`data/normalized/mlb_stats_api/...`, because it uses the latest pregame-valid
+metadata run for the slate and only accepts lineup snapshots whose
+`captured_at` is still on or before the scheduled `commence_time`.
 
 Build one slate's feature tables from the previous `--history-days` official
 dates of Statcast history:

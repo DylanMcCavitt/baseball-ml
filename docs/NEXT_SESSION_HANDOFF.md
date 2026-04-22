@@ -18,10 +18,14 @@
   - added a stdlib-only `StatcastSearchClient`
   - added reproducible Baseball Savant Statcast CSV URL construction for
     targeted pitcher and batter pulls
+  - sends Statcast requests with an explicit browser-style `User-Agent` header
+    so the live CSV export endpoint accepts the pull
   - loads the latest normalized MLB metadata run for the target date from:
     - `games.jsonl`
     - `probable_starters.jsonl`
     - `lineup_snapshots.jsonl`
+  - falls back to the latest pregame-valid MLB metadata run when a newer
+    same-date metadata run was captured after first pitch
   - preserves raw CSV pulls under:
     - `data/raw/statcast_search/date=YYYY-MM-DD/player_type=.../player_id=.../`
   - writes normalized feature artifacts under:
@@ -80,7 +84,7 @@ uv run python -m mlb_props_stack
 Local results:
 
 - `uv run pytest`
-  - `33 passed`
+  - `36 passed`
 - `uv run python -m mlb_props_stack`
   - still prints the runtime summary cleanly
 

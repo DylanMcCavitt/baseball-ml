@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from .mlb_stats_api import (
     GameRecord,
@@ -23,6 +23,12 @@ from .mlb_stats_api import (
 )
 
 STATCAST_SEARCH_CSV_ENDPOINT = "https://baseballsavant.mlb.com/statcast_search/csv"
+STATCAST_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (compatible; mlb-props-stack/0.1; "
+        "+https://github.com/DylanMcCavitt/baseball-ml)"
+    ),
+}
 DEFAULT_HISTORY_DAYS = 30
 STRIKEOUT_EVENTS = {"strikeout", "strikeout_double_play"}
 WHIFF_DESCRIPTIONS = {
@@ -232,7 +238,8 @@ class StatcastSearchClient:
         self.timeout_seconds = timeout_seconds
 
     def fetch_csv(self, url: str) -> str:
-        with urlopen(url, timeout=self.timeout_seconds) as response:
+        request = Request(url, headers=STATCAST_REQUEST_HEADERS)
+        with urlopen(request, timeout=self.timeout_seconds) as response:
             return response.read().decode("utf-8")
 
 
@@ -412,13 +419,64 @@ def _load_jsonl_rows(path: Path) -> list[dict[str, Any]]:
 
 
 def _latest_run_dir(root: Path) -> Path:
-    run_dirs = sorted(path for path in root.glob("run=*") if path.is_dir())
+    run_dirs = sorted(
+        (path for path in root.glob("run=*") if path.is_dir()),
+        reverse=True,
+    )
     if not run_dirs:
         raise FileNotFoundError(
             "No normalized MLB metadata runs were found. "
             "Run `uv run python -m mlb_props_stack ingest-mlb-metadata --date ...` first."
         )
-    return run_dirs[-1]
+
+    for run_dir in run_dirs:
+        games_path = run_dir / "games.jsonl"
+        probable_starters_path = run_dir / "probable_starters.jsonl"
+        if not games_path.exists() or not probable_starters_path.exists():
+            continue
+
+        games_rows = _load_jsonl_rows(games_path)
+        probable_starters_rows = _load_jsonl_rows(probable_starters_path)
+        if _run_is_pregame_valid(
+            games_rows=games_rows,
+            probable_starters_rows=probable_starters_rows,
+        ):
+            return run_dir
+
+    raise FileNotFoundError(
+        "No pregame-valid normalized MLB metadata runs were found. "
+        "Run `uv run python -m mlb_props_stack ingest-mlb-metadata --date ...` "
+        "before first pitch for the target slate."
+    )
+
+
+def _run_is_pregame_valid(
+    *,
+    games_rows: list[dict[str, Any]],
+    probable_starters_rows: list[dict[str, Any]],
+) -> bool:
+    try:
+        commence_times_by_game_pk: dict[int, datetime] = {}
+        for row in games_rows:
+            game_pk = int(row["game_pk"])
+            commence_time = parse_api_datetime(row["commence_time"])
+            captured_at = parse_api_datetime(row["captured_at"])
+            if captured_at > commence_time:
+                return False
+            commence_times_by_game_pk[game_pk] = commence_time
+
+        for row in probable_starters_rows:
+            game_pk = int(row["game_pk"])
+            commence_time = commence_times_by_game_pk.get(game_pk)
+            if commence_time is None:
+                return False
+            captured_at = parse_api_datetime(row["captured_at"])
+            if captured_at > commence_time:
+                return False
+    except (KeyError, TypeError, ValueError):
+        return False
+
+    return True
 
 
 def _load_latest_mlb_metadata_for_date(
@@ -1082,9 +1140,11 @@ def ingest_statcast_features_for_date(
     pull_requests = [
         ("pitcher", pitcher_id)
         for pitcher_id in sorted(
-            starter.pitcher_id
-            for starter in mlb_metadata.probable_starters
-            if starter.pitcher_id is not None
+            {
+                starter.pitcher_id
+                for starter in mlb_metadata.probable_starters
+                if starter.pitcher_id is not None
+            }
         )
     ]
     pull_requests.extend(("batter", batter_id) for batter_id in sorted(batter_ids))

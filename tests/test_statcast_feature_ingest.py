@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -12,6 +12,7 @@ from mlb_props_stack.ingest import (
     build_statcast_search_csv_url,
     ingest_statcast_features_for_date,
 )
+from mlb_props_stack.ingest.statcast_features import StatcastSearchClient
 
 
 STATCAST_HEADERS = [
@@ -184,6 +185,99 @@ def seed_mlb_metadata(output_dir: Path) -> tuple[Path, Path, Path]:
                 "lineup_entries": [],
                 "odds_matchup_key": "2026-04-21|HOU|CLE|2026-04-21T22:10:00Z",
             },
+        ],
+    )
+    return games_path, probable_starters_path, lineup_snapshots_path
+
+
+def seed_postlock_mlb_metadata(output_dir: Path) -> tuple[Path, Path, Path]:
+    normalized_root = (
+        output_dir
+        / "normalized"
+        / "mlb_stats_api"
+        / "date=2026-04-21"
+        / "run=20260421T230000Z"
+    )
+    games_path = normalized_root / "games.jsonl"
+    probable_starters_path = normalized_root / "probable_starters.jsonl"
+    lineup_snapshots_path = normalized_root / "lineup_snapshots.jsonl"
+
+    _write_jsonl(
+        games_path,
+        [
+            {
+                "game_pk": 824448,
+                "official_date": "2026-04-21",
+                "commence_time": "2026-04-21T22:10:00Z",
+                "captured_at": "2026-04-21T23:00:00Z",
+                "status": "In Progress",
+                "status_code": "I",
+                "venue_id": 5,
+                "venue_name": "Progressive Field",
+                "home_team_id": 114,
+                "home_team_abbreviation": "CLE",
+                "home_team_name": "Cleveland Guardians",
+                "away_team_id": 117,
+                "away_team_abbreviation": "HOU",
+                "away_team_name": "Houston Astros",
+                "game_number": 1,
+                "double_header": "N",
+                "day_night": "night",
+                "odds_matchup_key": "2026-04-21|HOU|CLE|2026-04-21T22:10:00Z",
+            }
+        ],
+    )
+    _write_jsonl(
+        probable_starters_path,
+        [
+            {
+                "game_pk": 824448,
+                "official_date": "2026-04-21",
+                "captured_at": "2026-04-21T23:00:00Z",
+                "team_side": "away",
+                "team_id": 117,
+                "team_abbreviation": "HOU",
+                "team_name": "Houston Astros",
+                "pitcher_id": 680802,
+                "pitcher_name": "Ryan Weiss",
+                "pitcher_note": None,
+                "odds_matchup_key": "2026-04-21|HOU|CLE|2026-04-21T22:10:00Z",
+            },
+            {
+                "game_pk": 824448,
+                "official_date": "2026-04-21",
+                "captured_at": "2026-04-21T23:00:00Z",
+                "team_side": "home",
+                "team_id": 114,
+                "team_abbreviation": "CLE",
+                "team_name": "Cleveland Guardians",
+                "pitcher_id": 800048,
+                "pitcher_name": "Parker Messick",
+                "pitcher_note": "Confirmed starter",
+                "odds_matchup_key": "2026-04-21|HOU|CLE|2026-04-21T22:10:00Z",
+            },
+        ],
+    )
+    _write_jsonl(
+        lineup_snapshots_path,
+        [
+            {
+                "lineup_snapshot_id": "lineup:824448:home:20260421T230000Z",
+                "game_pk": 824448,
+                "official_date": "2026-04-21",
+                "captured_at": "2026-04-21T23:00:00Z",
+                "team_side": "home",
+                "team_id": 114,
+                "team_abbreviation": "CLE",
+                "team_name": "Cleveland Guardians",
+                "game_state": "In Progress",
+                "game_status_code": "I",
+                "is_confirmed": True,
+                "batting_order_player_ids": [680757, 800050],
+                "batter_player_ids": [680757, 800050],
+                "lineup_entries": [],
+                "odds_matchup_key": "2026-04-21|HOU|CLE|2026-04-21T22:10:00Z",
+            }
         ],
     )
     return games_path, probable_starters_path, lineup_snapshots_path
@@ -582,6 +676,34 @@ class StubStatcastClient:
         return _csv_text(self.rows_by_player.get((player_type, player_id), []))
 
 
+def test_statcast_search_client_sends_user_agent_header(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class DummyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self) -> bytes:
+            return b"game_date\n"
+
+    def fake_urlopen(request, timeout):
+        captured["request"] = request
+        captured["timeout"] = timeout
+        return DummyResponse()
+
+    monkeypatch.setattr("mlb_props_stack.ingest.statcast_features.urlopen", fake_urlopen)
+
+    client = StatcastSearchClient(timeout_seconds=12.5)
+    csv_text = client.fetch_csv("https://example.com/statcast.csv")
+
+    assert csv_text == "game_date\n"
+    assert captured["timeout"] == 12.5
+    assert dict(captured["request"].header_items())["User-agent"].startswith("Mozilla/5.0")
+
+
 def test_build_statcast_search_csv_url_uses_player_specific_lookup_key() -> None:
     pitcher_url = build_statcast_search_csv_url(
         player_type="pitcher",
@@ -601,6 +723,27 @@ def test_build_statcast_search_csv_url_uses_player_specific_lookup_key() -> None
     assert "batters_lookup%5B%5D=680757" in batter_url
     assert "game_date_gt=2026-03-22" in pitcher_url
     assert "game_date_lt=2026-04-20" in pitcher_url
+
+
+def test_ingest_statcast_features_uses_latest_pregame_valid_metadata_run(tmp_path) -> None:
+    games_path, _, _ = seed_mlb_metadata(tmp_path)
+    seed_postlock_mlb_metadata(tmp_path)
+    stub_client = StubStatcastClient()
+    timestamps = iter(
+        datetime(2026, 4, 21, 18, 0, tzinfo=UTC) + timedelta(minutes=index)
+        for index in range(20)
+    )
+
+    result = ingest_statcast_features_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        history_days=30,
+        client=stub_client,
+        now=lambda: next(timestamps),
+    )
+
+    assert result.mlb_games_path == games_path
+    assert "run=20260421T170000Z" in str(result.mlb_probable_starters_path)
 
 
 def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_missing_inputs(
@@ -710,3 +853,30 @@ def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_mis
     assert len(stub_client.urls) == 11
     assert "pitchers_lookup%5B%5D=680802" in stub_client.urls[0]
     assert any("batters_lookup%5B%5D=680757" in url for url in stub_client.urls)
+
+
+def test_ingest_statcast_features_dedupes_duplicate_pitcher_pulls(tmp_path) -> None:
+    _, probable_starters_path, _ = seed_mlb_metadata(tmp_path)
+    probable_starter_rows = [
+        json.loads(line)
+        for line in probable_starters_path.read_text(encoding="utf-8").splitlines()
+    ]
+    probable_starter_rows.append(dict(probable_starter_rows[0]))
+    _write_jsonl(probable_starters_path, probable_starter_rows)
+
+    stub_client = StubStatcastClient()
+    timestamps = iter(
+        datetime(2026, 4, 21, 18, 0, tzinfo=UTC) + timedelta(minutes=index)
+        for index in range(20)
+    )
+
+    result = ingest_statcast_features_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        history_days=30,
+        client=stub_client,
+        now=lambda: next(timestamps),
+    )
+
+    assert result.raw_pull_count == 11
+    assert sum("pitchers_lookup%5B%5D=680802" in url for url in stub_client.urls) == 1
