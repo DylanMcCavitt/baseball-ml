@@ -25,8 +25,13 @@ def _parse_env_lines(lines: Iterable[str]) -> dict[str, str]:
             continue
 
         value = raw_value.strip()
-        if value[:1] in {"'", '"'} and value[-1:] == value[:1]:
-            value = value[1:-1]
+        if value[:1] in {"'", '"'}:
+            quote = value[:1]
+            closing_quote_index = value.find(quote, 1)
+            if closing_quote_index != -1:
+                value = value[1:closing_quote_index]
+            else:
+                value = value[1:]
         else:
             comment_start = value.find(" #")
             if comment_start != -1:
@@ -147,9 +152,11 @@ def load_repo_env(
     resolved_cwd = Path(cwd or Path.cwd()).resolve()
     target_environ = os.environ if environ is None else environ
 
+    first_loaded_path: Path | None = None
     for candidate in _candidate_env_paths(resolved_cwd):
         if not candidate.is_file():
             continue
-        _load_env_file(candidate, environ=target_environ)
-        return candidate
-    return None
+        loaded_count = _load_env_file(candidate, environ=target_environ)
+        if loaded_count > 0 and first_loaded_path is None:
+            first_loaded_path = candidate
+    return first_loaded_path

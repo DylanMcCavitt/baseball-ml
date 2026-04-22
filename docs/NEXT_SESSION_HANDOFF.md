@@ -29,6 +29,10 @@
   - in a git worktree, falls back from the current worktree root to a sibling
     checkout from the same repo so one ignored `.env` in the canonical checkout
     still works in fresh issue worktrees
+  - now merges candidate `.env` files in priority order instead of stopping at
+    the first file, so a partial worktree-local `.env` does not block fallback
+    to the canonical checkout's `ODDS_API_KEY`
+  - correctly strips quoted values even when they carry trailing inline comments
 - `src/mlb_props_stack/ingest/odds_api.py`
   - now calls the repo `.env` loader before reading `ODDS_API_KEY`
 - `tests/test_odds_api_ingest.py`
@@ -73,7 +77,7 @@ Commands run successfully on April 22, 2026:
 
 ```bash
 uv sync --extra dev
-uv run pytest tests/test_env.py tests/test_odds_api_ingest.py tests/test_cli.py
+uv run pytest tests/test_env.py tests/test_odds_api_ingest.py
 uv run pytest
 uv run python -m mlb_props_stack
 uv run python -m compileall src tests
@@ -91,9 +95,9 @@ PYTHONPATH=/tmp/age188-odds-check.EziJdd/stub ODDS_API_KEY=stub-key \
 Observed results:
 
 - focused pytest run:
-  - `17 passed`
+  - `10 passed`
 - full pytest run:
-  - `61 passed`
+  - `62 passed`
 - `uv run python -m mlb_props_stack`
   - printed the runtime summary successfully
 - `uv run python -m compileall src tests`
