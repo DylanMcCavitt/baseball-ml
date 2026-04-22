@@ -366,3 +366,46 @@ def test_normalize_events_and_props_handle_unmatched_games_with_synthetic_player
     assert snapshots[0].player_id == "odds-player:ryan-weiss"
     assert snapshots[0].pitcher_mlb_id is None
     assert snapshots[0].match_status == "unmatched"
+
+
+def test_normalize_events_payload_tolerates_small_commence_time_drift() -> None:
+    mappings = normalize_events_payload(
+        [
+            {
+                "id": "odds-event-3",
+                "sport_key": "baseball_mlb",
+                "commence_time": "2026-04-21T22:11:00Z",
+                "home_team": "Cleveland Guardians",
+                "away_team": "Houston Astros",
+            }
+        ],
+        target_date=date(2026, 4, 21),
+        captured_at=datetime(2026, 4, 21, 18, 1, tzinfo=UTC),
+        games=(
+            GameRecord(
+                game_pk=824448,
+                official_date="2026-04-21",
+                commence_time=datetime(2026, 4, 21, 22, 10, tzinfo=UTC),
+                captured_at=datetime(2026, 4, 21, 17, 0, tzinfo=UTC),
+                status="Pre-Game",
+                status_code="P",
+                venue_id=5,
+                venue_name="Progressive Field",
+                home_team_id=114,
+                home_team_abbreviation="CLE",
+                home_team_name="Cleveland Guardians",
+                away_team_id=117,
+                away_team_abbreviation="HOU",
+                away_team_name="Houston Astros",
+                game_number=1,
+                double_header="N",
+                day_night="night",
+                odds_matchup_key="2026-04-21|HOU|CLE|2026-04-21T22:10:00Z",
+            ),
+        ),
+    )
+
+    assert len(mappings) == 1
+    assert mappings[0].match_status == "matched"
+    assert mappings[0].game_pk == 824448
+    assert mappings[0].odds_matchup_key == "2026-04-21|HOU|CLE|2026-04-21T22:10:00Z"

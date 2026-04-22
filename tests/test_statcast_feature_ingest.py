@@ -746,6 +746,28 @@ def test_ingest_statcast_features_uses_latest_pregame_valid_metadata_run(tmp_pat
     assert "run=20260421T170000Z" in str(result.mlb_probable_starters_path)
 
 
+def test_ingest_statcast_features_falls_back_to_latest_complete_historical_metadata_run(
+    tmp_path,
+) -> None:
+    _, probable_starters_path, _ = seed_postlock_mlb_metadata(tmp_path)
+    stub_client = StubStatcastClient()
+    timestamps = iter(
+        datetime(2026, 4, 22, 18, 0, tzinfo=UTC) + timedelta(minutes=index)
+        for index in range(20)
+    )
+
+    result = ingest_statcast_features_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        history_days=30,
+        client=stub_client,
+        now=lambda: next(timestamps),
+    )
+
+    assert result.mlb_probable_starters_path == probable_starters_path
+    assert result.pitcher_feature_count == 2
+
+
 def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_missing_inputs(
     tmp_path,
 ) -> None:

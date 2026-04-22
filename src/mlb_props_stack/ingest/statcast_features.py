@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from zoneinfo import ZoneInfo
 
+from ..config import StackConfig
 from .mlb_stats_api import (
     GameRecord,
     LineupEntry,
@@ -418,7 +420,25 @@ def _load_jsonl_rows(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _latest_run_dir(root: Path) -> Path:
+def _latest_complete_run_dir(root: Path) -> Path:
+    run_dirs = sorted(
+        (path for path in root.glob("run=*") if path.is_dir()),
+        reverse=True,
+    )
+    if not run_dirs:
+        raise FileNotFoundError(
+            "No normalized MLB metadata runs were found. "
+            "Run `uv run python -m mlb_props_stack ingest-mlb-metadata --date ...` first."
+        )
+    for run_dir in run_dirs:
+        games_path = run_dir / "games.jsonl"
+        probable_starters_path = run_dir / "probable_starters.jsonl"
+        if games_path.exists() and probable_starters_path.exists():
+            return run_dir
+    raise FileNotFoundError(f"Latest MLB metadata runs under {root} were incomplete.")
+
+
+def _latest_pregame_valid_run_dir(root: Path) -> Path:
     run_dirs = sorted(
         (path for path in root.glob("run=*") if path.is_dir()),
         reverse=True,
@@ -483,6 +503,7 @@ def _load_latest_mlb_metadata_for_date(
     *,
     target_date: date,
     output_dir: Path | str,
+    reference_time: datetime,
 ) -> _LoadedMLBMetadata:
     normalized_root = (
         Path(output_dir)
@@ -490,7 +511,14 @@ def _load_latest_mlb_metadata_for_date(
         / "mlb_stats_api"
         / f"date={target_date.isoformat()}"
     )
-    latest_run_dir = _latest_run_dir(normalized_root)
+    config = StackConfig()
+    reference_date = reference_time.astimezone(ZoneInfo(config.timezone)).date()
+    try:
+        latest_run_dir = _latest_pregame_valid_run_dir(normalized_root)
+    except FileNotFoundError:
+        if target_date >= reference_date:
+            raise
+        latest_run_dir = _latest_complete_run_dir(normalized_root)
     games_path = latest_run_dir / "games.jsonl"
     probable_starters_path = latest_run_dir / "probable_starters.jsonl"
     lineup_snapshots_path = latest_run_dir / "lineup_snapshots.jsonl"
@@ -1107,11 +1135,13 @@ def ingest_statcast_features_for_date(
     if client is None:
         client = StatcastSearchClient()
 
+    run_started_at = now().astimezone(UTC)
     history_end_date = target_date - timedelta(days=1)
     history_start_date = target_date - timedelta(days=history_days)
     mlb_metadata = _load_latest_mlb_metadata_for_date(
         target_date=target_date,
         output_dir=output_dir,
+        reference_time=run_started_at,
     )
     games_by_pk = {game.game_pk: game for game in mlb_metadata.games}
 
@@ -1134,7 +1164,6 @@ def ingest_statcast_features_for_date(
     pitch_records_by_id: dict[str, StatcastPitchRecord] = {}
     pull_records: list[StatcastPullRecord] = []
     output_root = Path(output_dir)
-    run_started_at = now().astimezone(UTC)
     run_id = _path_timestamp(run_started_at)
 
     pull_requests = [

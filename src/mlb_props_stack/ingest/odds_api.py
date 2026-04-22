@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, is_dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -25,6 +25,7 @@ ODDS_API_BASE_URL = "https://api.the-odds-api.com/v4"
 ODDS_API_SPORT_KEY = "baseball_mlb"
 PITCHER_STRIKEOUTS_MARKET = "pitcher_strikeouts"
 DEFAULT_REGIONS = "us"
+MATCHUP_TIME_TOLERANCE = timedelta(minutes=10)
 
 
 @dataclass(frozen=True)
@@ -182,6 +183,35 @@ def _normalize_text_key(value: str) -> str:
     return " ".join(cleaned.upper().split())
 
 
+def _match_game_for_event(
+    *,
+    candidate_games: list[GameRecord],
+    commence_time: datetime,
+) -> GameRecord | None:
+    exact_match = next(
+        (game for game in candidate_games if game.commence_time == commence_time),
+        None,
+    )
+    if exact_match is not None:
+        return exact_match
+
+    tolerated_games = [
+        game
+        for game in candidate_games
+        if abs(game.commence_time - commence_time) <= MATCHUP_TIME_TOLERANCE
+    ]
+    if not tolerated_games:
+        return None
+    return min(
+        tolerated_games,
+        key=lambda game: (
+            abs(game.commence_time - commence_time),
+            game.commence_time,
+            game.game_pk,
+        ),
+    )
+
+
 def _json_ready(value: Any) -> Any:
     if is_dataclass(value):
         return _json_ready(asdict(value))
@@ -337,19 +367,20 @@ def normalize_events_payload(
 
         commence_time = parse_api_datetime(event["commence_time"])
         prototype_game = candidate_games[0]
-        odds_matchup_key = build_odds_matchup_key(
+        generated_odds_matchup_key = build_odds_matchup_key(
             official_date=target_date.isoformat(),
             away_team_abbreviation=prototype_game.away_team_abbreviation,
             home_team_abbreviation=prototype_game.home_team_abbreviation,
             commence_time=commence_time,
         )
-        matched_game = next(
-            (
-                game
-                for game in candidate_games
-                if game.odds_matchup_key == odds_matchup_key
-            ),
-            None,
+        matched_game = _match_game_for_event(
+            candidate_games=candidate_games,
+            commence_time=commence_time,
+        )
+        odds_matchup_key = (
+            matched_game.odds_matchup_key
+            if matched_game is not None
+            else generated_odds_matchup_key
         )
 
         mappings.append(

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from ..paper_tracking import (
+from mlb_props_stack.paper_tracking import (
     list_available_daily_candidate_dates,
     load_latest_daily_candidates,
     load_latest_paper_results,

@@ -736,6 +736,10 @@ def _fetch_starter_outcome(
     )
 
 
+def _is_missing_outcome_error(error: ValueError) -> bool:
+    return "Could not derive a same-game starter outcome" in str(error)
+
+
 def _attach_outcomes(
     *,
     rows: list[StarterStrikeoutTrainingRow],
@@ -746,12 +750,17 @@ def _attach_outcomes(
     rows_with_outcomes: list[StarterStrikeoutTrainingRow] = []
     outcome_records: list[StarterStrikeoutOutcomeRecord] = []
     for row in rows:
-        outcome = _fetch_starter_outcome(
-            row=row,
-            output_dir=output_dir,
-            client=client,
-            now=now,
-        )
+        try:
+            outcome = _fetch_starter_outcome(
+                row=row,
+                output_dir=output_dir,
+                client=client,
+                now=now,
+            )
+        except ValueError as error:
+            if _is_missing_outcome_error(error):
+                continue
+            raise
         outcome_records.append(outcome)
         rows_with_outcomes.append(
             StarterStrikeoutTrainingRow(
