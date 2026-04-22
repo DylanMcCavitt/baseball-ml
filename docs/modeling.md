@@ -235,6 +235,19 @@ AGE-148 adds the first explicit count-distribution layer on top of that mean:
   Poisson fallback using the same mean predictions on train, validation, test,
   and combined held-out rows
 
+AGE-149 adds explicit probability calibration on top of those raw ladders:
+
+- out-of-fold ladder-event probabilities are generated with expanding
+  date-ordered fits so each predicted date only sees prior data
+- an isotonic probability calibrator is fit from those out-of-fold rows and
+  stored in `probability_calibrator.json`
+- `raw_vs_calibrated_probabilities.jsonl` keeps honest held-out rows with both
+  raw and calibrated over/under probabilities for diagnostics
+- `calibration_summary.json` records reliability bins plus Brier, log-loss, and
+  expected calibration error for raw vs calibrated probabilities
+- `ladder_probabilities.jsonl` now carries both the raw ladder and a calibrated
+  ladder so later pricing work can consume the calibrated side directly
+
 ## Model Shape
 
 The docs should define the modeling job without pretending the implementation

@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from mlb_props_stack.modeling import (
+    calibrate_starter_strikeout_ladder_probabilities,
     starter_strikeout_ladder_probabilities,
     starter_strikeout_line_probability,
     train_starter_strikeout_baseline,
@@ -318,9 +319,20 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
 
     evaluation = json.loads(result.evaluation_path.read_text(encoding="utf-8"))
     model_artifact = json.loads(result.model_path.read_text(encoding="utf-8"))
+    probability_calibrator = json.loads(
+        result.probability_calibrator_path.read_text(encoding="utf-8")
+    )
+    calibration_summary = json.loads(
+        result.calibration_summary_path.read_text(encoding="utf-8")
+    )
     ladder_rows = [
         json.loads(line)
         for line in result.ladder_probabilities_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    raw_vs_calibrated_rows = [
+        json.loads(line)
+        for line in result.raw_vs_calibrated_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
     dataset_rows = [
@@ -340,6 +352,21 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
         "mean_negative_log_likelihood",
         "mean_ranked_probability_score",
     }
+    assert evaluation["probability_calibration"]["production_calibrator"]["name"] == (
+        "isotonic_ladder_probability_calibrator_v1"
+    )
+    assert (
+        evaluation["probability_calibration"]["honest_held_out"]["validation"][
+            "calibration_training_splits"
+        ]
+        == ["train"]
+    )
+    assert (
+        evaluation["probability_calibration"]["honest_held_out"]["test"][
+            "calibration_training_splits"
+        ]
+        == ["train", "validation"]
+    )
     assert evaluation["date_splits"]["train"] == ["2026-04-16", "2026-04-17", "2026-04-18"]
     assert evaluation["date_splits"]["validation"] == ["2026-04-19"]
     assert evaluation["date_splits"]["test"] == ["2026-04-20"]
@@ -347,10 +374,27 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     assert ladder_rows[0]["count_distribution"]["dispersion_alpha"] == result.dispersion_alpha
     assert ladder_rows[0]["ladder_probabilities"][0]["line"] == 0.5
     assert ladder_rows[0]["ladder_probabilities"][0]["over_probability"] < 1.0
+    assert ladder_rows[0]["calibrated_ladder_probabilities"][0]["line"] == 0.5
+    assert ladder_rows[0]["probability_calibration"]["name"] == (
+        "isotonic_ladder_probability_calibrator_v1"
+    )
     assert "starter_strikeouts" not in model_artifact["encoded_feature_names"]
     assert "features_as_of" not in model_artifact["encoded_feature_names"]
     assert "projected_lineup_k_rate" in model_artifact["encoded_feature_names"]
     assert model_artifact["count_distribution"]["dispersion_alpha"] == result.dispersion_alpha
+    assert model_artifact["probability_calibration"]["name"] == (
+        "isotonic_ladder_probability_calibrator_v1"
+    )
+    assert probability_calibrator["name"] == "isotonic_ladder_probability_calibrator_v1"
+    assert calibration_summary["production_calibrator"]["name"] == (
+        "isotonic_ladder_probability_calibrator_v1"
+    )
+    assert raw_vs_calibrated_rows
+    assert all(
+        row["calibration_fit_through_date"] < row["official_date"]
+        for row in raw_vs_calibrated_rows
+        if row["calibration_fit_through_date"] is not None
+    )
     assert any(
         item["feature"] == "projected_lineup_k_rate"
         for item in evaluation["feature_importance"]
@@ -387,3 +431,57 @@ def test_line_and_ladder_probability_helpers_are_monotonic_and_complementary():
         "over_probability": round(over_probability, 6),
         "under_probability": round(under_probability, 6),
     }
+
+
+def test_calibrated_ladder_probabilities_stay_monotonic_and_complementary():
+    raw_ladder = starter_strikeout_ladder_probabilities(
+        mean=5.4,
+        dispersion_alpha=0.18,
+    )
+    calibrated_ladder = calibrate_starter_strikeout_ladder_probabilities(
+        raw_ladder,
+        {
+            "name": "isotonic_ladder_probability_calibrator_v1",
+            "source": "out_of_fold_ladder_events",
+            "configured_min_sample": 10,
+            "sample_count": 24,
+            "fitted_from_date": "2026-04-16",
+            "fitted_through_date": "2026-04-18",
+            "is_identity": False,
+            "reason": None,
+            "sample_warning": None,
+            "buckets": [
+                {
+                    "raw_probability_min": 0.0,
+                    "raw_probability_max": 0.35,
+                    "calibrated_probability": 0.08,
+                    "sample_count": 8,
+                    "positive_count": 1,
+                },
+                {
+                    "raw_probability_min": 0.35,
+                    "raw_probability_max": 0.65,
+                    "calibrated_probability": 0.52,
+                    "sample_count": 8,
+                    "positive_count": 4,
+                },
+                {
+                    "raw_probability_min": 0.65,
+                    "raw_probability_max": 0.99,
+                    "calibrated_probability": 0.86,
+                    "sample_count": 8,
+                    "positive_count": 7,
+                },
+            ],
+        },
+    )
+
+    assert calibrated_ladder[0]["line"] == 0.5
+    assert all(
+        left["over_probability"] >= right["over_probability"]
+        for left, right in zip(calibrated_ladder, calibrated_ladder[1:])
+    )
+    assert all(
+        round(entry["over_probability"] + entry["under_probability"], 6) == 1.0
+        for entry in calibrated_ladder
+    )

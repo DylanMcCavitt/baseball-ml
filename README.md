@@ -228,15 +228,24 @@ The normalized outputs include:
   splits
 - `baseline_model.json`
   the serialized ridge-style linear baseline model, feature schema, and fitted
-  global count-distribution dispersion parameter
+  global count-distribution dispersion parameter plus the stored probability
+  calibrator metadata
 - `evaluation.json`
   RMSE, MAE, and Spearman rank correlation for both the naive benchmark and the
-  trainable baseline, plus coefficient-based feature importance and held-out
-  count-distribution metrics
+  trainable baseline, plus coefficient-based feature importance, held-out
+  count-distribution metrics, and honest raw-vs-calibrated probability
+  diagnostics
 - `ladder_probabilities.jsonl`
   one row per starter-game with the predicted mean, fitted negative-binomial
-  dispersion, and half-strikeout ladder over/under probabilities derived from
-  that distribution
+  dispersion, raw half-strikeout ladder probabilities, and calibrated ladder
+  probabilities derived from the stored calibrator
+- `probability_calibrator.json`
+  the production calibrator artifact fit from out-of-fold ladder probabilities
+- `raw_vs_calibrated_probabilities.jsonl`
+  honest held-out probability rows with raw and calibrated over/under values
+- `calibration_summary.json`
+  reliability bins and probability diagnostics formatted for later MLflow or
+  dashboard logging
 
 ## CI
 
