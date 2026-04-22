@@ -10,8 +10,10 @@ That happened on April 22, 2026 after `AGE-153` merged:
   relative import
 - historical `ingest-statcast-features` failed even though the code path was
   supposed to support past-date backfills
-- live workflow output still produced empty `daily_candidates` because matched
-  events did not survive all the way through prop snapshot joins
+- live workflow output still produced empty `daily_candidates` because
+  unmatched same-team Odds API events were still being normalized into
+  `prop_line_snapshots`, while some true target-date matched events had no
+  pitcher-strikeout markets yet
 
 Use this document during implementation review, PR review, and final handoff
 any time a change touches runtime entrypoints or generated artifacts.
@@ -105,9 +107,11 @@ Do not write "all checks passed" if only the baseline repo checks ran.
 
 ## Current Known Gaps
 
-- `AGE-188`
-  Remaining Odds API player/game join gap that can still leave future-slate
-  `daily_candidates` empty even when some events match
+- future-slate runs can still honestly produce zero scored candidates when the
+  matched target-date Odds API events return `bookmakers: []` or otherwise lack
+  pitcher-strikeout markets at capture time; treat
+  `matched_events_without_props` as an availability signal before assuming a
+  join regression
 - `AGE-189`
   Missing fixture-backed runtime smoke coverage for dashboard boot and
   representative pipeline entrypoints

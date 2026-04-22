@@ -89,7 +89,11 @@ class OddsAPIIngestResult:
     candidate_event_count: int
     matched_event_count: int
     unmatched_event_count: int
+    skipped_unmatched_event_count: int
+    matched_events_without_props_count: int
     prop_line_count: int
+    resolved_pitcher_prop_count: int
+    unresolved_pitcher_prop_count: int
     skipped_prop_count: int
 
 
@@ -605,6 +609,10 @@ def ingest_odds_api_pitcher_lines_for_date(
     event_odds_raw_paths: list[Path] = []
     prop_line_snapshots: list[PropLineSnapshotRecord] = []
     skipped_prop_count = 0
+    skipped_unmatched_event_count = 0
+    matched_events_without_props_count = 0
+    resolved_pitcher_prop_count = 0
+    unresolved_pitcher_prop_count = 0
 
     for mapping in event_mappings:
         odds_captured_at = now().astimezone(UTC)
@@ -633,8 +641,20 @@ def ingest_odds_api_pitcher_lines_for_date(
             mapping=mapping,
             probable_starter_lookup=probable_starter_lookup,
         )
-        prop_line_snapshots.extend(normalized_snapshots)
         skipped_prop_count += skipped_groups
+        if mapping.match_status != "matched":
+            skipped_unmatched_event_count += 1
+            continue
+        if not normalized_snapshots:
+            matched_events_without_props_count += 1
+            continue
+        prop_line_snapshots.extend(normalized_snapshots)
+        resolved_pitcher_prop_count += sum(
+            1 for snapshot in normalized_snapshots if snapshot.pitcher_mlb_id is not None
+        )
+        unresolved_pitcher_prop_count += sum(
+            1 for snapshot in normalized_snapshots if snapshot.pitcher_mlb_id is None
+        )
 
     normalized_root = (
         output_root
@@ -665,6 +685,10 @@ def ingest_odds_api_pitcher_lines_for_date(
         candidate_event_count=len(event_mappings),
         matched_event_count=matched_event_count,
         unmatched_event_count=unmatched_event_count,
+        skipped_unmatched_event_count=skipped_unmatched_event_count,
+        matched_events_without_props_count=matched_events_without_props_count,
         prop_line_count=len(prop_line_snapshots),
+        resolved_pitcher_prop_count=resolved_pitcher_prop_count,
+        unresolved_pitcher_prop_count=unresolved_pitcher_prop_count,
         skipped_prop_count=skipped_prop_count,
     )

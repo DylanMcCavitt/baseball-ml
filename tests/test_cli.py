@@ -67,7 +67,11 @@ def test_odds_api_ingest_cli_renders_output_summary(monkeypatch, tmp_path, capsy
         candidate_event_count=15,
         matched_event_count=14,
         unmatched_event_count=1,
+        skipped_unmatched_event_count=1,
+        matched_events_without_props_count=3,
         prop_line_count=28,
+        resolved_pitcher_prop_count=24,
+        unresolved_pitcher_prop_count=4,
         skipped_prop_count=2,
     )
 
@@ -89,6 +93,7 @@ def test_odds_api_ingest_cli_renders_output_summary(monkeypatch, tmp_path, capsy
 
     assert "Odds API pitcher strikeout ingest complete for 2026-04-21" in output
     assert "candidate_events=15" in output
+    assert "skipped_unmatched_events=1" in output
     assert "prop_line_snapshots=28" in output
 
 

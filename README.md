@@ -157,6 +157,15 @@ Each normalized `prop_line_snapshots` row preserves:
 - the exact two-way line and `market_last_update`
 - the ingest `captured_at` timestamp for replayable line history
 
+Operational note:
+
+- `event_game_mappings.jsonl` still records unmatched same-team events for audit
+  and debugging
+- `prop_line_snapshots.jsonl` now only persists line rows from matched target-date
+  events, so downstream scoring does not inherit known-unmatched event IDs
+- the CLI ingest summary now reports how many unmatched events were skipped and how
+  many matched events returned no pitcher-strikeout markets yet
+
 ## Statcast Feature Build
 
 `AGE-146` adds the first feature-table build that turns MLB metadata plus
