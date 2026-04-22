@@ -479,6 +479,9 @@ def test_calibrated_ladder_probabilities_stay_monotonic_and_complementary():
     assert calibrated_ladder[0]["line"] == 0.5
     assert all(
         left["over_probability"] >= right["over_probability"]
-        and round(left["over_probability"] + left["under_probability"], 6) == 1.0
         for left, right in zip(calibrated_ladder, calibrated_ladder[1:])
+    )
+    assert all(
+        round(entry["over_probability"] + entry["under_probability"], 6) == 1.0
+        for entry in calibrated_ladder
     )
