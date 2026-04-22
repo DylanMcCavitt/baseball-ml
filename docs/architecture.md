@@ -339,6 +339,8 @@ These stay out of scope unless a later issue changes the boundary explicitly.
 This repo should be treated as a research and decision-support system, not an
 execution bot.
 
+- Promotion status is controlled by the numeric stage gates in
+  `docs/stage_gates.md`, not by one good-looking run.
 - No output is trustworthy unless the upstream line snapshot is real and
   timestamped.
 - CLV and realized ROI answer different questions and must never be collapsed
