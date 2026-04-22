@@ -5,7 +5,11 @@ from __future__ import annotations
 import argparse
 from datetime import date
 
-from .backtest import BACKTEST_CHECKLIST
+from .backtest import (
+    BACKTEST_CHECKLIST,
+    WalkForwardBacktestResult,
+    build_walk_forward_backtest,
+)
 from .config import StackConfig
 from .edge import EdgeCandidateBuildResult, build_edge_candidates_for_date
 from .ingest import (
@@ -146,6 +150,31 @@ def render_edge_candidate_summary(result: EdgeCandidateBuildResult) -> str:
     return "\n".join(lines)
 
 
+def render_walk_forward_backtest_summary(result: WalkForwardBacktestResult) -> str:
+    """Return a human-readable summary for one walk-forward backtest run."""
+    lines = [
+        (
+            "Walk-forward backtest complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"model_version={result.model_version}",
+        f"model_run_id={result.model_run_id}",
+        (
+            "cutoff_minutes_before_first_pitch="
+            f"{result.cutoff_minutes_before_first_pitch}"
+        ),
+        f"snapshot_groups={result.snapshot_group_count}",
+        f"actionable_bets={result.actionable_bet_count}",
+        f"below_threshold={result.below_threshold_count}",
+        f"skipped={result.skipped_count}",
+        f"backtest_bets_path={result.backtest_bets_path}",
+        f"backtest_runs_path={result.backtest_runs_path}",
+        f"join_audit_path={result.join_audit_path}",
+    ]
+    return "\n".join(lines)
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     """Create the top-level CLI parser."""
     parser = argparse.ArgumentParser(prog="mlb-props-stack")
@@ -253,6 +282,40 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "Defaults to the latest run containing the requested date."
         ),
     )
+
+    backtest_parser = subparsers.add_parser(
+        "build-walk-forward-backtest",
+        help="Select cutoff-safe odds snapshots and score a walk-forward backtest.",
+    )
+    backtest_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the backtest window.",
+    )
+    backtest_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the backtest window.",
+    )
+    backtest_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where normalized odds, model, and backtest artifacts live.",
+    )
+    backtest_parser.add_argument(
+        "--model-run-dir",
+        default=None,
+        help=(
+            "Optional explicit starter_strikeout_baseline run directory. "
+            "Defaults to the latest run covering the full requested date window."
+        ),
+    )
+    backtest_parser.add_argument(
+        "--cutoff-minutes-before-first-pitch",
+        type=int,
+        default=StackConfig().backtest_cutoff_minutes_before_first_pitch,
+        help="Latest allowed odds snapshot timestamp before scheduled first pitch.",
+    )
     return parser
 
 
@@ -302,6 +365,17 @@ def main(argv: list[str] | None = None) -> None:
             model_run_dir=args.model_run_dir,
         )
         print(render_edge_candidate_summary(result))
+        return
+
+    if args.command == "build-walk-forward-backtest":
+        result = build_walk_forward_backtest(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            model_run_dir=args.model_run_dir,
+            cutoff_minutes_before_first_pitch=args.cutoff_minutes_before_first_pitch,
+        )
+        print(render_walk_forward_backtest_summary(result))
         return
 
     print(render_runtime_summary())

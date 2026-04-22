@@ -286,6 +286,54 @@ Each row preserves:
 - an evaluation status so below-threshold, skipped, or training-split rows stay
   auditable
 
+## Walk-Forward Backtest
+
+`AGE-151` adds the first timestamp-safe historical backtest slice.
+
+This command expects:
+
+- prior AGE-145 odds ingests for every evaluated date under
+  `data/normalized/the_odds_api/...`, because it replays all saved runs for a
+  date to find the latest exact-line snapshot at or before the configured
+  cutoff
+- a prior starter baseline run whose `training_dataset.jsonl`,
+  `raw_vs_calibrated_probabilities.jsonl`, and `starter_outcomes.jsonl` cover
+  the requested date window under `data/normalized/starter_strikeout_baseline/...`
+
+Build a walk-forward backtest for one historical window:
+
+```bash
+uv run python -m mlb_props_stack build-walk-forward-backtest \
+  --start-date 2026-04-19 \
+  --end-date 2026-04-20
+```
+
+By default that writes:
+
+- normalized backtest outputs under
+  `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+The normalized outputs are:
+
+- `backtest_bets.jsonl`
+  one row per exact sportsbook line group, including actionable bets,
+  below-threshold passes, and skipped rows such as late-only snapshots or
+  training-split projections
+- `backtest_runs.jsonl`
+  one summary row for the requested window with placed-bet counts, ROI, CLV,
+  and edge-bucket rollups
+- `join_audit.jsonl`
+  one audit row per backtest entry showing cutoff compliance, feature and lineup
+  refs, train-window freshness, and outcome traceability
+
+The current backtest runner stays honest in two important ways:
+
+- it uses the latest exact-line snapshot at or before the configured pregame
+  cutoff, never a later line
+- it uses held-out probabilities from
+  `raw_vs_calibrated_probabilities.jsonl` for headline backtest rows instead of
+  the production calibrator embedded in `ladder_probabilities.jsonl`
+
 ## CI
 
 GitHub Actions runs the repo baseline checks on pull requests to `main` and on

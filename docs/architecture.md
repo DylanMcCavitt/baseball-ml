@@ -47,7 +47,7 @@ modeling work must honor.
 | Baseline modeling | `src/mlb_props_stack/modeling.py` | join AGE-146 feature tables into a date-keyed training dataset, derive official starter strikeout labels from same-day Statcast pulls, fit the first trainable baseline expectation model, fit a global strikeout-count distribution on top of that mean, and save explicit date splits plus evaluation artifacts |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
-| Evaluation guardrails | `src/mlb_props_stack/backtest.py` | walk-forward policy flags and the baseline honesty checklist |
+| Evaluation guardrails | `src/mlb_props_stack/backtest.py` | cutoff-safe snapshot selection, walk-forward backtest joins, join-audit artifacts, and the baseline honesty checklist |
 | Reserved future seams | `src/mlb_props_stack/tracking.py`, `src/mlb_props_stack/dashboard/app.py` | tracking and dashboard entrypoints only, not full implementations yet |
 
 The most important current contract boundary is the join between
@@ -89,7 +89,10 @@ In code terms, that flow should eventually materialize as:
    projection to the market
 5. `build_edge_candidates_for_date()` writes auditable edge rows keyed by line
    snapshot and model version
-6. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
+6. `build_walk_forward_backtest()` selects the latest exact-line snapshot at or
+   before the configured cutoff, joins it to held-out probabilities and final
+   outcomes, and writes replayable backtest artifacts
+7. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
    considered valid
 
 ## Current AGE-144, AGE-145, And AGE-146 Output Shape
@@ -232,6 +235,23 @@ probabilities:
   stores one auditable pricing row per line snapshot and model version,
   including actionable candidates, below-threshold rows, and skipped rows that
   failed join or timestamp requirements
+
+AGE-151 adds the first saved historical evaluation artifact on top of those
+decision seams:
+
+- `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../backtest_bets.jsonl`
+  stores the selected cutoff-safe line snapshot, model refs, honest held-out
+  probabilities, final outcome, and realized decision result for each exact
+  line group
+- `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../backtest_runs.jsonl`
+  stores the run-level summary for one requested historical window
+- `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../join_audit.jsonl`
+  stores the freshness and cutoff audit for every kept or rejected backtest row
+
+The first backtest slice intentionally uses held-out probabilities from
+`raw_vs_calibrated_probabilities.jsonl` rather than the production calibrator
+embedded in `ladder_probabilities.jsonl`, so reported CLV and ROI stay aligned
+to walk-forward evaluation instead of leaking future calibration data.
 
 The lineup guardrail in AGE-146 is intentionally strict:
 
