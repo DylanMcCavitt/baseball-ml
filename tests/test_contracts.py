@@ -23,6 +23,7 @@ def make_input_ref(*, features_as_of: datetime | None = None) -> ProjectionInput
 
 def make_prop_line() -> PropLine:
     return PropLine(
+        line_snapshot_id="line-snapshot-1",
         sportsbook="draftkings",
         event_id="game-1",
         player_id="pitcher-1",
@@ -38,6 +39,7 @@ def make_prop_line() -> PropLine:
 def test_prop_line_rejects_negative_line():
     with pytest.raises(ValueError, match="line must be >= 0.0"):
         PropLine(
+            line_snapshot_id="line-snapshot-1",
             sportsbook="draftkings",
             event_id="game-1",
             player_id="pitcher-1",

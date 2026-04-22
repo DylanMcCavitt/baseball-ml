@@ -1,6 +1,7 @@
 from datetime import date
 
 from mlb_props_stack.cli import main, render_runtime_summary
+from mlb_props_stack.edge import EdgeCandidateBuildResult
 from mlb_props_stack.ingest import (
     MLBMetadataIngestResult,
     OddsAPIIngestResult,
@@ -178,3 +179,42 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
     assert "probability_calibrator_path=" in output
     assert "raw_vs_calibrated_path=" in output
     assert "calibration_summary_path=" in output
+
+
+def test_edge_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = EdgeCandidateBuildResult(
+        target_date=date(2026, 4, 20),
+        run_id="20260421T183000Z",
+        model_version="starter-strikeout-baseline-v1",
+        model_run_id="20260421T180000Z",
+        line_snapshots_path=tmp_path / "prop_line_snapshots.jsonl",
+        model_path=tmp_path / "baseline_model.json",
+        ladder_probabilities_path=tmp_path / "ladder_probabilities.jsonl",
+        edge_candidates_path=tmp_path / "edge_candidates.jsonl",
+        line_count=12,
+        scored_line_count=10,
+        actionable_count=3,
+        below_threshold_count=7,
+        skipped_line_count=2,
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.build_edge_candidates_for_date",
+        lambda *, target_date, output_dir, model_run_dir: result,
+    )
+
+    main(
+        [
+            "build-edge-candidates",
+            "--date",
+            "2026-04-20",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Edge candidate build complete for 2026-04-20" in output
+    assert "model_version=starter-strikeout-baseline-v1" in output
+    assert "actionable_candidates=3" in output
+    assert "edge_candidates_path=" in output

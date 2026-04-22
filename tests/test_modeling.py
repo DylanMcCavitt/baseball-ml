@@ -372,6 +372,10 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     assert evaluation["date_splits"]["test"] == ["2026-04-20"]
     assert dataset_rows[0]["starter_strikeouts"] > 0
     assert ladder_rows[0]["count_distribution"]["dispersion_alpha"] == result.dispersion_alpha
+    assert ladder_rows[0]["feature_row_id"] == dataset_rows[0]["training_row_id"]
+    assert ladder_rows[0]["lineup_snapshot_id"] == dataset_rows[0]["lineup_snapshot_id"]
+    assert ladder_rows[0]["features_as_of"] == dataset_rows[0]["features_as_of"]
+    assert ladder_rows[0]["projection_generated_at"] == dataset_rows[0]["features_as_of"]
     assert ladder_rows[0]["ladder_probabilities"][0]["line"] == 0.5
     assert ladder_rows[0]["ladder_probabilities"][0]["over_probability"] < 1.0
     assert ladder_rows[0]["calibrated_ladder_probabilities"][0]["line"] == 0.5

@@ -1382,6 +1382,13 @@ def _training_ladder_artifact_rows(
                 "pitcher_id": row.pitcher_id,
                 "pitcher_name": row.pitcher_name,
                 "split": split_by_date[row.official_date],
+                "feature_row_id": row.training_row_id,
+                "lineup_snapshot_id": row.lineup_snapshot_id,
+                # Historical edge builds use the feature cutoff as the
+                # conservative projection timestamp until a dedicated
+                # pregame inference runner writes its own snapshot.
+                "features_as_of": row.features_as_of,
+                "projection_generated_at": row.features_as_of,
                 "actual_strikeouts": row.starter_strikeouts,
                 "naive_benchmark_mean": round(row.naive_benchmark_mean, 6),
                 "model_mean": round(model_mean, 6),

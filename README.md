@@ -237,8 +237,9 @@ The normalized outputs include:
   diagnostics
 - `ladder_probabilities.jsonl`
   one row per starter-game with the predicted mean, fitted negative-binomial
-  dispersion, raw half-strikeout ladder probabilities, and calibrated ladder
-  probabilities derived from the stored calibrator
+  dispersion, raw half-strikeout ladder probabilities, calibrated ladder
+  probabilities derived from the stored calibrator, and the feature / lineup
+  references needed to materialize replayable projections later
 - `probability_calibrator.json`
   the production calibrator artifact fit from out-of-fold ladder probabilities
 - `raw_vs_calibrated_probabilities.jsonl`
@@ -246,6 +247,43 @@ The normalized outputs include:
 - `calibration_summary.json`
   reliability bins and probability diagnostics formatted for later MLflow or
   dashboard logging
+
+## Edge Candidate Build
+
+`AGE-150` turns saved calibrated ladder probabilities plus real line snapshots
+into replayable pricing decisions.
+
+This command expects:
+
+- a prior AGE-145 odds ingest for the target date under
+  `data/normalized/the_odds_api/...`
+- a prior AGE-149 baseline run whose `ladder_probabilities.jsonl` contains the
+  requested official date under
+  `data/normalized/starter_strikeout_baseline/...`
+
+Build edge candidates for one official date:
+
+```bash
+uv run python -m mlb_props_stack build-edge-candidates --date 2026-04-20
+```
+
+By default that writes:
+
+- normalized edge-candidate outputs under
+  `data/normalized/edge_candidates/date=YYYY-MM-DD/run=.../`
+
+The normalized `edge_candidates.jsonl` rows are keyed by:
+
+- `line_snapshot_id`
+- `model_version`
+
+Each row preserves:
+
+- the matched line snapshot contract and pricing inputs
+- the projection input refs and conservative timestamp ordering
+- raw and calibrated model probabilities for the exact posted line
+- no-vig market probabilities, EV, fair odds, and capped Kelly sizing
+- an evaluation status so below-threshold or skipped lines stay auditable
 
 ## CI
 
