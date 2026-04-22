@@ -51,6 +51,9 @@ That is a math-and-process problem first, and a betting problem second.
 - `src/mlb_props_stack/ingest/statcast_features.py`
   Targeted Statcast pulls plus normalized pitcher, lineup, and game-context
   feature tables for one slate date.
+- `src/mlb_props_stack/modeling.py`
+  Date-split starter strikeout dataset assembly, naive benchmark, and the first
+  reproducible trainable baseline model.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
 - `src/mlb_props_stack/backtest.py`
@@ -66,7 +69,7 @@ That is a math-and-process problem first, and a betting problem second.
 
 1. data contracts for games, pitchers, lines, and line moves
 2. feature pipeline from Statcast + schedule + lineups
-3. strikeout distribution model
+3. starter strikeout expectation baseline model
 4. calibration layer
 5. pricing and edge detection
 6. walk-forward backtest
@@ -187,6 +190,47 @@ The current feature build is intentionally explicit about missing inputs:
   source is added
 - park factor stays null with `missing_park_factor_source` rather than being
   silently backfilled
+
+## Starter Strikeout Baseline Training
+
+`AGE-147` adds the first reproducible training loop for expected starter
+strikeouts.
+
+This command expects AGE-146 feature runs to already exist under
+`data/normalized/statcast_search/...` for the requested date span. It joins
+`pitcher_daily_features`, `lineup_daily_features`, and
+`game_context_features`, then pulls same-day pitcher Statcast rows to derive the
+official starter strikeout target for each feature row.
+
+Train the baseline model on one date range:
+
+```bash
+uv run python -m mlb_props_stack train-starter-strikeout-baseline \
+  --start-date 2026-04-01 \
+  --end-date 2026-04-20
+```
+
+By default that writes:
+
+- raw same-day outcome pulls under
+  `data/raw/statcast_search_outcomes/date=YYYY-MM-DD/player_id=.../`
+- normalized baseline outputs under
+  `data/normalized/starter_strikeout_baseline/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+The normalized outputs include:
+
+- `training_dataset.jsonl`
+  one joined training row per `official_date`, `game_pk`, and starter
+- `starter_outcomes.jsonl`
+  the exact same-game strikeout labels derived from Statcast rows
+- `date_splits.json`
+  train, validation, and test dates saved explicitly instead of random row
+  splits
+- `baseline_model.json`
+  the serialized ridge-style linear baseline model and feature schema
+- `evaluation.json`
+  RMSE, MAE, and Spearman rank correlation for both the naive benchmark and the
+  trainable baseline, plus coefficient-based feature importance
 
 ## CI
 

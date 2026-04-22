@@ -44,6 +44,7 @@ modeling work must honor.
 | Runtime defaults | `src/mlb_props_stack/config.py` | market name, edge threshold, Kelly fraction, bankroll cap, timezone |
 | Prop and projection contracts | `src/mlb_props_stack/markets.py` | `PropLine`, `PropProjection`, `EdgeDecision`, `PropSelectionKey`, `ProjectionInputRef` |
 | Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py`, `src/mlb_props_stack/ingest/odds_api.py`, `src/mlb_props_stack/ingest/statcast_features.py` | fetch schedule, `feed/live`, sportsbook event-odds payloads, and targeted Statcast CSV pulls; preserve raw snapshots; normalize `games`, `probable_starters`, `lineup_snapshots`, `event_game_mappings`, `prop_line_snapshots`, `pitch_level_base`, `pitcher_daily_features`, `lineup_daily_features`, and `game_context_features` |
+| Baseline modeling | `src/mlb_props_stack/modeling.py` | join AGE-146 feature tables into a date-keyed training dataset, derive official starter strikeout labels from same-day Statcast pulls, fit the first trainable baseline expectation model, and save explicit date splits plus evaluation artifacts |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, emit the best actionable side |
 | Evaluation guardrails | `src/mlb_props_stack/backtest.py` | walk-forward policy flags and the baseline honesty checklist |
@@ -66,6 +67,8 @@ Sportsbook strikeout prop snapshots
 normalized contract records
         ->
 feature row + lineup snapshot references
+        ->
+starter strikeout training dataset + expectation baseline
         ->
 prop projection
         ->
@@ -165,6 +168,30 @@ The normalized Statcast feature files are:
 - `game_context_features.jsonl`
   one row per probable starter with venue, rest, expected leash proxies, and
   explicit missing-value markers for unsourced park-factor and weather fields
+
+AGE-147 adds:
+
+- raw same-day outcome pulls:
+  `data/raw/statcast_search_outcomes/date=YYYY-MM-DD/player_id=.../captured_at=...csv`
+- normalized baseline training runs:
+  `data/normalized/starter_strikeout_baseline/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+The normalized model-training files are:
+
+- `training_dataset.jsonl`
+  one joined starter-game row keyed by `official_date`, `gamePk`, and
+  `pitcher_id`, with explicit feature-row and lineup references preserved
+- `starter_outcomes.jsonl`
+  one observed same-game strikeout total per starter derived from same-day
+  Statcast rows
+- `date_splits.json`
+  saved train, validation, and test dates
+- `baseline_model.json`
+  serialized ridge-style linear baseline coefficients plus the encoded feature
+  schema used at train time
+- `evaluation.json`
+  RMSE, MAE, and Spearman rank correlation for both the naive benchmark and the
+  trainable baseline, plus coefficient-based feature importance
 
 The lineup guardrail in AGE-146 is intentionally strict:
 
