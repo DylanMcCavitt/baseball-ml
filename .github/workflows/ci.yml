@@ -39,6 +39,9 @@ jobs:
       - name: Compile source and tests
         run: uv run python -m compileall src tests
 
+      - name: Run runtime smoke coverage
+        run: uv run pytest tests/test_runtime_smokes.py
+
       - name: Run test suite
         run: uv run pytest
 
