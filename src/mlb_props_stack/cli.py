@@ -7,6 +7,7 @@ from datetime import date
 
 from .backtest import BACKTEST_CHECKLIST
 from .config import StackConfig
+from .edge import EdgeCandidateBuildResult, build_edge_candidates_for_date
 from .ingest import (
     DEFAULT_HISTORY_DAYS,
     MLBMetadataIngestResult,
@@ -125,6 +126,26 @@ def render_starter_strikeout_training_summary(
     return "\n".join(lines)
 
 
+def render_edge_candidate_summary(result: EdgeCandidateBuildResult) -> str:
+    """Return a human-readable summary for one edge-candidate build."""
+    lines = [
+        f"Edge candidate build complete for {result.target_date.isoformat()}",
+        f"run_id={result.run_id}",
+        f"model_version={result.model_version}",
+        f"model_run_id={result.model_run_id}",
+        f"line_snapshots={result.line_count}",
+        f"scored_lines={result.scored_line_count}",
+        f"actionable_candidates={result.actionable_count}",
+        f"below_threshold={result.below_threshold_count}",
+        f"skipped_lines={result.skipped_line_count}",
+        f"line_snapshots_path={result.line_snapshots_path}",
+        f"model_path={result.model_path}",
+        f"ladder_probabilities_path={result.ladder_probabilities_path}",
+        f"edge_candidates_path={result.edge_candidates_path}",
+    ]
+    return "\n".join(lines)
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     """Create the top-level CLI parser."""
     parser = argparse.ArgumentParser(prog="mlb-props-stack")
@@ -208,6 +229,30 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default="data",
         help="Directory where feature inputs and training artifacts live.",
     )
+
+    edge_parser = subparsers.add_parser(
+        "build-edge-candidates",
+        help="Join latest odds snapshots to saved model ladders and score edges.",
+    )
+    edge_parser.add_argument(
+        "--date",
+        dest="target_date",
+        required=True,
+        help="Official date to evaluate in YYYY-MM-DD format.",
+    )
+    edge_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where normalized odds, model, and edge artifacts live.",
+    )
+    edge_parser.add_argument(
+        "--model-run-dir",
+        default=None,
+        help=(
+            "Optional explicit starter_strikeout_baseline run directory. "
+            "Defaults to the latest run containing the requested date."
+        ),
+    )
     return parser
 
 
@@ -248,6 +293,15 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=args.output_dir,
         )
         print(render_starter_strikeout_training_summary(result))
+        return
+
+    if args.command == "build-edge-candidates":
+        result = build_edge_candidates_for_date(
+            target_date=date.fromisoformat(args.target_date),
+            output_dir=args.output_dir,
+            model_run_dir=args.model_run_dir,
+        )
+        print(render_edge_candidate_summary(result))
         return
 
     print(render_runtime_summary())

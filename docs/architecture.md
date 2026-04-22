@@ -45,8 +45,8 @@ modeling work must honor.
 | Prop and projection contracts | `src/mlb_props_stack/markets.py` | `PropLine`, `PropProjection`, `EdgeDecision`, `PropSelectionKey`, `ProjectionInputRef` |
 | Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py`, `src/mlb_props_stack/ingest/odds_api.py`, `src/mlb_props_stack/ingest/statcast_features.py` | fetch schedule, `feed/live`, sportsbook event-odds payloads, and targeted Statcast CSV pulls; preserve raw snapshots; normalize `games`, `probable_starters`, `lineup_snapshots`, `event_game_mappings`, `prop_line_snapshots`, `pitch_level_base`, `pitcher_daily_features`, `lineup_daily_features`, and `game_context_features` |
 | Baseline modeling | `src/mlb_props_stack/modeling.py` | join AGE-146 feature tables into a date-keyed training dataset, derive official starter strikeout labels from same-day Statcast pulls, fit the first trainable baseline expectation model, fit a global strikeout-count distribution on top of that mean, and save explicit date splits plus evaluation artifacts |
-| Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly |
-| Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, emit the best actionable side |
+| Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
+| Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
 | Evaluation guardrails | `src/mlb_props_stack/backtest.py` | walk-forward policy flags and the baseline honesty checklist |
 | Reserved future seams | `src/mlb_props_stack/tracking.py`, `src/mlb_props_stack/dashboard/app.py` | tracking and dashboard entrypoints only, not full implementations yet |
 
@@ -87,7 +87,9 @@ In code terms, that flow should eventually materialize as:
 3. the model emits a `PropProjection`
 4. `evaluate_projection()` in `src/mlb_props_stack/edge.py` compares the
    projection to the market
-5. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
+5. `build_edge_candidates_for_date()` writes auditable edge rows keyed by line
+   snapshot and model version
+6. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
    considered valid
 
 ## Current AGE-144, AGE-145, And AGE-146 Output Shape
@@ -219,6 +221,18 @@ AGE-149 adds a calibration layer on top of those ladder probabilities:
   pricing work can consume calibrated probabilities without recomputing the
   calibration layer
 
+AGE-150 adds the first saved decision artifact on top of those calibrated
+probabilities:
+
+- `ladder_probabilities.jsonl`
+  now also carries `feature_row_id`, `lineup_snapshot_id`, `features_as_of`,
+  and a conservative `projection_generated_at` so downstream pricing code can
+  materialize contract-valid `PropProjection` objects
+- `data/normalized/edge_candidates/date=YYYY-MM-DD/run=.../edge_candidates.jsonl`
+  stores one auditable pricing row per line snapshot and model version,
+  including actionable candidates, below-threshold rows, and skipped rows that
+  failed join or timestamp requirements
+
 The lineup guardrail in AGE-146 is intentionally strict:
 
 - only lineup snapshots with `captured_at <= commence_time` are allowed into the
@@ -245,6 +259,10 @@ Current code already enforces:
 
 That means the model may not use a lineup, pitch log, or market state that did
 not exist when the price snapshot was captured.
+
+Current AGE-150 historical edge builds use `features_as_of` as the conservative
+`generated_at` timestamp until a dedicated pregame inference runner persists its
+own projection snapshot times.
 
 ## Non-Goals
 

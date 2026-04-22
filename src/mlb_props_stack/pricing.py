@@ -51,7 +51,7 @@ def fair_american_odds(probability: float) -> int:
     return decimal_to_american(1.0 / probability)
 
 
-def quarter_kelly(probability: float, odds: int, fraction: float = 0.25) -> float:
+def fractional_kelly(probability: float, odds: int, *, fraction: float = 1.0) -> float:
     """Return a fractional Kelly stake as a fraction of bankroll."""
     if not 0.0 <= probability <= 1.0:
         raise ValueError("probability must be in [0, 1]")
@@ -62,3 +62,24 @@ def quarter_kelly(probability: float, odds: int, fraction: float = 0.25) -> floa
     q = 1.0 - probability
     full_kelly = ((probability * b) - q) / b
     return max(0.0, full_kelly * fraction)
+
+
+def capped_fractional_kelly(
+    probability: float,
+    odds: int,
+    *,
+    fraction: float = 0.25,
+    max_fraction: float,
+) -> float:
+    """Return a fractional Kelly stake capped to the configured bankroll limit."""
+    if not 0.0 <= max_fraction <= 1.0:
+        raise ValueError("max_fraction must be in [0, 1]")
+    return min(
+        fractional_kelly(probability, odds, fraction=fraction),
+        max_fraction,
+    )
+
+
+def quarter_kelly(probability: float, odds: int, fraction: float = 0.25) -> float:
+    """Return a quarter-Kelly style stake for backwards compatibility."""
+    return fractional_kelly(probability, odds, fraction=fraction)

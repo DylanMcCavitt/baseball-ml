@@ -82,6 +82,7 @@ class ProjectionInputRef:
 class PropLine:
     """A sportsbook line for a single two-way prop market."""
 
+    line_snapshot_id: str
     sportsbook: str
     event_id: str
     player_id: str
@@ -93,6 +94,7 @@ class PropLine:
     captured_at: datetime
 
     def __post_init__(self) -> None:
+        _require_text(self.line_snapshot_id, "line_snapshot_id")
         _require_text(self.sportsbook, "sportsbook")
         _require_text(self.player_name, "player_name")
         _require_american_odds(self.over_odds, "over_odds")

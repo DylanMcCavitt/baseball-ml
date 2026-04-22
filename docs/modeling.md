@@ -248,6 +248,18 @@ AGE-149 adds explicit probability calibration on top of those raw ladders:
 - `ladder_probabilities.jsonl` now carries both the raw ladder and a calibrated
   ladder so later pricing work can consume the calibrated side directly
 
+AGE-150 turns those saved ladders into replayable pricing rows:
+
+- `ladder_probabilities.jsonl` now also carries `feature_row_id`,
+  `lineup_snapshot_id`, `features_as_of`, and a conservative
+  `projection_generated_at` so each saved ladder row can become a
+  contract-valid `PropProjection`
+- `build-edge-candidates --date YYYY-MM-DD` joins the latest saved line
+  snapshots for that date to the latest saved ladder run containing that date
+- `edge_candidates.jsonl` stores raw and calibrated line probabilities, no-vig
+  market probabilities, EV, fair odds, capped Kelly sizing, and an evaluation
+  status for every replayable line snapshot
+
 ## Model Shape
 
 The docs should define the modeling job without pretending the implementation
@@ -294,6 +306,10 @@ For every evaluated prop:
 
 If that ordering cannot be proven, the record is invalid.
 
+Current AGE-150 historical candidate generation uses
+`projection_generated_at = features_as_of` as the conservative default until a
+dedicated live inference artifact exists.
+
 ### Lineup handling
 
 - Every evaluated projection must point to a specific `lineup_snapshot_id`.
@@ -322,6 +338,8 @@ Current AGE-147 training matrix intentionally excludes:
   decision time
 - report CLV separately from realized ROI
 - keep vig in the pricing path instead of treating the board as fair by default
+- keep rejected or skipped rows so later threshold or join changes can be
+  audited against the same saved market history
 
 ## Promotion Criteria
 
