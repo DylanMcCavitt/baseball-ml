@@ -308,6 +308,7 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
         actionable_bet_count=3,
         below_threshold_count=2,
         skipped_count=3,
+        skip_reason_counts={"missing_line_probability": 2, "unmatched_event_mapping": 1},
     )
 
     monkeypatch.setattr(
@@ -335,6 +336,10 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
     assert "mlflow_experiment_name=mlb-props-stack-walk-forward-backtest" in output
     assert "snapshot_groups=8" in output
     assert "actionable_bets=3" in output
+    assert (
+        'skip_reason_counts={"missing_line_probability": 2, "unmatched_event_mapping": 1}'
+        in output
+    )
     assert "bet_reporting_path=" in output
     assert "join_audit_path=" in output
     assert "clv_summary_path=" in output

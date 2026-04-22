@@ -4,78 +4,46 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Active issue branch: `feat/age-154-experiment-tracking`
-- `main` already includes the merged held-out baseline improvement work from
-  `feat/improve-strikeout-baseline-window`
-- This branch adds MLflow-backed experiment tracking plus one new tracked
-  training artifact bundle under
-  `data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-23/`
-  and one new tracked backtest artifact bundle under
-  `data/normalized/walk_forward_backtest/start=2026-04-23_end=2026-04-23/`
+- Active issue branch: `feat/age-190-diagnose-missing-join-keys`
+- This slice patches the walk-forward backtest join diagnostics so unresolved
+  sportsbook rows no longer collapse into one generic `missing_join_keys`
+  bucket
+- Verification in this worktree used copied local normalized inputs from the
+  canonical checkout under `/Users/dylanmccavitt/projects/nba-ml/data/normalized/`
+  because the tracked `20260422T205727Z` and `20260422T205734Z` artifact folders
+  in git only carried summary files, not the full join inputs
 
 ## What Was Completed In This Slice
 
-- `src/mlb_props_stack/tracking.py`
-  - turns the placeholder tracking seam into a small MLflow helper layer with
-    lazy import behavior, a local file-backed store, and separate experiment
-    names for training vs backtest runs
-- `src/mlb_props_stack/modeling.py`
-  - starts an MLflow run for each baseline training execution before writing
-    local artifacts
-  - logs params, held-out metrics, and the full local run directory into MLflow
-  - writes `reproducibility_notes.md` and stores MLflow metadata inside
-    `evaluation.json`, `evaluation_summary.json`, `evaluation_summary.md`, and
-    `baseline_model.json`
 - `src/mlb_props_stack/backtest.py`
-  - starts an MLflow run for each walk-forward backtest execution
-  - logs summary metrics and the full backtest output directory into MLflow
-  - writes `reproducibility_notes.md` and stores MLflow metadata inside
-    `backtest_runs.jsonl`
+  - classifies missing snapshot joins more precisely before the held-out
+    probability lookup, including `unmatched_event_mapping`,
+    `unresolved_pitcher_identity`, `missing_game_mapping`, and the existing
+    downstream skip statuses
+  - accumulates `skip_reason_counts` at run level and writes them into
+    `WalkForwardBacktestResult` plus `backtest_runs.jsonl`
 - `src/mlb_props_stack/cli.py`
-  - surfaces the training/backtest MLflow run ID, experiment name, and
-    reproducibility-note path in the CLI summaries
-- `tests/test_tracking.py`
-  - adds focused coverage for the MLflow helper behavior without depending on a
-    live server
-- `tests/test_modeling.py`, `tests/test_backtest.py`, `tests/test_cli.py`,
-  `tests/test_runtime_smokes.py`
-  - updates direct training/backtest tests to use temp tracking roots and
-    asserts the new MLflow/reproducibility contract
-- `README.md`
-  - documents the new MLflow-backed training/backtest artifacts and the local
-    tracking store
-- `docs/modeling.md`
-  - documents the AGE-154 tracking contract
+  - prints `skip_reason_counts` in the walk-forward backtest CLI summary so
+    zero-bet windows surface the real failure mode immediately
+- `tests/test_backtest.py`
+  - extends the backtest contract checks to assert run-level skip reason counts
+  - adds a focused regression test with one stale unmatched odds row, one true
+    `missing_line_probability` row, one below-threshold scored row, and one
+    actionable row so scored-vs-skipped behavior stays explicit
+- `tests/test_cli.py`
+  - updates the CLI summary test to cover the new skip-reason output
 - `docs/architecture.md`
-  - notes that `backtest_runs.jsonl` now carries MLflow traceability fields
-- `data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-23/run=20260422T205727Z/`
-  - saves the first tracked local training run, including
-    `evaluation_summary.json`, `evaluation_summary.md`, and
-    `reproducibility_notes.md`
-- `data/normalized/walk_forward_backtest/start=2026-04-23_end=2026-04-23/run=20260422T205734Z/`
-  - saves the first tracked local backtest run, including `backtest_runs.jsonl`
-    and `reproducibility_notes.md`
+  - documents that backtest rows now preserve explicit skipped-by-reason
+    statuses and that `backtest_runs.jsonl` carries `skip_reason_counts`
 
 ## Files Changed
 
-- `.gitignore`
-- `README.md`
-- `docs/NEXT_SESSION_HANDOFF.md`
 - `docs/architecture.md`
-- `docs/modeling.md`
-- `pyproject.toml`
+- `docs/NEXT_SESSION_HANDOFF.md`
 - `src/mlb_props_stack/backtest.py`
 - `src/mlb_props_stack/cli.py`
-- `src/mlb_props_stack/modeling.py`
-- `src/mlb_props_stack/tracking.py`
 - `tests/test_backtest.py`
 - `tests/test_cli.py`
-- `tests/test_modeling.py`
-- `tests/test_runtime_smokes.py`
-- `tests/test_tracking.py`
-- `uv.lock`
-- `data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-23/run=20260422T205727Z/`
-- `data/normalized/walk_forward_backtest/start=2026-04-23_end=2026-04-23/run=20260422T205734Z/`
 
 ## Verification
 
@@ -83,10 +51,9 @@ Commands run successfully on April 22, 2026:
 
 ```bash
 uv sync --extra dev
-uv run python -m mlb_props_stack
-uv run pytest tests/test_tracking.py tests/test_modeling.py tests/test_backtest.py \
-  tests/test_cli.py tests/test_runtime_smokes.py
+uv run pytest tests/test_backtest.py tests/test_cli.py
 uv run pytest
+uv run python -m mlb_props_stack
 uv run python -m mlb_props_stack train-starter-strikeout-baseline \
   --start-date 2026-04-18 \
   --end-date 2026-04-23 \
@@ -95,56 +62,65 @@ uv run python -m mlb_props_stack build-walk-forward-backtest \
   --start-date 2026-04-23 \
   --end-date 2026-04-23 \
   --output-dir data \
-  --model-run-dir data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-23/run=20260422T205727Z
+  --model-run-dir data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-23/run=20260422T213008Z
 ```
 
 Observed results:
 
+- `uv run pytest tests/test_backtest.py tests/test_cli.py`
+  - `11 passed`
+- `uv run pytest`
+  - `68 passed`
 - `uv run python -m mlb_props_stack`
   - printed the runtime summary successfully
-- `uv run pytest tests/test_tracking.py tests/test_modeling.py tests/test_backtest.py tests/test_cli.py tests/test_runtime_smokes.py`
-  - `21 passed`
-- `uv run pytest`
-  - run after AGE-154 changes; final passing count should be re-recorded if more
-    tests land before merge
-- training run `20260422T205727Z`
-  - MLflow run ID: `5fbc851c3c7643daa4add2fb6706eee5`
+- training run `20260422T213008Z`
+  - MLflow run ID: `4558b270f0e34098b9b327b305707cfa`
   - experiment: `mlb-props-stack-starter-strikeout-training`
-  - held-out model RMSE: `2.322574`
-  - held-out benchmark RMSE: `2.518693`
-  - held-out model MAE: `1.960881`
-  - held-out benchmark MAE: `2.047866`
+  - `training_rows=108`
+  - `starter_outcomes=108`
   - `held_out_status=beating_benchmark`
-- backtest run `20260422T205734Z`
-  - MLflow run ID: `f29d23b7a6274d48b64b01b46ea3d8d3`
+  - `held_out_model_rmse=2.322574`
+  - `held_out_benchmark_rmse=2.518693`
+  - `held_out_model_mae=1.960881`
+  - `held_out_benchmark_mae=2.047866`
+- backtest run `20260422T213013Z`
+  - MLflow run ID: `dcee221b193b40ebaeef6f82557ee3cc`
   - experiment: `mlb-props-stack-walk-forward-backtest`
   - `snapshot_groups=139`
   - `actionable_bets=0`
+  - `below_threshold=0`
   - `skipped=139`
-  - `bet_outcomes.placed_bets=0`
+  - `skip_reason_counts={"unmatched_event_mapping": 139}`
+  - sample row in `backtest_bets.jsonl` now carries
+    `evaluation_status=unmatched_event_mapping` with the explicit reason:
+    the selected line snapshot still belongs to an unmatched Odds API event, so
+    no honest MLB game join exists for backtest scoring
 
 ## Recommended Next Issue
 
-- Tighten calibration/backtest handoff so the tracked walk-forward run can
-  distinguish genuinely below-threshold lines from rows that were skipped
-  because no honest held-out probability existed for that date or line
+- Tighten the Odds API target-date filtering / stale-unmatched-run cleanup so
+  `2026-04-23` sportsbook rows map to the intended MLB slate instead of leaving
+  the backtest window with `139` unresolved `unmatched_event_mapping` rows
 
 Why this should go next:
 
-- AGE-154 now makes training and backtest runs traceable, but the first real
-  `2026-04-23` backtest window logged `139` skipped rows and `0` placed bets
-- the next issue should make that skip mix easier to diagnose from the saved
-  reporting artifacts before anyone overreads a zero-bet ROI row
+- AGE-190 fixed the diagnosability problem in the backtest itself, but the real
+  `2026-04-23` window is still operationally blocked upstream by stale unmatched
+  sportsbook events
+- until that ingest-side mismatch is fixed, the backtest will honestly explain
+  the skip reason but still have no scoreable exact-line rows for that window
 
 ## Constraints And Open Questions
 
-- `mlflow-skinny==2.22.4` brings in a wider transitive set than the pre-AGE-154
-  bootstrap baseline, but it kept the implementation small and the local file
-  store simple
-- The first real backtest verification window (`2026-04-23`) produced no
-  actionable bets. That does not block AGE-154, because the issue only required
-  traceable runs and summary artifacts, but it means the next issue should
-  inspect why every row was skipped before interpreting the zero-bet summary
-- Training still refetches same-day Statcast outcome rows during each run, so
-  repeated retraining continues to pay the network cost unless a later caching
-  issue tackles it explicitly
+- The tracked historical artifact folders for `20260422T205727Z` and
+  `20260422T205734Z` remain summary-only in git; future workers should not
+  assume those directories contain the full training/backtest inputs needed to
+  rerun joins locally
+- The real `2026-04-23` odds data under `run=20260422T173024Z` still contains
+  `139` normalized prop rows with `match_status="unmatched"`, `game_pk=null`,
+  and `pitcher_mlb_id=null`; those are now reported honestly, but they still
+  need an upstream resolution path
+- A later local Odds API run for the same date (`run=20260422T190633Z`) exists
+  with `0` normalized prop rows, so the next issue should confirm whether the
+  book had no joinable pitcher-K markets yet or whether the current ingest is
+  still filtering out rows it should keep

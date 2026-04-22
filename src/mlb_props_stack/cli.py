@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import date
+import json
 
 from .backtest import (
     BACKTEST_CHECKLIST,
@@ -231,6 +232,7 @@ def render_walk_forward_backtest_summary(result: WalkForwardBacktestResult) -> s
         f"actionable_bets={result.actionable_bet_count}",
         f"below_threshold={result.below_threshold_count}",
         f"skipped={result.skipped_count}",
+        f"skip_reason_counts={json.dumps(result.skip_reason_counts, sort_keys=True)}",
         f"backtest_bets_path={result.backtest_bets_path}",
         f"bet_reporting_path={result.bet_reporting_path}",
         f"backtest_runs_path={result.backtest_runs_path}",

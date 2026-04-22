@@ -90,6 +90,7 @@ class WalkForwardBacktestResult:
     actionable_bet_count: int
     below_threshold_count: int
     skipped_count: int
+    skip_reason_counts: dict[str, int]
 
 
 def _json_ready(value: Any) -> Any:
@@ -829,6 +830,58 @@ def _line_probability_lookup_key(
     )
 
 
+def _increment_reason_count(
+    reason_counts: dict[str, int],
+    *,
+    reason_key: str,
+) -> None:
+    reason_counts[reason_key] = reason_counts.get(reason_key, 0) + 1
+
+
+def _missing_snapshot_join_status(
+    selected_row: dict[str, Any],
+) -> tuple[str, str]:
+    match_status = str(selected_row.get("match_status") or "")
+    player_id = str(selected_row.get("player_id") or "")
+    if match_status and match_status != "matched":
+        return (
+            "unmatched_event_mapping",
+            (
+                "Selected line snapshot still belongs to an unmatched Odds API event, "
+                "so no honest MLB game join exists for backtest scoring."
+            ),
+        )
+    if selected_row.get("game_pk") is None:
+        return (
+            "missing_game_mapping",
+            (
+                "Selected line snapshot is missing the mapped MLB game identifier "
+                "required for walk-forward joins."
+            ),
+        )
+    if selected_row.get("pitcher_mlb_id") is None:
+        if player_id.startswith("odds-player:"):
+            return (
+                "unresolved_pitcher_identity",
+                (
+                    "Selected line snapshot could not resolve the sportsbook pitcher "
+                    "name to an MLB probable-starter id, so no honest held-out "
+                    "probability row can be joined."
+                ),
+            )
+        return (
+            "missing_pitcher_mapping",
+            (
+                "Selected line snapshot is missing the resolved MLB pitcher "
+                "identifier required for walk-forward joins."
+            ),
+        )
+    return (
+        "missing_join_keys",
+        "Selected line snapshot is missing mapped game or pitcher identifiers.",
+    )
+
+
 def build_walk_forward_backtest(
     *,
     start_date: date,
@@ -906,6 +959,7 @@ def build_walk_forward_backtest(
     actionable_bet_count = 0
     below_threshold_count = 0
     skipped_count = 0
+    skip_reason_counts: dict[str, int] = {}
 
     for group_key in sorted(snapshot_groups):
         group_rows = sorted(snapshot_groups[group_key], key=_snapshot_sort_key)
@@ -942,10 +996,15 @@ def build_walk_forward_backtest(
 
         if selected_row is None:
             skipped_count += 1
+            evaluation_status = "late_snapshot_after_cutoff"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
             backtest_rows.append(
                 {
                     **base_row,
-                    "evaluation_status": "late_snapshot_after_cutoff",
+                    "evaluation_status": evaluation_status,
                     "bet_placed": False,
                     "reason": (
                         "No snapshot for this exact line was available on or before the "
@@ -972,11 +1031,15 @@ def build_walk_forward_backtest(
         selected_pitcher_id = selected_row.get("pitcher_mlb_id")
         if selected_game_pk is None or selected_pitcher_id is None:
             skipped_count += 1
-            reason = "Selected line snapshot is missing mapped game or pitcher identifiers."
+            evaluation_status, reason = _missing_snapshot_join_status(selected_row)
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
             backtest_rows.append(
                 {
                     **base_row,
-                    "evaluation_status": "missing_join_keys",
+                    "evaluation_status": evaluation_status,
                     "bet_placed": False,
                     "reason": reason,
                 }
@@ -984,7 +1047,7 @@ def build_walk_forward_backtest(
             audit_rows.append(
                 _audit_row(
                     base_row,
-                    audit_status="missing_join_keys",
+                    audit_status=evaluation_status,
                     reason=reason,
                     eligible_snapshot_count=len(eligible_rows),
                     late_snapshot_count=late_snapshot_count,
@@ -1002,11 +1065,16 @@ def build_walk_forward_backtest(
         training_row = training_lookup.get(training_key)
         if training_row is None:
             skipped_count += 1
+            evaluation_status = "missing_projection"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
             reason = "No feature-backed training row was found for the selected line snapshot."
             backtest_rows.append(
                 {
                     **base_row,
-                    "evaluation_status": "missing_projection",
+                    "evaluation_status": evaluation_status,
                     "bet_placed": False,
                     "reason": reason,
                 }
@@ -1014,7 +1082,7 @@ def build_walk_forward_backtest(
             audit_rows.append(
                 _audit_row(
                     base_row,
-                    audit_status="missing_projection",
+                    audit_status=evaluation_status,
                     reason=reason,
                     eligible_snapshot_count=len(eligible_rows),
                     late_snapshot_count=late_snapshot_count,
@@ -1027,11 +1095,16 @@ def build_walk_forward_backtest(
         split_name = split_by_date.get(str(selected_row["official_date"]))
         if split_name is None:
             skipped_count += 1
+            evaluation_status = "missing_projection"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
             reason = "The selected line snapshot is not covered by the model date splits."
             backtest_rows.append(
                 {
                     **base_row,
-                    "evaluation_status": "missing_projection",
+                    "evaluation_status": evaluation_status,
                     "bet_placed": False,
                     "feature_row_id": str(training_row["training_row_id"]),
                     "lineup_snapshot_id": training_row.get("lineup_snapshot_id"),
@@ -1041,7 +1114,7 @@ def build_walk_forward_backtest(
             audit_rows.append(
                 _audit_row(
                     base_row,
-                    audit_status="missing_projection",
+                    audit_status=evaluation_status,
                     reason=reason,
                     eligible_snapshot_count=len(eligible_rows),
                     late_snapshot_count=late_snapshot_count,
@@ -1059,6 +1132,11 @@ def build_walk_forward_backtest(
 
         if split_name == "train":
             skipped_count += 1
+            evaluation_status = "train_split_projection"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
             reason = (
                 "The selected line only maps to a training-split row and is not honest "
                 "for walk-forward evaluation."
@@ -1066,7 +1144,7 @@ def build_walk_forward_backtest(
             backtest_rows.append(
                 {
                     **base_row,
-                    "evaluation_status": "train_split_projection",
+                    "evaluation_status": evaluation_status,
                     "bet_placed": False,
                     "data_split": split_name,
                     "feature_row_id": str(training_row["training_row_id"]),
@@ -1081,7 +1159,7 @@ def build_walk_forward_backtest(
             audit_rows.append(
                 _audit_row(
                     base_row,
-                    audit_status="train_split_projection",
+                    audit_status=evaluation_status,
                     reason=reason,
                     eligible_snapshot_count=len(eligible_rows),
                     late_snapshot_count=late_snapshot_count,
@@ -1112,11 +1190,16 @@ def build_walk_forward_backtest(
         )
         if probability_row is None:
             skipped_count += 1
+            evaluation_status = "missing_line_probability"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
             reason = "No honest held-out probability row was found for this exact line."
             backtest_rows.append(
                 {
                     **base_row,
-                    "evaluation_status": "missing_line_probability",
+                    "evaluation_status": evaluation_status,
                     "bet_placed": False,
                     "data_split": split_name,
                     "feature_row_id": str(training_row["training_row_id"]),
@@ -1127,7 +1210,7 @@ def build_walk_forward_backtest(
             audit_rows.append(
                 _audit_row(
                     base_row,
-                    audit_status="missing_line_probability",
+                    audit_status=evaluation_status,
                     reason=reason,
                     eligible_snapshot_count=len(eligible_rows),
                     late_snapshot_count=late_snapshot_count,
@@ -1147,11 +1230,16 @@ def build_walk_forward_backtest(
         lineup_snapshot_id = training_row.get("lineup_snapshot_id")
         if lineup_snapshot_id is None:
             skipped_count += 1
+            evaluation_status = "missing_lineup_snapshot_id"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
             reason = "The matched held-out projection does not carry a lineup snapshot reference."
             backtest_rows.append(
                 {
                     **base_row,
-                    "evaluation_status": "missing_lineup_snapshot_id",
+                    "evaluation_status": evaluation_status,
                     "bet_placed": False,
                     "data_split": split_name,
                     "feature_row_id": str(training_row["training_row_id"]),
@@ -1161,7 +1249,7 @@ def build_walk_forward_backtest(
             audit_rows.append(
                 _audit_row(
                     base_row,
-                    audit_status="missing_lineup_snapshot_id",
+                    audit_status=evaluation_status,
                     reason=reason,
                     eligible_snapshot_count=len(eligible_rows),
                     late_snapshot_count=late_snapshot_count,
@@ -1176,11 +1264,16 @@ def build_walk_forward_backtest(
         outcome_row = outcome_lookup.get(training_key)
         if outcome_row is None:
             skipped_count += 1
+            evaluation_status = "missing_result"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
             reason = "No same-game outcome record was found for the selected projection."
             backtest_rows.append(
                 {
                     **base_row,
-                    "evaluation_status": "missing_result",
+                    "evaluation_status": evaluation_status,
                     "bet_placed": False,
                     "data_split": split_name,
                     "feature_row_id": str(training_row["training_row_id"]),
@@ -1191,7 +1284,7 @@ def build_walk_forward_backtest(
             audit_rows.append(
                 _audit_row(
                     base_row,
-                    audit_status="missing_result",
+                    audit_status=evaluation_status,
                     reason=reason,
                     eligible_snapshot_count=len(eligible_rows),
                     late_snapshot_count=late_snapshot_count,
@@ -1229,11 +1322,16 @@ def build_walk_forward_backtest(
             )
         except (TypeError, ValueError) as error:
             skipped_count += 1
+            evaluation_status = "invalid_projection"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
             reason = str(error)
             backtest_rows.append(
                 {
                     **base_row,
-                    "evaluation_status": "invalid_projection",
+                    "evaluation_status": evaluation_status,
                     "bet_placed": False,
                     "data_split": split_name,
                     "feature_row_id": str(training_row["training_row_id"]),
@@ -1246,7 +1344,7 @@ def build_walk_forward_backtest(
             audit_rows.append(
                 _audit_row(
                     base_row,
-                    audit_status="invalid_projection",
+                    audit_status=evaluation_status,
                     reason=reason,
                     eligible_snapshot_count=len(eligible_rows),
                     late_snapshot_count=late_snapshot_count,
@@ -1433,6 +1531,7 @@ def build_walk_forward_backtest(
     audit_rows.sort(key=lambda row: str(row["audit_id"]))
 
     run_id = now().astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
+    sorted_skip_reason_counts = dict(sorted(skip_reason_counts.items()))
     normalized_root = (
         output_root
         / "normalized"
@@ -1517,6 +1616,7 @@ def build_walk_forward_backtest(
                 "below_threshold": below_threshold_count,
                 "skipped": skipped_count,
             },
+            "skip_reason_counts": sorted_skip_reason_counts,
             "bet_outcomes": {
                 "placed_bets": len(placed_bets),
                 "wins": sum(1 for row in placed_bets if row["settlement_status"] == "win"),
@@ -1678,4 +1778,5 @@ def build_walk_forward_backtest(
         actionable_bet_count=actionable_bet_count,
         below_threshold_count=below_threshold_count,
         skipped_count=skipped_count,
+        skip_reason_counts=sorted_skip_reason_counts,
     )
