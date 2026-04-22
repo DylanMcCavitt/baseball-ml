@@ -283,8 +283,12 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
         now=fixed_now,
     )
     second_rows = _load_jsonl(second_result.backtest_bets_path)
+    reporting_rows = _load_jsonl(result.bet_reporting_path)
     audit_rows = _load_jsonl(result.join_audit_path)
     summary_rows = _load_jsonl(result.backtest_runs_path)
+    clv_summary_rows = _load_jsonl(result.clv_summary_path)
+    roi_summary_rows = _load_jsonl(result.roi_summary_path)
+    edge_bucket_summary_rows = _load_jsonl(result.edge_bucket_summary_path)
 
     assert first_rows == second_rows
     assert result.run_id == "20260421T190000Z"
@@ -305,6 +309,18 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
     assert first_rows[0]["clv_probability_delta"] > 0.0
     assert first_rows[1]["line_snapshot_id"] is None
     assert first_rows[1]["latest_observed_line_snapshot_id"] == "line-2-late-only"
+    assert reporting_rows[0]["backtest_run_id"] == "20260421T190000Z"
+    assert reporting_rows[0]["paper_result"] == "win"
+    assert reporting_rows[0]["paper_win"] is True
+    assert reporting_rows[0]["clv_outcome"] == "beat_closing_line"
+    assert reporting_rows[0]["same_line_close_available"] is True
+    assert reporting_rows[0]["edge_bucket"] == "2_to_5_pct"
+    assert reporting_rows[0]["scatter_model_probability"] == first_rows[0][
+        "selected_model_probability"
+    ]
+    assert reporting_rows[1]["paper_result"] == "not_placed"
+    assert reporting_rows[1]["same_line_close_available"] is True
+    assert reporting_rows[1]["clv_outcome"] == "no_closing_line"
 
     assert audit_rows[0]["audit_status"] == "ok"
     assert audit_rows[0]["training_window_before_evaluated_date"] is True
@@ -321,6 +337,21 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
     }
     assert summary_rows[0]["bet_outcomes"]["placed_bets"] == 1
     assert summary_rows[0]["clv_summary"]["sample_count"] == 1
+    assert summary_rows[0]["roi_summary"]["placed_bets"] == 1
+    assert summary_rows[0]["reporting_artifacts"]["bet_reporting_path"].endswith(
+        "bet_reporting.jsonl"
+    )
+    assert clv_summary_rows[0]["summary_scope"] == "date"
+    assert clv_summary_rows[0]["beat_closing_line_count"] == 1
+    assert clv_summary_rows[1]["summary_scope"] == "overall"
+    assert clv_summary_rows[1]["sample_count"] == 1
+    assert roi_summary_rows[0]["summary_scope"] == "date"
+    assert roi_summary_rows[0]["roi"] == first_rows[0]["return_on_stake"]
+    assert roi_summary_rows[1]["summary_scope"] == "overall"
+    assert edge_bucket_summary_rows[0]["edge_bucket"] == "0_to_2_pct"
+    assert edge_bucket_summary_rows[1]["edge_bucket"] == "2_to_5_pct"
+    assert edge_bucket_summary_rows[1]["bet_count"] == 1
+    assert edge_bucket_summary_rows[1]["beat_closing_line_count"] == 1
 
 
 def test_build_walk_forward_backtest_skips_train_split_rows(tmp_path) -> None:
@@ -335,6 +366,9 @@ def test_build_walk_forward_backtest_skips_train_split_rows(tmp_path) -> None:
         now=lambda: datetime(2026, 4, 21, 19, 5, tzinfo=UTC),
     )
     rows = _load_jsonl(result.backtest_bets_path)
+    reporting_rows = _load_jsonl(result.bet_reporting_path)
+    clv_summary_rows = _load_jsonl(result.clv_summary_path)
+    roi_summary_rows = _load_jsonl(result.roi_summary_path)
     audit_rows = _load_jsonl(result.join_audit_path)
 
     assert result.actionable_bet_count == 0
@@ -342,5 +376,11 @@ def test_build_walk_forward_backtest_skips_train_split_rows(tmp_path) -> None:
     assert rows[0]["evaluation_status"] == "train_split_projection"
     assert rows[0]["feature_row_id"] == "training-row-2"
     assert rows[0]["lineup_snapshot_id"] == "lineup-snapshot-2"
+    assert reporting_rows[0]["paper_result"] == "not_placed"
+    assert reporting_rows[0]["edge_bucket"] is None
     assert audit_rows[0]["audit_status"] == "train_split_projection"
     assert audit_rows[0]["data_split"] == "train"
+    assert clv_summary_rows[0]["summary_scope"] == "overall"
+    assert clv_summary_rows[0]["placed_bets"] == 0
+    assert roi_summary_rows[0]["summary_scope"] == "overall"
+    assert roi_summary_rows[0]["placed_bets"] == 0

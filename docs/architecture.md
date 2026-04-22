@@ -47,7 +47,7 @@ modeling work must honor.
 | Baseline modeling | `src/mlb_props_stack/modeling.py` | join AGE-146 feature tables into a date-keyed training dataset, derive official starter strikeout labels from same-day Statcast pulls, fit the first trainable baseline expectation model, fit a global strikeout-count distribution on top of that mean, and save explicit date splits plus evaluation artifacts |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
-| Evaluation guardrails | `src/mlb_props_stack/backtest.py` | cutoff-safe snapshot selection, walk-forward backtest joins, join-audit artifacts, and the baseline honesty checklist |
+| Evaluation guardrails | `src/mlb_props_stack/backtest.py` | cutoff-safe snapshot selection, walk-forward backtest joins, join-audit artifacts, chart-ready reporting tables, and the baseline honesty checklist |
 | Reserved future seams | `src/mlb_props_stack/tracking.py`, `src/mlb_props_stack/dashboard/app.py` | tracking and dashboard entrypoints only, not full implementations yet |
 
 The most important current contract boundary is the join between
@@ -236,17 +236,27 @@ probabilities:
   including actionable candidates, below-threshold rows, and skipped rows that
   failed join or timestamp requirements
 
-AGE-151 adds the first saved historical evaluation artifact on top of those
-decision seams:
+AGE-151 and AGE-152 add the first saved historical evaluation artifact and the
+first dashboard-ready reporting artifacts on top of those decision seams:
 
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../backtest_bets.jsonl`
   stores the selected cutoff-safe line snapshot, model refs, honest held-out
   probabilities, final outcome, and realized decision result for each exact
   line group
+- `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../bet_reporting.jsonl`
+  stores a flat per-bet table with paper-result, CLV, edge-bucket, and
+  model-vs-market scatter fields broken out for downstream dashboards
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../backtest_runs.jsonl`
   stores the run-level summary for one requested historical window
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../join_audit.jsonl`
   stores the freshness and cutoff audit for every kept or rejected backtest row
+- `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../clv_summary.jsonl`
+  stores daily and overall CLV summaries so paper winners and market-beating
+  bets can be separated explicitly
+- `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../roi_summary.jsonl`
+  stores daily and overall realized stake, profit, and ROI rows
+- `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../edge_bucket_summary.jsonl`
+  stores one realized summary row per configured edge bucket
 
 The first backtest slice intentionally uses held-out probabilities from
 `raw_vs_calibrated_probabilities.jsonl` rather than the production calibrator

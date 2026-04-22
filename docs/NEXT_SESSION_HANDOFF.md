@@ -5,62 +5,46 @@
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
 - Current issue branch:
-  `dylanmccavitt2015/age-151-build-walk-forward-backtest-with-timestamp-safe-joins`
+  `dylanmccavitt2015/age-152-add-clv-roi-and-edge-bucket-reporting`
 - `main` already includes the merged `AGE-143` docs work, `AGE-144` MLB
   metadata ingest, `AGE-145` sportsbook ingest, `AGE-146` Statcast feature
   tables, `AGE-147` starter strikeout baseline mean training, `AGE-148`
   count-distribution ladder probabilities, `AGE-149` probability calibration
-  diagnostics, and `AGE-150` replayable edge-candidate pricing rows
-- This branch adds `AGE-151`: the first walk-forward backtest slice with
-  cutoff-safe odds selection, honest held-out probability joins, and row-level
-  freshness audits
+  diagnostics, `AGE-150` replayable edge-candidate pricing rows, and `AGE-151`
+  walk-forward backtest joins
+- This branch adds `AGE-152`: chart-ready CLV, ROI, and edge-bucket reporting
+  artifacts on top of the saved walk-forward backtest run
 
-## What Was Completed In AGE-151
+## What Was Completed In AGE-152
 
 - `src/mlb_props_stack/backtest.py`
-  - keeps `BacktestPolicy` and `BACKTEST_CHECKLIST`
-  - adds `WalkForwardBacktestResult`
-  - adds `build_walk_forward_backtest()` which:
-    - replays all saved AGE-145 odds runs for each requested official date
-    - groups exact book lines by date, book, event, player, market, and line
-    - selects the latest exact-line snapshot at or before the configured
-      pregame cutoff
-    - joins selected rows to the saved AGE-147 training dataset,
-      AGE-149/150 held-out probability rows, and same-game starter outcomes
-    - writes:
-      - `data/normalized/walk_forward_backtest/start=..._end=.../run=.../backtest_bets.jsonl`
-      - `data/normalized/walk_forward_backtest/start=..._end=.../run=.../backtest_runs.jsonl`
-      - `data/normalized/walk_forward_backtest/start=..._end=.../run=.../join_audit.jsonl`
-    - preserves late-only snapshots, training-split rows, and missing-join or
-      missing-outcome rows as explicit skipped statuses
-  - keeps CLV separate from realized ROI
-  - uses held-out probabilities from
-    `raw_vs_calibrated_probabilities.jsonl` instead of the production
-    calibrator stored in `ladder_probabilities.jsonl`
+  - keeps `backtest_bets.jsonl` as the raw auditable backtest artifact
+  - extends `WalkForwardBacktestResult` with reporting artifact paths
+  - adds flat reporting helpers that derive:
+    - `bet_reporting.jsonl`
+    - `clv_summary.jsonl`
+    - `roi_summary.jsonl`
+    - `edge_bucket_summary.jsonl`
+  - keeps CLV separate from realized ROI while making paper result vs
+    market-beating result directly filterable
+  - preserves daily plus overall reporting rows for CLV and ROI
+  - keeps run-level `backtest_runs.jsonl` as the summary envelope and now
+    includes pointers to the reporting artifacts
 - `src/mlb_props_stack/cli.py`
-  - adds `build-walk-forward-backtest`
-  - renders the new backtest summary including run id, model run id, cutoff,
-    and output artifact paths
-- `src/mlb_props_stack/config.py`
-  - adds `backtest_cutoff_minutes_before_first_pitch` with a default of `30`
+  - extends the backtest CLI summary to print the new reporting artifact paths
 - `tests/test_backtest.py`
-  - covers deterministic replay on seeded inputs
-  - verifies latest-pre-cutoff snapshot selection
-  - verifies late-only snapshots are rejected
-  - verifies train-split rows are preserved as skipped
-  - verifies backtest rows and join-audit rows preserve feature, lineup, and
-    outcome traceability
+  - verifies the new reporting tables on seeded backtest inputs
+  - locks the split between raw backtest rows and flat dashboard rows
+  - checks CLV, ROI, and edge-bucket summaries for both populated and empty
+    placed-bet cases
 - `tests/test_cli.py`
-  - adds CLI coverage for `build-walk-forward-backtest`
+  - verifies the CLI summary now includes the new artifact paths
 - `README.md`, `docs/architecture.md`, `docs/modeling.md`
-  - document the new backtest command
-  - document `backtest_bets.jsonl`, `backtest_runs.jsonl`, and `join_audit.jsonl`
-  - call out the walk-forward calibration rule and cutoff-safe snapshot
-    selection rule
+  - document the new reporting outputs and their intended downstream use
 
 ## Verification Run
 
-These commands were run successfully during AGE-151:
+These commands were run successfully during AGE-152:
 
 ```bash
 uv sync --extra dev
@@ -75,24 +59,26 @@ Local results:
   - `50 passed`
 - `uv run python -m mlb_props_stack`
   - still prints the runtime summary cleanly
+- seeded local demo backtest run
+  - generated `bet_reporting.jsonl`, `clv_summary.jsonl`, `roi_summary.jsonl`,
+    and `edge_bucket_summary.jsonl` under a temp `walk_forward_backtest` run
 
 ## Recommended Next Issue
 
-- Expand backtest reporting to handle moved-point closing-line references and
-  richer per-date rollups
+- Handle moved-point closing-line references when the exact strikeout line
+  disappears near first pitch
 
 Why this should go next:
 
-- `AGE-151` produces the first honest exact-line CLV and ROI rows, but CLV is
-  still limited to cases where the same exact line remains available near first
-  pitch
-- the new backtest artifacts now make it practical to add better close-line
-  matching and more operator-friendly reporting without reopening the core
-  cutoff-safe join logic
+- `AGE-152` now gives daily and overall reporting on exact-line CLV and realized
+  ROI, but CLV still falls back to missing when no same-line close snapshot
+  exists
+- the reporting layer is now in place, so the next slice can improve close-line
+  reference quality without reopening the summary-table contract
 
 ## Constraints For The Next Worktree
 
-- Start the next issue worktree from the current `main` after AGE-151 is
+- Start the next issue worktree from the current `main` after AGE-152 is
   merged.
 - Keep the current cutoff rule:
   - select the latest exact-line snapshot with
@@ -102,17 +88,18 @@ Why this should go next:
     rows
   - do not fall back to the production calibrator inside
     `ladder_probabilities.jsonl` for reported CLV or ROI
-- Preserve skipped rows and audit rows for:
-  - late-only snapshots
-  - train-split projections
-  - missing joins or missing outcomes
+- Preserve the current artifact split:
+  - `backtest_bets.jsonl` for raw auditable row detail
+  - `bet_reporting.jsonl` for flat dashboard consumption
+  - `clv_summary.jsonl`, `roi_summary.jsonl`, and `edge_bucket_summary.jsonl`
+    for chart-level rollups
 - Keep `line_snapshot_id`, `feature_row_id`, `lineup_snapshot_id`, and
   `outcome_id` traceable on every non-skipped evaluated row.
 
 ## Open Questions
 
-- How should CLV be defined when the same exact strikeout line disappears and
-  only moved-point alternatives remain near first pitch?
+- How should moved-line close references be normalized when the later market is
+  at `6.5` but the bet was placed at `5.5`?
 - `projection_generated_at` still defaults to `features_as_of` for historical
   rows. A future issue may want a dedicated inference artifact that persists a
   separate pregame projection timestamp.

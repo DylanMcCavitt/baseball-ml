@@ -230,8 +230,12 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
         model_run_id="20260421T180000Z",
         cutoff_minutes_before_first_pitch=30,
         backtest_bets_path=tmp_path / "backtest_bets.jsonl",
+        bet_reporting_path=tmp_path / "bet_reporting.jsonl",
         backtest_runs_path=tmp_path / "backtest_runs.jsonl",
         join_audit_path=tmp_path / "join_audit.jsonl",
+        clv_summary_path=tmp_path / "clv_summary.jsonl",
+        roi_summary_path=tmp_path / "roi_summary.jsonl",
+        edge_bucket_summary_path=tmp_path / "edge_bucket_summary.jsonl",
         snapshot_group_count=8,
         actionable_bet_count=3,
         below_threshold_count=2,
@@ -261,4 +265,8 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
     assert "Walk-forward backtest complete for 2026-04-19 -> 2026-04-20" in output
     assert "snapshot_groups=8" in output
     assert "actionable_bets=3" in output
+    assert "bet_reporting_path=" in output
     assert "join_audit_path=" in output
+    assert "clv_summary_path=" in output
+    assert "roi_summary_path=" in output
+    assert "edge_bucket_summary_path=" in output
