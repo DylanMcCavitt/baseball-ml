@@ -62,7 +62,8 @@ That is a math-and-process problem first, and a betting problem second.
 - `src/mlb_props_stack/backtest.py`
   Backtest policy and evaluation guardrails.
 - `src/mlb_props_stack/dashboard/app.py`
-  Streamlit page for the current slate and recent paper-tracking performance.
+  Multi-screen Streamlit workbench for the live board, pitcher detail,
+  backtests, MLflow registry review, feature inspection, and config tuning.
 - `docs/architecture.md`
   Product and system architecture.
 - `docs/modeling.md`
@@ -438,14 +439,34 @@ By default that writes:
 - same-line CLV where an exact close snapshot exists
 - pending vs settled result status with realized PnL once outcomes are available
 
-Launch the first local dashboard page with:
+Launch the local dashboard with either entrypoint:
 
 ```bash
 uv run streamlit run src/mlb_props_stack/dashboard/app.py
+uv run streamlit run app.py
 ```
 
-That page reads `daily_candidates` for the selected slate and the latest
-`paper_results` artifact for recent paper performance.
+The dashboard now reads:
+
+- `daily_candidates` or `edge_candidates` for the live board
+- the latest `walk_forward_backtest` reporting rows as a historical replay board
+  when live-slate artifacts are absent
+- `paper_results` for recent paper performance
+- `evaluation_summary.json` and `calibration_summary.json` for model quality and
+  feature inspection
+- walk-forward summary artifacts such as `roi_summary.jsonl` and
+  `clv_summary.jsonl` for the backtest screen
+- the local MLflow store under `file:./artifacts/mlruns` for the registry view
+
+For model refinement on historical data, the intended loop is:
+
+1. train a baseline on a historical window
+2. run `build-walk-forward-backtest` on saved historical odds snapshots
+3. open the dashboard and inspect replayed historical dates from the board date
+   picker
+
+That avoids re-calling The Odds API every iteration once the historical odds
+artifacts already exist locally.
 
 ## CI
 
@@ -470,8 +491,9 @@ checks in [`docs/review_runtime_checks.md`](docs/review_runtime_checks.md).
 
 - `mlb_props_stack.tracking.TrackingConfig` now owns the local MLflow store plus
   the separate training and backtest experiment names.
-- `mlb_props_stack.dashboard.app` now hosts the first local Streamlit page for
-  current slate review and recent paper performance.
+- `mlb_props_stack.dashboard.app` now hosts the local Strike Ops Streamlit
+  workbench for board review, pitcher drill-down, backtests, registry, feature
+  inspection, and config controls.
 - Training and walk-forward backtest runs now log params, metrics, and local
   artifacts into `file:./artifacts/mlruns`.
 

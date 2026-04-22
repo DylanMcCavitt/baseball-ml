@@ -59,9 +59,18 @@ def _seed_dashboard_artifacts(output_dir: Path) -> None:
                 "line": 5.5,
                 "selected_side": "over",
                 "selected_odds": 120,
+                "over_odds": 120,
+                "under_odds": -145,
+                "model_over_probability": 0.61,
+                "model_under_probability": 0.39,
+                "selected_model_probability": 0.61,
+                "selected_market_probability": 0.52,
                 "edge_pct": 0.042,
                 "expected_value_pct": 0.031,
                 "stake_fraction": 0.0125,
+                "model_run_id": "20260422T180000Z",
+                "model_version": "starter-strikeout-baseline-v1",
+                "pitcher_mlb_id": 700001,
                 "captured_at": "2026-04-22T18:25:00Z",
             }
         ],
@@ -203,51 +212,126 @@ def _seed_training_fixture_runs(output_dir: Path) -> tuple[date, date, dict[tupl
     return start_date, start_date + timedelta(days=4), outcome_csv_by_pitcher_and_date
 
 
-class _FakeColumn:
-    def __init__(self, sink: list[tuple[str, object]]) -> None:
-        self._sink = sink
+class _FakeBlock:
+    def __init__(self, parent: "_FakeStreamlit") -> None:
+        self._parent = parent
 
-    def metric(self, label: str, value: object) -> None:
-        self._sink.append((label, value))
+    def __enter__(self) -> "_FakeBlock":
+        return self
 
+    def __exit__(self, exc_type, exc, tb) -> None:
+        return None
 
-class _FakeSidebar:
-    def __init__(self) -> None:
-        self.last_options: list[str] = []
+    def markdown(self, body: str, **kwargs: object) -> None:
+        self._parent.markdowns.append(body)
 
-    def selectbox(self, label: str, options: list[str], index: int) -> str:
-        assert label == "Slate date"
-        self.last_options = list(options)
+    def plotly_chart(self, figure: object, **kwargs: object) -> None:
+        self._parent.plots.append(figure)
+
+    def selectbox(self, label: str, options: list[str], index: int = 0, **kwargs: object) -> str:
+        self._parent.selectboxes[label] = list(options)
         return options[index]
+
+    def toggle(self, label: str, value: bool = False, **kwargs: object) -> bool:
+        self._parent.toggles[label] = value
+        return value
+
+    def text_input(self, label: str, value: str = "", **kwargs: object) -> str:
+        self._parent.text_inputs[label] = value
+        return value
+
+    def multiselect(
+        self,
+        label: str,
+        options: list[str],
+        default: list[str] | None = None,
+        **kwargs: object,
+    ) -> list[str]:
+        self._parent.multiselects[label] = list(options)
+        return list(default or [])
+
+    def button(self, label: str, **kwargs: object) -> bool:
+        self._parent.buttons.append(label)
+        return False
+
+    def number_input(self, label: str, value: float | int = 0, **kwargs: object) -> float | int:
+        self._parent.number_inputs[label] = value
+        return value
+
+    def caption(self, text: str) -> None:
+        self._parent.captions.append(text)
+
+    def success(self, text: str) -> None:
+        self._parent.successes.append(text)
 
 
 class _FakeStreamlit(ModuleType):
     def __init__(self) -> None:
         super().__init__("streamlit")
-        self.sidebar = _FakeSidebar()
-        self.metric_calls: list[tuple[str, object]] = []
-        self.dataframes: list[tuple[object, dict[str, object]]] = []
+        self.markdowns: list[str] = []
+        self.plots: list[object] = []
+        self.selectboxes: dict[str, list[str]] = {}
+        self.toggles: dict[str, bool] = {}
+        self.text_inputs: dict[str, str] = {}
+        self.multiselects: dict[str, list[str]] = {}
+        self.buttons: list[str] = []
+        self.number_inputs: dict[str, float | int] = {}
+        self.captions: list[str] = []
+        self.successes: list[str] = []
+        self.session_state: dict[str, object] = {}
+        self.query_params: dict[str, str] = {}
 
     def set_page_config(self, **kwargs: object) -> None:
         self.page_config = kwargs
 
-    def title(self, text: str) -> None:
-        self.title_text = text
-
-    def caption(self, text: str) -> None:
-        self.caption_text = text
+    def markdown(self, body: str, **kwargs: object) -> None:
+        self.markdowns.append(body)
 
     def info(self, text: str) -> None:
-        self.info_text = text
+        self.markdowns.append(text)
 
-    def columns(self, count: int) -> list[_FakeColumn]:
-        return [_FakeColumn(self.metric_calls) for _ in range(count)]
+    def caption(self, text: str) -> None:
+        self.captions.append(text)
 
-    def subheader(self, text: str) -> None:
-        self.last_subheader = text
+    def plotly_chart(self, figure: object, **kwargs: object) -> None:
+        self.plots.append(figure)
 
-    def dataframe(self, data: object, **kwargs: object) -> None:
-        self.dataframes.append((data, kwargs))
+    def selectbox(self, label: str, options: list[str], index: int = 0, **kwargs: object) -> str:
+        self.selectboxes[label] = list(options)
+        return options[index]
+
+    def columns(self, count: int | list[int], **kwargs: object) -> list[_FakeBlock]:
+        resolved = count if isinstance(count, int) else len(count)
+        return [_FakeBlock(self) for _ in range(resolved)]
+
+    def toggle(self, label: str, value: bool = False, **kwargs: object) -> bool:
+        self.toggles[label] = value
+        return value
+
+    def text_input(self, label: str, value: str = "", **kwargs: object) -> str:
+        self.text_inputs[label] = value
+        return value
+
+    def multiselect(
+        self,
+        label: str,
+        options: list[str],
+        default: list[str] | None = None,
+        **kwargs: object,
+    ) -> list[str]:
+        self.multiselects[label] = list(options)
+        return list(default or [])
+
+    def button(self, label: str, **kwargs: object) -> bool:
+        self.buttons.append(label)
+        return False
+
+    def number_input(self, label: str, value: float | int = 0, **kwargs: object) -> float | int:
+        self.number_inputs[label] = value
+        return value
+
+    def success(self, text: str) -> None:
+        self.successes.append(text)
 
 
 def test_dashboard_file_entrypoint_smoke(monkeypatch, tmp_path) -> None:
@@ -258,10 +342,10 @@ def test_dashboard_file_entrypoint_smoke(monkeypatch, tmp_path) -> None:
 
     runpy.run_path(str(_dashboard_app_path()), run_name="__main__")
 
-    assert fake_streamlit.title_text == "MLB Props Stack"
-    assert fake_streamlit.sidebar.last_options == ["2026-04-22"]
-    assert len(fake_streamlit.metric_calls) == 8
-    assert len(fake_streamlit.dataframes) == 3
+    assert fake_streamlit.page_config["page_title"] == "Strike Ops"
+    assert fake_streamlit.selectboxes["Slate date"] == ["2026-04-22"]
+    assert any("SLATE BOARD" in body for body in fake_streamlit.markdowns)
+    assert any("Today Arm" in body for body in fake_streamlit.markdowns)
 
 
 def test_statcast_feature_cli_smoke_covers_historical_metadata_backfill(

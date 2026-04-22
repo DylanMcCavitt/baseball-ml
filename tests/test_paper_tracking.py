@@ -394,51 +394,120 @@ def test_render_dashboard_page_uses_daily_candidates_and_paper_results(
         now=fixed_now,
     )
 
-    class FakeColumn:
-        def __init__(self, sink):
-            self._sink = sink
+    class FakeBlock:
+        def __init__(self, parent):
+            self._parent = parent
 
-        def metric(self, label, value):
-            self._sink.append((label, value))
+        def __enter__(self):
+            return self
 
-    class FakeSidebar:
-        def selectbox(self, label, options, index):
-            assert label == "Slate date"
+        def __exit__(self, exc_type, exc, tb):
+            return None
+
+        def markdown(self, body, **kwargs):
+            self._parent.markdowns.append(body)
+
+        def plotly_chart(self, figure, **kwargs):
+            self._parent.plots.append(figure)
+
+        def selectbox(self, label, options, index=0, **kwargs):
+            self._parent.selectboxes[label] = list(options)
             return options[index]
+
+        def toggle(self, label, value=False, **kwargs):
+            self._parent.toggles[label] = value
+            return value
+
+        def text_input(self, label, value="", **kwargs):
+            self._parent.text_inputs[label] = value
+            return value
+
+        def multiselect(self, label, options, default=None, **kwargs):
+            self._parent.multiselects[label] = list(options)
+            return list(default or [])
+
+        def button(self, label, **kwargs):
+            self._parent.buttons.append(label)
+            return False
+
+        def number_input(self, label, value=0, **kwargs):
+            self._parent.number_inputs[label] = value
+            return value
+
+        def caption(self, text):
+            self._parent.captions.append(text)
+
+        def success(self, text):
+            self._parent.successes.append(text)
 
     class FakeStreamlit(ModuleType):
         def __init__(self):
             super().__init__("streamlit")
-            self.sidebar = FakeSidebar()
-            self.metric_calls = []
-            self.dataframes = []
+            self.markdowns = []
+            self.plots = []
+            self.selectboxes = {}
+            self.toggles = {}
+            self.text_inputs = {}
+            self.multiselects = {}
+            self.buttons = []
+            self.number_inputs = {}
+            self.captions = []
+            self.successes = []
+            self.session_state = {}
+            self.query_params = {}
 
         def set_page_config(self, **kwargs):
             self.page_config = kwargs
 
-        def title(self, text):
-            self.title_text = text
-
-        def caption(self, text):
-            self.caption_text = text
+        def markdown(self, body, **kwargs):
+            self.markdowns.append(body)
 
         def info(self, text):
-            self.info_text = text
+            self.markdowns.append(text)
 
-        def columns(self, count):
-            return [FakeColumn(self.metric_calls) for _ in range(count)]
+        def caption(self, text):
+            self.captions.append(text)
 
-        def subheader(self, text):
-            self.last_subheader = text
+        def plotly_chart(self, figure, **kwargs):
+            self.plots.append(figure)
 
-        def dataframe(self, data, **kwargs):
-            self.dataframes.append((data, kwargs))
+        def selectbox(self, label, options, index=0, **kwargs):
+            self.selectboxes[label] = list(options)
+            return options[index]
+
+        def columns(self, count, **kwargs):
+            resolved = count if isinstance(count, int) else len(count)
+            return [FakeBlock(self) for _ in range(resolved)]
+
+        def toggle(self, label, value=False, **kwargs):
+            self.toggles[label] = value
+            return value
+
+        def text_input(self, label, value="", **kwargs):
+            self.text_inputs[label] = value
+            return value
+
+        def multiselect(self, label, options, default=None, **kwargs):
+            self.multiselects[label] = list(options)
+            return list(default or [])
+
+        def button(self, label, **kwargs):
+            self.buttons.append(label)
+            return False
+
+        def number_input(self, label, value=0, **kwargs):
+            self.number_inputs[label] = value
+            return value
+
+        def success(self, text):
+            self.successes.append(text)
 
     fake_streamlit = FakeStreamlit()
     monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
 
     render_dashboard_page(output_dir=tmp_path, target_date=date(2026, 4, 22))
 
-    assert fake_streamlit.title_text == "MLB Props Stack"
-    assert len(fake_streamlit.metric_calls) == 8
-    assert len(fake_streamlit.dataframes) == 3
+    assert fake_streamlit.page_config["page_title"] == "Strike Ops"
+    assert "2026-04-22" in fake_streamlit.selectboxes["Slate date"]
+    assert any("SLATE BOARD" in body for body in fake_streamlit.markdowns)
+    assert any("Today Arm" in body for body in fake_streamlit.markdowns)
