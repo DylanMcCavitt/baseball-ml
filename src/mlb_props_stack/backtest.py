@@ -69,8 +69,12 @@ class WalkForwardBacktestResult:
     model_run_id: str
     cutoff_minutes_before_first_pitch: int
     backtest_bets_path: Path
+    bet_reporting_path: Path
     backtest_runs_path: Path
     join_audit_path: Path
+    clv_summary_path: Path
+    roi_summary_path: Path
+    edge_bucket_summary_path: Path
     snapshot_group_count: int
     actionable_bet_count: int
     below_threshold_count: int
@@ -242,6 +246,422 @@ def _edge_bucket_label(edge_pct: float) -> str:
         if upper_bound is None or edge_pct < upper_bound:
             return label
     return EDGE_BUCKETS[-1][2]
+
+
+def _minutes_until(
+    *,
+    later_time: datetime | None,
+    earlier_time: datetime | None,
+) -> float | None:
+    if later_time is None or earlier_time is None:
+        return None
+    return round((later_time - earlier_time).total_seconds() / 60.0, 6)
+
+
+def _mean_or_none(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / len(values), 6)
+
+
+def _median_or_none(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(median(values), 6)
+
+
+def _ratio_or_none(numerator: float, denominator: float) -> float | None:
+    if denominator <= 0.0:
+        return None
+    return round(numerator / denominator, 6)
+
+
+def _clv_outcome_label(clv_probability_delta: float | None) -> str:
+    if clv_probability_delta is None:
+        return "no_closing_line"
+    if clv_probability_delta > 0.0:
+        return "beat_closing_line"
+    if clv_probability_delta < 0.0:
+        return "missed_closing_line"
+    return "tied_closing_line"
+
+
+def _build_bet_reporting_rows(
+    *,
+    backtest_rows: list[dict[str, Any]],
+    backtest_run_id: str,
+) -> list[dict[str, Any]]:
+    reporting_rows: list[dict[str, Any]] = []
+    for row in backtest_rows:
+        probability_calibration = row.get("probability_calibration") or {}
+        count_distribution = row.get("count_distribution") or {}
+        clv_probability_delta = (
+            float(row["clv_probability_delta"])
+            if row.get("clv_probability_delta") is not None
+            else None
+        )
+        edge_pct = float(row["edge_pct"]) if row.get("edge_pct") is not None else None
+        expected_value_pct = (
+            float(row["expected_value_pct"])
+            if row.get("expected_value_pct") is not None
+            else None
+        )
+        selected_model_probability = (
+            float(row["selected_model_probability"])
+            if row.get("selected_model_probability") is not None
+            else None
+        )
+        selected_market_probability = (
+            float(row["selected_market_probability"])
+            if row.get("selected_market_probability") is not None
+            else None
+        )
+        settlement_status = row.get("settlement_status")
+        clv_outcome = _clv_outcome_label(clv_probability_delta)
+
+        reporting_rows.append(
+            {
+                "backtest_run_id": backtest_run_id,
+                "backtest_entry_id": str(row["backtest_entry_id"]),
+                "official_date": str(row["official_date"]),
+                "evaluation_status": str(row["evaluation_status"]),
+                "bet_placed": bool(row.get("bet_placed")),
+                "paper_result": (
+                    str(settlement_status) if settlement_status is not None else "not_placed"
+                ),
+                "paper_win": (
+                    settlement_status == "win"
+                    if settlement_status is not None and bool(row.get("bet_placed"))
+                    else None
+                ),
+                "beat_closing_line": (
+                    clv_probability_delta > 0.0 if clv_probability_delta is not None else None
+                ),
+                "clv_outcome": clv_outcome,
+                "same_line_close_available": row.get("closing_line_snapshot_id") is not None,
+                "model_version": str(row["model_version"]),
+                "model_run_id": str(row["model_run_id"]),
+                "sportsbook": str(row["sportsbook"]),
+                "sportsbook_title": str(row["sportsbook_title"]),
+                "event_id": str(row["event_id"]),
+                "game_pk": row.get("game_pk"),
+                "player_id": str(row["player_id"]),
+                "pitcher_mlb_id": row.get("pitcher_mlb_id"),
+                "player_name": str(row["player_name"]),
+                "market": str(row["market"]),
+                "line": row.get("line"),
+                "selected_side": row.get("selected_side"),
+                "selected_odds": row.get("selected_odds"),
+                "fair_odds": row.get("fair_odds"),
+                "edge_pct": edge_pct,
+                "edge_bucket": _edge_bucket_label(edge_pct) if edge_pct is not None else None,
+                "expected_value_pct": expected_value_pct,
+                "stake_fraction": row.get("stake_fraction"),
+                "profit_units": row.get("profit_units"),
+                "return_on_stake": row.get("return_on_stake"),
+                "decision_snapshot_captured_at": row.get("decision_snapshot_captured_at"),
+                "closing_snapshot_captured_at": row.get("closing_snapshot_captured_at"),
+                "commence_time": row.get("commence_time"),
+                "decision_minutes_before_first_pitch": _minutes_until(
+                    later_time=row.get("commence_time"),
+                    earlier_time=row.get("decision_snapshot_captured_at"),
+                ),
+                "closing_minutes_before_first_pitch": _minutes_until(
+                    later_time=row.get("commence_time"),
+                    earlier_time=row.get("closing_snapshot_captured_at"),
+                ),
+                "line_snapshot_id": row.get("line_snapshot_id"),
+                "closing_line_snapshot_id": row.get("closing_line_snapshot_id"),
+                "feature_row_id": row.get("feature_row_id"),
+                "lineup_snapshot_id": row.get("lineup_snapshot_id"),
+                "outcome_id": row.get("outcome_id"),
+                "actual_strikeouts": row.get("actual_strikeouts"),
+                "settlement_status": settlement_status,
+                "selected_model_probability": selected_model_probability,
+                "selected_market_probability": selected_market_probability,
+                "model_minus_market_probability": (
+                    round(selected_model_probability - selected_market_probability, 6)
+                    if selected_model_probability is not None
+                    and selected_market_probability is not None
+                    else None
+                ),
+                "closing_selected_market_probability": row.get(
+                    "closing_selected_market_probability"
+                ),
+                "clv_probability_delta": clv_probability_delta,
+                "scatter_model_probability": selected_model_probability,
+                "scatter_market_probability": selected_market_probability,
+                "model_mean": row.get("model_mean"),
+                "raw_model_over_probability": row.get("raw_model_over_probability"),
+                "raw_model_under_probability": row.get("raw_model_under_probability"),
+                "model_over_probability": row.get("model_over_probability"),
+                "model_under_probability": row.get("model_under_probability"),
+                "market_over_probability": row.get("market_over_probability"),
+                "market_under_probability": row.get("market_under_probability"),
+                "calibration_name": probability_calibration.get("name"),
+                "calibration_sample_count": probability_calibration.get("sample_count"),
+                "calibration_fit_from_date": probability_calibration.get("fit_from_date"),
+                "calibration_fit_through_date": probability_calibration.get(
+                    "fit_through_date"
+                ),
+                "calibration_is_identity": probability_calibration.get("is_identity"),
+                "count_distribution_name": count_distribution.get("name"),
+                "count_distribution_dispersion_alpha": count_distribution.get(
+                    "dispersion_alpha"
+                ),
+                "reason": str(row["reason"]),
+            }
+        )
+
+    reporting_rows.sort(
+        key=lambda row: (
+            str(row["official_date"]),
+            0 if bool(row["bet_placed"]) else 1,
+            -float(row.get("edge_pct") or 0.0),
+            str(row["backtest_entry_id"]),
+        )
+    )
+    return reporting_rows
+
+
+def _build_clv_summary_row(
+    *,
+    rows: list[dict[str, Any]],
+    backtest_run_id: str,
+    summary_scope: str,
+    official_date: str | None,
+) -> dict[str, Any]:
+    clv_values = [
+        float(row["clv_probability_delta"])
+        for row in rows
+        if row.get("clv_probability_delta") is not None
+    ]
+    return {
+        "backtest_run_id": backtest_run_id,
+        "summary_scope": summary_scope,
+        "official_date": official_date,
+        "placed_bets": len(rows),
+        "sample_count": len(clv_values),
+        "missing_close_count": len(rows) - len(clv_values),
+        "beat_closing_line_count": sum(
+            1 for row in rows if row.get("clv_outcome") == "beat_closing_line"
+        ),
+        "tied_closing_line_count": sum(
+            1 for row in rows if row.get("clv_outcome") == "tied_closing_line"
+        ),
+        "missed_closing_line_count": sum(
+            1 for row in rows if row.get("clv_outcome") == "missed_closing_line"
+        ),
+        "paper_wins": sum(1 for row in rows if row.get("settlement_status") == "win"),
+        "paper_losses": sum(1 for row in rows if row.get("settlement_status") == "loss"),
+        "paper_pushes": sum(1 for row in rows if row.get("settlement_status") == "push"),
+        "win_and_beat_closing_line_count": sum(
+            1
+            for row in rows
+            if row.get("settlement_status") == "win"
+            and row.get("clv_outcome") == "beat_closing_line"
+        ),
+        "win_without_beating_closing_line_count": sum(
+            1
+            for row in rows
+            if row.get("settlement_status") == "win"
+            and row.get("clv_outcome") != "beat_closing_line"
+        ),
+        "loss_but_beat_closing_line_count": sum(
+            1
+            for row in rows
+            if row.get("settlement_status") == "loss"
+            and row.get("clv_outcome") == "beat_closing_line"
+        ),
+        "mean_probability_delta": _mean_or_none(clv_values),
+        "median_probability_delta": _median_or_none(clv_values),
+    }
+
+
+def _build_clv_summary_rows(
+    *,
+    reporting_rows: list[dict[str, Any]],
+    backtest_run_id: str,
+) -> list[dict[str, Any]]:
+    placed_rows = [row for row in reporting_rows if bool(row["bet_placed"])]
+    dated_rows = sorted({str(row["official_date"]) for row in placed_rows})
+    summary_rows: list[dict[str, Any]] = []
+    cumulative_rows: list[dict[str, Any]] = []
+    for official_date in dated_rows:
+        date_rows = [row for row in placed_rows if row["official_date"] == official_date]
+        cumulative_rows.extend(date_rows)
+        summary_row = _build_clv_summary_row(
+            rows=date_rows,
+            backtest_run_id=backtest_run_id,
+            summary_scope="date",
+            official_date=official_date,
+        )
+        cumulative_clv_values = [
+            float(row["clv_probability_delta"])
+            for row in cumulative_rows
+            if row.get("clv_probability_delta") is not None
+        ]
+        summary_row["cumulative_placed_bets"] = len(cumulative_rows)
+        summary_row["cumulative_sample_count"] = len(cumulative_clv_values)
+        summary_row["cumulative_mean_probability_delta"] = _mean_or_none(
+            cumulative_clv_values
+        )
+        summary_row["cumulative_beat_closing_line_count"] = sum(
+            1
+            for row in cumulative_rows
+            if row.get("clv_outcome") == "beat_closing_line"
+        )
+        summary_rows.append(summary_row)
+
+    summary_rows.append(
+        _build_clv_summary_row(
+            rows=placed_rows,
+            backtest_run_id=backtest_run_id,
+            summary_scope="overall",
+            official_date=None,
+        )
+    )
+    return summary_rows
+
+
+def _build_roi_summary_row(
+    *,
+    rows: list[dict[str, Any]],
+    backtest_run_id: str,
+    summary_scope: str,
+    official_date: str | None,
+) -> dict[str, Any]:
+    total_stake = round(sum(float(row["stake_fraction"]) for row in rows), 6)
+    total_profit = round(sum(float(row["profit_units"]) for row in rows), 6)
+    edge_values = [
+        float(row["edge_pct"]) for row in rows if row.get("edge_pct") is not None
+    ]
+    expected_value_values = [
+        float(row["expected_value_pct"])
+        for row in rows
+        if row.get("expected_value_pct") is not None
+    ]
+    realized_return_values = [
+        float(row["return_on_stake"])
+        for row in rows
+        if row.get("return_on_stake") is not None
+    ]
+    return {
+        "backtest_run_id": backtest_run_id,
+        "summary_scope": summary_scope,
+        "official_date": official_date,
+        "placed_bets": len(rows),
+        "wins": sum(1 for row in rows if row.get("settlement_status") == "win"),
+        "losses": sum(1 for row in rows if row.get("settlement_status") == "loss"),
+        "pushes": sum(1 for row in rows if row.get("settlement_status") == "push"),
+        "beat_closing_line_count": sum(
+            1 for row in rows if row.get("clv_outcome") == "beat_closing_line"
+        ),
+        "total_stake_units": total_stake,
+        "total_profit_units": total_profit,
+        "roi": _ratio_or_none(total_profit, total_stake),
+        "mean_edge_pct": _mean_or_none(edge_values),
+        "mean_expected_value_pct": _mean_or_none(expected_value_values),
+        "mean_return_on_stake": _mean_or_none(realized_return_values),
+    }
+
+
+def _build_roi_summary_rows(
+    *,
+    reporting_rows: list[dict[str, Any]],
+    backtest_run_id: str,
+) -> list[dict[str, Any]]:
+    placed_rows = [row for row in reporting_rows if bool(row["bet_placed"])]
+    dated_rows = sorted({str(row["official_date"]) for row in placed_rows})
+    summary_rows: list[dict[str, Any]] = []
+    cumulative_rows: list[dict[str, Any]] = []
+    for official_date in dated_rows:
+        date_rows = [row for row in placed_rows if row["official_date"] == official_date]
+        cumulative_rows.extend(date_rows)
+        summary_row = _build_roi_summary_row(
+            rows=date_rows,
+            backtest_run_id=backtest_run_id,
+            summary_scope="date",
+            official_date=official_date,
+        )
+        cumulative_stake = round(
+            sum(float(row["stake_fraction"]) for row in cumulative_rows),
+            6,
+        )
+        cumulative_profit = round(
+            sum(float(row["profit_units"]) for row in cumulative_rows),
+            6,
+        )
+        summary_row["cumulative_placed_bets"] = len(cumulative_rows)
+        summary_row["cumulative_total_stake_units"] = cumulative_stake
+        summary_row["cumulative_total_profit_units"] = cumulative_profit
+        summary_row["cumulative_roi"] = _ratio_or_none(cumulative_profit, cumulative_stake)
+        summary_rows.append(summary_row)
+
+    summary_rows.append(
+        _build_roi_summary_row(
+            rows=placed_rows,
+            backtest_run_id=backtest_run_id,
+            summary_scope="overall",
+            official_date=None,
+        )
+    )
+    return summary_rows
+
+
+def _build_edge_bucket_summary_rows(
+    *,
+    reporting_rows: list[dict[str, Any]],
+    backtest_run_id: str,
+) -> list[dict[str, Any]]:
+    placed_rows = [row for row in reporting_rows if bool(row["bet_placed"])]
+    summary_rows: list[dict[str, Any]] = []
+    for _, _, label in EDGE_BUCKETS:
+        bucket_rows = [row for row in placed_rows if row.get("edge_bucket") == label]
+        total_stake = round(sum(float(row["stake_fraction"]) for row in bucket_rows), 6)
+        total_profit = round(sum(float(row["profit_units"]) for row in bucket_rows), 6)
+        clv_values = [
+            float(row["clv_probability_delta"])
+            for row in bucket_rows
+            if row.get("clv_probability_delta") is not None
+        ]
+        edge_values = [
+            float(row["edge_pct"]) for row in bucket_rows if row.get("edge_pct") is not None
+        ]
+        expected_value_values = [
+            float(row["expected_value_pct"])
+            for row in bucket_rows
+            if row.get("expected_value_pct") is not None
+        ]
+        summary_rows.append(
+            {
+                "backtest_run_id": backtest_run_id,
+                "edge_bucket": label,
+                "bet_count": len(bucket_rows),
+                "wins": sum(
+                    1 for row in bucket_rows if row.get("settlement_status") == "win"
+                ),
+                "losses": sum(
+                    1 for row in bucket_rows if row.get("settlement_status") == "loss"
+                ),
+                "pushes": sum(
+                    1 for row in bucket_rows if row.get("settlement_status") == "push"
+                ),
+                "sample_count": len(clv_values),
+                "beat_closing_line_count": sum(
+                    1
+                    for row in bucket_rows
+                    if row.get("clv_outcome") == "beat_closing_line"
+                ),
+                "total_stake_units": total_stake,
+                "total_profit_units": total_profit,
+                "roi": _ratio_or_none(total_profit, total_stake),
+                "mean_edge_pct": _mean_or_none(edge_values),
+                "mean_expected_value_pct": _mean_or_none(expected_value_values),
+                "mean_probability_delta": _mean_or_none(clv_values),
+            }
+        )
+    return summary_rows
 
 
 def _base_row_from_snapshot_group(
@@ -1003,35 +1423,38 @@ def build_walk_forward_backtest(
         / f"run={run_id}"
     )
     backtest_bets_path = normalized_root / "backtest_bets.jsonl"
+    bet_reporting_path = normalized_root / "bet_reporting.jsonl"
     backtest_runs_path = normalized_root / "backtest_runs.jsonl"
     join_audit_path = normalized_root / "join_audit.jsonl"
+    clv_summary_path = normalized_root / "clv_summary.jsonl"
+    roi_summary_path = normalized_root / "roi_summary.jsonl"
+    edge_bucket_summary_path = normalized_root / "edge_bucket_summary.jsonl"
 
     placed_bets = [row for row in backtest_rows if bool(row.get("bet_placed"))]
     total_stake = round(sum(float(row["stake_fraction"]) for row in placed_bets), 6)
     total_profit = round(sum(float(row["profit_units"]) for row in placed_bets), 6)
-    clv_values = [
-        float(row["clv_probability_delta"])
-        for row in placed_bets
-        if row.get("clv_probability_delta") is not None
-    ]
-    edge_bucket_summary = []
-    if policy.report_edge_buckets:
-        for _, _, label in EDGE_BUCKETS:
-            bucket_rows = [
-                row
-                for row in placed_bets
-                if _edge_bucket_label(float(row["edge_pct"])) == label
-            ]
-            edge_bucket_summary.append(
-                {
-                    "edge_bucket": label,
-                    "bet_count": len(bucket_rows),
-                    "total_profit_units": round(
-                        sum(float(row["profit_units"]) for row in bucket_rows),
-                        6,
-                    ),
-                }
-            )
+    reporting_rows = _build_bet_reporting_rows(
+        backtest_rows=backtest_rows,
+        backtest_run_id=run_id,
+    )
+    clv_summary_rows = _build_clv_summary_rows(
+        reporting_rows=reporting_rows,
+        backtest_run_id=run_id,
+    )
+    roi_summary_rows = _build_roi_summary_rows(
+        reporting_rows=reporting_rows,
+        backtest_run_id=run_id,
+    )
+    edge_bucket_summary_rows = _build_edge_bucket_summary_rows(
+        reporting_rows=reporting_rows,
+        backtest_run_id=run_id,
+    )
+    overall_clv_summary = next(
+        row for row in clv_summary_rows if row["summary_scope"] == "overall"
+    )
+    overall_roi_summary = next(
+        row for row in roi_summary_rows if row["summary_scope"] == "overall"
+    )
 
     summary_row = {
         "backtest_run_id": run_id,
@@ -1059,28 +1482,65 @@ def build_walk_forward_backtest(
         },
         "clv_summary": (
             {
-                "sample_count": len(clv_values),
-                "mean_probability_delta": round(sum(clv_values) / len(clv_values), 6),
-                "median_probability_delta": round(median(clv_values), 6),
+                "sample_count": overall_clv_summary["sample_count"],
+                "mean_probability_delta": overall_clv_summary["mean_probability_delta"],
+                "median_probability_delta": overall_clv_summary["median_probability_delta"],
+                "beat_closing_line_count": overall_clv_summary[
+                    "beat_closing_line_count"
+                ],
+                "missing_close_count": overall_clv_summary["missing_close_count"],
             }
-            if policy.report_clv and clv_values
+            if policy.report_clv
             else {
                 "sample_count": 0,
                 "mean_probability_delta": None,
                 "median_probability_delta": None,
+                "beat_closing_line_count": 0,
+                "missing_close_count": len(placed_bets),
             }
         ),
-        "edge_bucket_summary": edge_bucket_summary,
+        "roi_summary": (
+            {
+                "placed_bets": overall_roi_summary["placed_bets"],
+                "wins": overall_roi_summary["wins"],
+                "losses": overall_roi_summary["losses"],
+                "pushes": overall_roi_summary["pushes"],
+                "total_stake_units": overall_roi_summary["total_stake_units"],
+                "total_profit_units": overall_roi_summary["total_profit_units"],
+                "roi": overall_roi_summary["roi"],
+            }
+            if policy.report_roi
+            else {
+                "placed_bets": 0,
+                "wins": 0,
+                "losses": 0,
+                "pushes": 0,
+                "total_stake_units": 0.0,
+                "total_profit_units": 0.0,
+                "roi": None,
+            }
+        ),
+        "edge_bucket_summary": edge_bucket_summary_rows,
         "source_artifacts": {
             "training_dataset_path": training_dataset_path,
             "raw_vs_calibrated_path": raw_vs_calibrated_path,
             "outcomes_path": outcomes_path,
         },
+        "reporting_artifacts": {
+            "bet_reporting_path": bet_reporting_path,
+            "clv_summary_path": clv_summary_path,
+            "roi_summary_path": roi_summary_path,
+            "edge_bucket_summary_path": edge_bucket_summary_path,
+        },
     }
 
     _write_jsonl(backtest_bets_path, backtest_rows)
+    _write_jsonl(bet_reporting_path, reporting_rows)
     _write_jsonl(backtest_runs_path, [summary_row])
     _write_jsonl(join_audit_path, audit_rows)
+    _write_jsonl(clv_summary_path, clv_summary_rows)
+    _write_jsonl(roi_summary_path, roi_summary_rows)
+    _write_jsonl(edge_bucket_summary_path, edge_bucket_summary_rows)
 
     return WalkForwardBacktestResult(
         start_date=start_date,
@@ -1090,8 +1550,12 @@ def build_walk_forward_backtest(
         model_run_id=model_run_id,
         cutoff_minutes_before_first_pitch=cutoff_minutes_before_first_pitch,
         backtest_bets_path=backtest_bets_path,
+        bet_reporting_path=bet_reporting_path,
         backtest_runs_path=backtest_runs_path,
         join_audit_path=join_audit_path,
+        clv_summary_path=clv_summary_path,
+        roi_summary_path=roi_summary_path,
+        edge_bucket_summary_path=edge_bucket_summary_path,
         snapshot_group_count=len(snapshot_groups),
         actionable_bet_count=actionable_bet_count,
         below_threshold_count=below_threshold_count,

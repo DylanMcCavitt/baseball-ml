@@ -288,7 +288,8 @@ Each row preserves:
 
 ## Walk-Forward Backtest
 
-`AGE-151` adds the first timestamp-safe historical backtest slice.
+`AGE-151` and `AGE-152` add the first timestamp-safe historical backtest slice
+plus the first chart-ready reporting tables.
 
 This command expects:
 
@@ -319,12 +320,23 @@ The normalized outputs are:
   one row per exact sportsbook line group, including actionable bets,
   below-threshold passes, and skipped rows such as late-only snapshots or
   training-split projections
+- `bet_reporting.jsonl`
+  a flat per-bet table for Plotly or Streamlit, with paper result, CLV status,
+  edge bucket, and model-vs-market scatter fields already broken out
 - `backtest_runs.jsonl`
   one summary row for the requested window with placed-bet counts, ROI, CLV,
   and edge-bucket rollups
 - `join_audit.jsonl`
   one audit row per backtest entry showing cutoff compliance, feature and lineup
   refs, train-window freshness, and outcome traceability
+- `clv_summary.jsonl`
+  daily and overall CLV rows so the stack can separate paper winners from bets
+  that actually beat the market near close
+- `roi_summary.jsonl`
+  daily and overall realized PnL rows, including cumulative stake, profit, and
+  ROI
+- `edge_bucket_summary.jsonl`
+  one row per configured edge bucket with realized PnL and CLV hit counts
 
 The current backtest runner stays honest in two important ways:
 

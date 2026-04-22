@@ -260,7 +260,8 @@ AGE-150 turns those saved ladders into replayable pricing rows:
   market probabilities, EV, fair odds, capped Kelly sizing, and an evaluation
   status for every replayable line snapshot
 
-AGE-151 turns those pricing seams into the first honest historical evaluation:
+AGE-151 and AGE-152 turn those pricing seams into the first honest historical
+evaluation plus the first dashboard-ready reporting outputs:
 
 - `build-walk-forward-backtest --start-date YYYY-MM-DD --end-date YYYY-MM-DD`
   replays all saved odds runs for each evaluated date and selects the latest
@@ -268,9 +269,19 @@ AGE-151 turns those pricing seams into the first honest historical evaluation:
 - `backtest_bets.jsonl` stores the selected cutoff-safe line snapshot,
   feature-row and lineup refs, honest held-out over or under probabilities,
   final outcome joins, and realized decision result
-- `backtest_runs.jsonl` stores window-level ROI, CLV, and edge-bucket summaries
+- `bet_reporting.jsonl` stores a flat per-bet reporting table for Plotly and
+  Streamlit, including paper result, CLV status, edge bucket, and
+  model-vs-market scatter fields
+- `backtest_runs.jsonl` stores window-level metadata plus pointers to the
+  generated reporting artifacts
 - `join_audit.jsonl` stores cutoff compliance, train-window freshness, and
   outcome traceability for both kept and rejected rows
+- `clv_summary.jsonl` stores daily and overall CLV rows so paper winners and
+  market-beating bets can be separated directly
+- `roi_summary.jsonl` stores daily and overall realized stake, profit, and ROI
+  rows
+- `edge_bucket_summary.jsonl` stores one realized summary row per configured
+  edge bucket
 - headline backtest rows use held-out calibrated probabilities from
   `raw_vs_calibrated_probabilities.jsonl`, not the production calibrator stored
   alongside `ladder_probabilities.jsonl`

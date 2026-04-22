@@ -169,8 +169,12 @@ def render_walk_forward_backtest_summary(result: WalkForwardBacktestResult) -> s
         f"below_threshold={result.below_threshold_count}",
         f"skipped={result.skipped_count}",
         f"backtest_bets_path={result.backtest_bets_path}",
+        f"bet_reporting_path={result.bet_reporting_path}",
         f"backtest_runs_path={result.backtest_runs_path}",
         f"join_audit_path={result.join_audit_path}",
+        f"clv_summary_path={result.clv_summary_path}",
+        f"roi_summary_path={result.roi_summary_path}",
+        f"edge_bucket_summary_path={result.edge_bucket_summary_path}",
     ]
     return "\n".join(lines)
 
