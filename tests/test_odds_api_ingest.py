@@ -10,6 +10,7 @@ from mlb_props_stack.ingest import (
     ingest_odds_api_pitcher_lines_for_date,
 )
 from mlb_props_stack.ingest.odds_api import (
+    OddsAPIClient,
     normalize_event_odds_payload,
     normalize_events_payload,
 )
@@ -170,6 +171,12 @@ def sample_event_odds_payload() -> dict:
     }
 
 
+def sample_event_odds_payload_for_event(event_id: str) -> dict:
+    payload = sample_event_odds_payload()
+    payload["id"] = event_id
+    return payload
+
+
 class StubOddsClient:
     def __init__(self) -> None:
         self.api_key = "stub-key"
@@ -180,6 +187,18 @@ class StubOddsClient:
         if "/events/" in url and "/odds?" in url:
             return sample_event_odds_payload()
         return sample_events_payload()
+
+
+def test_odds_api_client_loads_repo_env_when_shell_env_is_missing(monkeypatch) -> None:
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "mlb_props_stack.ingest.odds_api.load_repo_env",
+        lambda: monkeypatch.setenv("ODDS_API_KEY", "loaded-from-dotenv"),
+    )
+
+    client = OddsAPIClient()
+
+    assert client.api_key == "loaded-from-dotenv"
 
 
 def test_ingest_odds_api_pitcher_lines_for_date_writes_raw_and_normalized_outputs(
@@ -231,6 +250,81 @@ def test_ingest_odds_api_pitcher_lines_for_date_writes_raw_and_normalized_output
     } == {"mlb-pitcher:680802", "mlb-pitcher:800048"}
     assert "sports/baseball_mlb/events?" in stub_client.urls[0]
     assert "/events/odds-event-1/odds?" in stub_client.urls[1]
+
+
+def test_ingest_skips_unmatched_event_props_and_keeps_matched_snapshots_joinable(
+    tmp_path,
+) -> None:
+    seed_mlb_metadata(tmp_path)
+
+    class DualEventStubOddsClient:
+        def __init__(self) -> None:
+            self.api_key = "stub-key"
+            self.urls: list[str] = []
+
+        def fetch_json(self, url: str):
+            self.urls.append(url)
+            if url.endswith("/events?apiKey=stub-key&dateFormat=iso"):
+                return [
+                    {
+                        "id": "odds-event-unmatched",
+                        "sport_key": "baseball_mlb",
+                        "sport_title": "MLB",
+                        "commence_time": "2026-04-21T23:15:00Z",
+                        "home_team": "Cleveland Guardians",
+                        "away_team": "Houston Astros",
+                    },
+                    {
+                        "id": "odds-event-matched",
+                        "sport_key": "baseball_mlb",
+                        "sport_title": "MLB",
+                        "commence_time": "2026-04-21T22:10:00Z",
+                        "home_team": "Cleveland Guardians",
+                        "away_team": "Houston Astros",
+                    },
+                ]
+            if "/events/odds-event-unmatched/odds?" in url:
+                return sample_event_odds_payload_for_event("odds-event-unmatched")
+            if "/events/odds-event-matched/odds?" in url:
+                return sample_event_odds_payload_for_event("odds-event-matched")
+            raise AssertionError(f"unexpected url: {url}")
+
+    result = ingest_odds_api_pitcher_lines_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        client=DualEventStubOddsClient(),
+        now=iter(
+            [
+                datetime(2026, 4, 21, 18, 0, tzinfo=UTC),
+                datetime(2026, 4, 21, 18, 1, tzinfo=UTC),
+                datetime(2026, 4, 21, 18, 2, tzinfo=UTC),
+                datetime(2026, 4, 21, 18, 3, tzinfo=UTC),
+            ]
+        ).__next__,
+    )
+
+    mappings = [
+        json.loads(line)
+        for line in result.event_mappings_path.read_text(encoding="utf-8").splitlines()
+    ]
+    snapshots = [
+        json.loads(line)
+        for line in result.prop_line_snapshots_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert result.candidate_event_count == 2
+    assert result.matched_event_count == 1
+    assert result.unmatched_event_count == 1
+    assert result.skipped_unmatched_event_count == 1
+    assert result.matched_events_without_props_count == 0
+    assert result.prop_line_count == 2
+    assert result.resolved_pitcher_prop_count == 2
+    assert result.unresolved_pitcher_prop_count == 0
+    assert {mapping["match_status"] for mapping in mappings} == {"matched", "unmatched"}
+    assert {snapshot["event_id"] for snapshot in snapshots} == {"odds-event-matched"}
+    assert {snapshot["match_status"] for snapshot in snapshots} == {"matched"}
+    assert {snapshot["game_pk"] for snapshot in snapshots} == {824448}
+    assert {snapshot["pitcher_mlb_id"] for snapshot in snapshots} == {680802, 800048}
 
 
 def test_repeated_odds_ingest_runs_keep_prior_snapshots(tmp_path) -> None:

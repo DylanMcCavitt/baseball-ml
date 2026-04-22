@@ -4,6 +4,7 @@ __all__ = [
     "backtest",
     "config",
     "dashboard",
+    "env",
     "edge",
     "ingest",
     "markets",
