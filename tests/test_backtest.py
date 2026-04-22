@@ -303,6 +303,7 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
     assert result.snapshot_group_count == 2
     assert result.actionable_bet_count == 1
     assert result.skipped_count == 1
+    assert result.skip_reason_counts == {"late_snapshot_after_cutoff": 1}
 
     assert [row["evaluation_status"] for row in first_rows] == [
         "actionable",
@@ -343,6 +344,7 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
         "skipped": 1,
         "snapshot_groups": 2,
     }
+    assert summary_rows[0]["skip_reason_counts"] == {"late_snapshot_after_cutoff": 1}
     assert summary_rows[0]["mlflow_run_id"] == second_result.mlflow_run_id
     assert summary_rows[0]["bet_outcomes"]["placed_bets"] == 1
     assert summary_rows[0]["clv_summary"]["sample_count"] == 1
@@ -384,6 +386,7 @@ def test_build_walk_forward_backtest_skips_train_split_rows(tmp_path) -> None:
 
     assert result.actionable_bet_count == 0
     assert result.skipped_count == 1
+    assert result.skip_reason_counts == {"train_split_projection": 1}
     assert rows[0]["evaluation_status"] == "train_split_projection"
     assert rows[0]["feature_row_id"] == "training-row-2"
     assert rows[0]["lineup_snapshot_id"] == "lineup-snapshot-2"
@@ -395,3 +398,125 @@ def test_build_walk_forward_backtest_skips_train_split_rows(tmp_path) -> None:
     assert clv_summary_rows[0]["placed_bets"] == 0
     assert roi_summary_rows[0]["summary_scope"] == "overall"
     assert roi_summary_rows[0]["placed_bets"] == 0
+
+
+def test_build_walk_forward_backtest_surfaces_precise_skip_reasons_alongside_scored_rows(
+    tmp_path,
+) -> None:
+    _seed_model_run(tmp_path)
+    _seed_odds_runs(tmp_path)
+    _write_jsonl(
+        tmp_path
+        / "normalized"
+        / "the_odds_api"
+        / "date=2026-04-20"
+        / "run=20260420T191000Z"
+        / "prop_line_snapshots.jsonl",
+        [
+            {
+                "line_snapshot_id": "line-4-missing-probability",
+                "official_date": "2026-04-20",
+                "captured_at": "2026-04-20T19:10:00Z",
+                "sportsbook": "draftkings",
+                "sportsbook_title": "DraftKings",
+                "event_id": "event-4",
+                "game_pk": 9001,
+                "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T20:00:00Z",
+                "match_status": "matched",
+                "commence_time": "2026-04-20T20:00:00Z",
+                "player_id": "mlb-pitcher:700001",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Actionable Arm",
+                "market": "pitcher_strikeouts",
+                "line": 4.5,
+                "over_odds": -135,
+                "under_odds": 115,
+            },
+            {
+                "line_snapshot_id": "line-5-below-threshold",
+                "official_date": "2026-04-20",
+                "captured_at": "2026-04-20T19:05:00Z",
+                "sportsbook": "draftkings",
+                "sportsbook_title": "DraftKings",
+                "event_id": "event-5",
+                "game_pk": 9001,
+                "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T20:00:00Z",
+                "match_status": "matched",
+                "commence_time": "2026-04-20T20:00:00Z",
+                "player_id": "mlb-pitcher:700001",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Actionable Arm",
+                "market": "pitcher_strikeouts",
+                "line": 5.5,
+                "over_odds": -155,
+                "under_odds": 130,
+            },
+            {
+                "line_snapshot_id": "line-6-unmatched",
+                "official_date": "2026-04-20",
+                "captured_at": "2026-04-20T19:00:00Z",
+                "sportsbook": "betmgm",
+                "sportsbook_title": "BetMGM",
+                "event_id": "event-6",
+                "game_pk": None,
+                "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T20:20:00Z",
+                "match_status": "unmatched",
+                "commence_time": "2026-04-20T20:00:00Z",
+                "player_id": "odds-player:actionable-arm",
+                "pitcher_mlb_id": None,
+                "player_name": "Actionable Arm",
+                "market": "pitcher_strikeouts",
+                "line": 5.5,
+                "over_odds": -110,
+                "under_odds": -110,
+            },
+        ],
+    )
+
+    result = build_walk_forward_backtest(
+        start_date=date(2026, 4, 20),
+        end_date=date(2026, 4, 20),
+        output_dir=tmp_path,
+        cutoff_minutes_before_first_pitch=30,
+        now=lambda: datetime(2026, 4, 21, 19, 10, tzinfo=UTC),
+        tracking_config=_tracking_config(tmp_path),
+    )
+    rows = _load_jsonl(result.backtest_bets_path)
+    audit_rows = _load_jsonl(result.join_audit_path)
+    summary_rows = _load_jsonl(result.backtest_runs_path)
+
+    assert result.actionable_bet_count == 1
+    assert result.below_threshold_count == 1
+    assert result.skipped_count == 3
+    assert result.skip_reason_counts == {
+        "late_snapshot_after_cutoff": 1,
+        "missing_line_probability": 1,
+        "unmatched_event_mapping": 1,
+    }
+
+    status_by_snapshot = {
+        row["latest_observed_line_snapshot_id"]: row["evaluation_status"] for row in rows
+    }
+    assert status_by_snapshot["line-1-close"] == "actionable"
+    assert status_by_snapshot["line-5-below-threshold"] == "below_threshold"
+    assert status_by_snapshot["line-2-late-only"] == "late_snapshot_after_cutoff"
+    assert status_by_snapshot["line-4-missing-probability"] == "missing_line_probability"
+    assert status_by_snapshot["line-6-unmatched"] == "unmatched_event_mapping"
+
+    audit_status_by_snapshot = {
+        row["latest_observed_line_snapshot_id"]: row["audit_status"] for row in audit_rows
+    }
+    assert audit_status_by_snapshot["line-4-missing-probability"] == "missing_line_probability"
+    assert audit_status_by_snapshot["line-6-unmatched"] == "unmatched_event_mapping"
+
+    assert summary_rows[0]["row_counts"] == {
+        "actionable": 1,
+        "below_threshold": 1,
+        "skipped": 3,
+        "snapshot_groups": 5,
+    }
+    assert summary_rows[0]["skip_reason_counts"] == {
+        "late_snapshot_after_cutoff": 1,
+        "missing_line_probability": 1,
+        "unmatched_event_mapping": 1,
+    }

@@ -246,15 +246,19 @@ first dashboard-ready reporting artifacts on top of those decision seams:
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../backtest_bets.jsonl`
   stores the selected cutoff-safe line snapshot, model refs, honest held-out
   probabilities, final outcome, and realized decision result for each exact
-  line group
+  line group, or an explicit skipped-by-reason status when the line cannot be
+  joined honestly
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../bet_reporting.jsonl`
   stores a flat per-bet table with paper-result, CLV, edge-bucket, and
   model-vs-market scatter fields broken out for downstream dashboards
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../backtest_runs.jsonl`
   stores the run-level summary for one requested historical window, including
-  the associated MLflow run ID and rerun metadata
+  the associated MLflow run ID, rerun metadata, and `skip_reason_counts` so a
+  zero-bet window still explains why rows were skipped
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../join_audit.jsonl`
-  stores the freshness and cutoff audit for every kept or rejected backtest row
+  stores the freshness and cutoff audit for every kept or rejected backtest row,
+  including explicit join-failure statuses such as `unmatched_event_mapping`,
+  `missing_line_probability`, and `missing_lineup_snapshot_id`
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../clv_summary.jsonl`
   stores daily and overall CLV summaries so paper winners and market-beating
   bets can be separated explicitly
