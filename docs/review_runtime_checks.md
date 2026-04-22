@@ -14,6 +14,9 @@ That happened on April 22, 2026 after `AGE-153` merged:
   unmatched same-team Odds API events were still being normalized into
   `prop_line_snapshots`, while some true target-date matched events had no
   pitcher-strikeout markets yet
+- before `AGE-189`, CI had no dedicated fixture-backed smoke layer for the
+  dashboard file path, historical metadata backfill coverage, or training
+  entrypoint coverage
 
 Use this document during implementation review, PR review, and final handoff
 any time a change touches runtime entrypoints or generated artifacts.
@@ -24,6 +27,7 @@ Run these on every issue unless the repo is already blocked before setup:
 
 ```bash
 uv sync --extra dev
+uv run pytest tests/test_runtime_smokes.py
 uv run pytest
 python3 -m compileall src tests
 uv run python -m mlb_props_stack
@@ -31,6 +35,19 @@ uv run python -m mlb_props_stack
 
 These are necessary. They are not sufficient for dashboard, ingest, training,
 or slate-output changes.
+
+The dedicated fixture-backed smoke suite lives in:
+
+```bash
+uv run pytest tests/test_runtime_smokes.py
+```
+
+That suite now covers:
+
+- the dashboard file-entry path at `src/mlb_props_stack/dashboard/app.py`
+- the historical metadata backfill selection used by
+  `ingest-statcast-features`
+- the seeded `train-starter-strikeout-baseline` runtime path
 
 ## Required Runtime Checks By Change Area
 
@@ -40,6 +57,7 @@ If a PR touches `src/mlb_props_stack/dashboard/app.py`, dashboard loaders, or
 the artifacts it reads:
 
 ```bash
+uv run pytest tests/test_runtime_smokes.py
 uv run streamlit run src/mlb_props_stack/dashboard/app.py
 ```
 
@@ -54,6 +72,7 @@ Review requirement:
 
 Run the actual changed command, not just the module entrypoint:
 
+- `uv run pytest tests/test_runtime_smokes.py`
 - `ingest-mlb-metadata`
 - `ingest-statcast-features`
 - `ingest-odds-api-lines`
@@ -98,6 +117,7 @@ empty outputs, call that out explicitly in the PR and handoff.
 
 Every PR that touches runtime entrypoints or artifact contracts must record:
 
+- whether `uv run pytest tests/test_runtime_smokes.py` passed
 - the exact commands that were run
 - the exact dates or fixture inputs used
 - whether the outputs were non-empty, partially matched, or intentionally empty
