@@ -169,7 +169,7 @@ Weather and umpire adjustments stay optional until they can be sourced with
 their own timestamp-valid snapshots. They are not excuses to inject vague or
 manually remembered context.
 
-## Current AGE-146 Feature Tables
+## Current AGE-146 And AGE-147 Feature And Training Artifacts
 
 The current feature build writes four concrete artifacts for one target date:
 
@@ -199,6 +199,31 @@ explicitly replace them:
 - weather and park factor currently remain null with explicit status fields
   until a timestamp-valid source is added
 
+AGE-147 now builds the first reproducible starter strikeout training dataset on
+top of those feature tables.
+
+Training command:
+
+```bash
+uv run python -m mlb_props_stack train-starter-strikeout-baseline \
+  --start-date 2026-04-01 \
+  --end-date 2026-04-20
+```
+
+Current AGE-147 behavior:
+
+- joins `pitcher_daily_features`, `lineup_daily_features`, and
+  `game_context_features` by `official_date`, `gamePk`, and `pitcher_id`
+- fetches same-day Statcast pitcher rows and counts strikeout events on final
+  pitches to define the official starter strikeout target
+- saves train, validation, and test splits by date in `date_splits.json`
+- writes a naive benchmark based on
+  `pitcher_k_rate * expected_leash_batters_faced`
+- trains a deterministic ridge-style linear regressor with only pregame-valid
+  feature fields
+- reports RMSE, MAE, and Spearman rank correlation plus coefficient-based
+  feature importance in `evaluation.json`
+
 ## Model Shape
 
 The docs should define the modeling job without pretending the implementation
@@ -211,13 +236,18 @@ Required modeling behavior:
    line
 3. keep calibration explicit and testable out of sample
 
-Candidate implementation path:
+Current implementation path:
 
-- baseline: simple count model or other standard-library-friendly prototype
-- later production candidate: tree-based regressor or classifier in a dedicated
-  issue that expands dependencies deliberately
-- calibration: explicit post-model calibration on out-of-fold or walk-forward
-  predictions
+- benchmark baseline:
+  `pitcher_k_rate * expected_leash_batters_faced`
+- current trainable baseline:
+  deterministic ridge-style linear regression implemented in the standard
+  library so the repo stays dependency-light during bootstrap
+- later production candidate:
+  tree-based regressor or classifier in a dedicated issue that expands
+  dependencies deliberately
+- calibration:
+  explicit post-model calibration on out-of-fold or walk-forward predictions
 
 This repo is not committed to XGBoost, LightGBM, or any other dependency yet.
 The hard requirement is honest probability estimation, not a specific library.
@@ -249,6 +279,14 @@ If that ordering cannot be proven, the record is invalid.
 - feature windows may summarize prior games only
 - no feature may incorporate results from the evaluated game itself
 - rejected props should be stored so threshold changes can be audited later
+
+Current AGE-147 training matrix intentionally excludes:
+
+- IDs and keys such as `official_date`, `gamePk`, `pitcher_id`, and feature-row
+  identifiers
+- `features_as_of`
+- the target column `starter_strikeouts`
+- the naive benchmark output itself
 
 ### Pricing integrity
 

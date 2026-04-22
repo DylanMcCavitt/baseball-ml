@@ -7,6 +7,7 @@ __all__ = [
     "edge",
     "ingest",
     "markets",
+    "modeling",
     "pricing",
     "tracking",
 ]

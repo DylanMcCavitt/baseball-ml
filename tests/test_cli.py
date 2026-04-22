@@ -6,6 +6,7 @@ from mlb_props_stack.ingest import (
     OddsAPIIngestResult,
     StatcastFeatureIngestResult,
 )
+from mlb_props_stack.modeling import StarterStrikeoutBaselineTrainingResult
 
 
 def test_runtime_summary_includes_future_hooks():
@@ -130,3 +131,40 @@ def test_statcast_feature_ingest_cli_renders_output_summary(monkeypatch, tmp_pat
     assert "Statcast feature build complete for 2026-04-21" in output
     assert "raw_pulls=11" in output
     assert "pitch_level_rows=1234" in output
+
+
+def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = StarterStrikeoutBaselineTrainingResult(
+        start_date=date(2026, 4, 1),
+        end_date=date(2026, 4, 20),
+        run_id="20260421T180000Z",
+        row_count=48,
+        outcome_count=48,
+        dataset_path=tmp_path / "training_dataset.jsonl",
+        outcomes_path=tmp_path / "starter_outcomes.jsonl",
+        date_splits_path=tmp_path / "date_splits.json",
+        model_path=tmp_path / "baseline_model.json",
+        evaluation_path=tmp_path / "evaluation.json",
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.train_starter_strikeout_baseline",
+        lambda *, start_date, end_date, output_dir: result,
+    )
+
+    main(
+        [
+            "train-starter-strikeout-baseline",
+            "--start-date",
+            "2026-04-01",
+            "--end-date",
+            "2026-04-20",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Starter strikeout baseline training complete for 2026-04-01 -> 2026-04-20" in output
+    assert "training_rows=48" in output
+    assert "model_path=" in output

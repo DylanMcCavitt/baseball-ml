@@ -5,74 +5,72 @@
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
 - Current issue branch:
-  `dylanmccavitt2015/age-146-build-statcast-derived-pitcher-and-opponent-strikeout`
+  `dylanmccavitt2015/age-147-build-starter-strikeout-expectation-baseline-model`
 - `main` already includes the merged `AGE-143` docs work, `AGE-144` MLB
-  metadata ingest, and `AGE-145` sportsbook ingest.
-- This branch adds the first Statcast-derived feature-table build for the
-  pitcher strikeout model, but it has not been merged to `main` yet from this
-  handoff snapshot.
+  metadata ingest, `AGE-145` sportsbook ingest, `AGE-146` Statcast feature
+  tables, and this branch adds the first starter strikeout baseline training
+  loop for `AGE-147`
 
-## What Was Completed In AGE-146
+## What Was Completed In AGE-147
 
-- `src/mlb_props_stack/ingest/statcast_features.py`
-  - added a stdlib-only `StatcastSearchClient`
-  - added reproducible Baseball Savant Statcast CSV URL construction for
-    targeted pitcher and batter pulls
-  - sends Statcast requests with an explicit browser-style `User-Agent` header
-    so the live CSV export endpoint accepts the pull
-  - loads the latest normalized MLB metadata run for the target date from:
-    - `games.jsonl`
-    - `probable_starters.jsonl`
-    - `lineup_snapshots.jsonl`
-  - falls back to the latest pregame-valid MLB metadata run when a newer
-    same-date metadata run was captured after first pitch
-  - preserves raw CSV pulls under:
-    - `data/raw/statcast_search/date=YYYY-MM-DD/player_type=.../player_id=.../`
-  - writes normalized feature artifacts under:
-    - `data/normalized/statcast_search/date=YYYY-MM-DD/run=.../`
+- `src/mlb_props_stack/modeling.py`
+  - added the first model-training seam for starter strikeout expectation
+  - loads AGE-146 `pitcher_daily_features`, `lineup_daily_features`, and
+    `game_context_features` across an explicit date range
+  - joins those feature tables into one training row per
+    `official_date / game_pk / pitcher_id`
+  - derives the target as official starter strikeouts by pulling same-day
+    pitcher Statcast rows and counting strikeout events on final pitches for the
+    matching `game_pk`
+  - writes raw target pulls under:
+    - `data/raw/statcast_search_outcomes/date=YYYY-MM-DD/player_id=.../`
+  - writes normalized training artifacts under:
+    - `data/normalized/starter_strikeout_baseline/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
   - emits:
-    - `pull_manifest.jsonl`
-    - `pitch_level_base.jsonl`
-    - `pitcher_daily_features.jsonl`
-    - `lineup_daily_features.jsonl`
-    - `game_context_features.jsonl`
-  - dedupes repeated pitch rows across pitcher and batter pulls into one
-    traceable `pitch_level_base` seam
-  - enforces the current pregame lineup rule:
-    - only lineup snapshots with `captured_at <= commence_time` are allowed
-    - late lineup snapshots stay explicit as missing instead of leaking
-      post-lock information
-  - keeps weather and park factor explicit as missing with status fields rather
-    than silently backfilling them
-- `src/mlb_props_stack/ingest/__init__.py`
-  - exported the new Statcast feature-build surface
+    - `training_dataset.jsonl`
+    - `starter_outcomes.jsonl`
+    - `date_splits.json`
+    - `baseline_model.json`
+    - `evaluation.json`
+  - saves train, validation, and test splits by date instead of random row
+    shuffles
+  - keeps the training matrix explicit:
+    - uses only pregame-valid feature fields
+    - excludes IDs, timestamps, and target columns from the fitted feature set
+  - adds a naive benchmark:
+    - `pitcher_k_rate * expected_leash_batters_faced`
+  - fits a deterministic ridge-style linear baseline model in the standard
+    library and emits coefficient-based feature importance
+  - reports:
+    - RMSE
+    - MAE
+    - Spearman rank correlation
+    for benchmark vs. model on train, validation, test, and combined held-out
+    rows
 - `src/mlb_props_stack/cli.py`
   - added:
-    - `ingest-statcast-features --date YYYY-MM-DD [--output-dir ...] [--history-days ...]`
-  - prints a feature-build summary with history window, pull counts, row counts,
-    and normalized artifact paths
-- `tests/test_statcast_feature_ingest.py`
-  - added end-to-end coverage for:
-    - reproducible pitcher and batter pull URLs
-    - raw CSV pull writing and pull-manifest output
-    - deduped `pitch_level_base` rows across pitcher and batter pulls
-    - explicit missing-lineup handling when the only lineup snapshot is late
-    - explicit missing weather / park factor status fields
+    - `train-starter-strikeout-baseline --start-date YYYY-MM-DD --end-date YYYY-MM-DD [--output-dir ...]`
+  - prints a training summary with row counts and artifact paths
+- `tests/test_modeling.py`
+  - added deterministic end-to-end coverage for:
+    - feature-run loading across dates
+    - same-day Statcast outcome target derivation
+    - saved date-based splits
+    - model artifact contents
+    - held-out improvement over the naive benchmark
 - `tests/test_cli.py`
-  - added CLI coverage for the new Statcast feature-build command
+  - added CLI coverage for the new baseline training command
 - `README.md`
-  - documented the new feature-build command, raw/normalized output layout, and
-    current missing-input behavior
+  - documented the baseline training command and artifact layout
 - `docs/architecture.md`
-  - updated the source-adapter table and current artifact-shape section to
-    include AGE-146
+  - documented the new baseline-modeling layer and AGE-147 outputs
 - `docs/modeling.md`
-  - documented the current feature-table outputs and the pregame lineup / missing
-    weather guardrails
+  - documented the current benchmark, ridge baseline, date split behavior, and
+    no-leakage training-matrix rules
 
 ## Verification Run
 
-These commands were run successfully during AGE-146:
+These commands were run successfully during AGE-147:
 
 ```bash
 uv sync --extra dev
@@ -84,59 +82,57 @@ uv run python -m mlb_props_stack
 Local results:
 
 - `uv run pytest`
-  - `36 passed`
+  - `38 passed`
 - `uv run python -m mlb_props_stack`
   - still prints the runtime summary cleanly
 
-Not run during AGE-146:
+Not run during AGE-147:
 
 ```bash
-uv run python -m mlb_props_stack ingest-statcast-features --date 2026-04-21
+uv run python -m mlb_props_stack train-starter-strikeout-baseline \
+  --start-date 2026-04-01 \
+  --end-date 2026-04-20
 ```
 
 Reason:
 
-- the local session verified the new path through deterministic tests instead of
-  writing a live feature run against Baseball Savant; a real smoke run still
-  needs same-date MLB metadata artifacts plus a decision on where that live
-  output should land
+- the repo does not commit live AGE-146 feature runs, so the new training
+  command was verified through deterministic end-to-end tests rather than a
+  networked local dataset build against live Statcast inputs
 
 ## Recommended Next Issue
 
-- `AGE-147` — `Build starter strikeout expectation baseline model`
+- `AGE-148` — `Fit strikeout count distribution and ladder probabilities`
 
 Why this should go next:
 
-- AGE-146 now provides concrete `pitcher_daily_features`,
-  `lineup_daily_features`, and `game_context_features` tables keyed to the same
-  slate metadata seam
-- AGE-147 can consume those feature tables directly to build the first
-  reproducible expected-strikeout baseline before pricing, ladder probabilities,
-  or walk-forward backtests
+- AGE-147 now produces an explicit expected-strikeout mean per starter-game row
+- AGE-148 can convert that expectation into bookmaker-usable
+  `P(K >= line + 0.5)` ladder probabilities without inventing a new feature or
+  training seam
 
 ## Constraints For The Next Worktree
 
-- Start the next issue worktree from the current `main` after AGE-146 is merged.
-- Treat `pitch_level_base` as the trace seam from raw Statcast CSV rows to any
-  later model-training row; do not bypass it with ad hoc historical joins.
-- Keep the history window pregame-safe:
-  - no Statcast row from the evaluated official date belongs in the daily
-    feature tables
-- Keep lineup honesty:
-  - only lineup snapshots with `captured_at <= commence_time` are allowed into
-    model inputs unless a later issue explicitly changes that rule
-- Keep missing weather and park factor explicit until a timestamp-valid source
-  lands. Do not silently replace the current null-plus-status contract.
-- If AGE-147 needs wider or different feature windows, expand them deliberately
-  in code or config instead of embedding hidden assumptions in the model layer.
+- Start the next issue worktree from the current `main` after AGE-147 is merged.
+- Keep AGE-147 as the only source of the baseline mean expectation:
+  - do not duplicate the feature-table join or same-day target pull logic in a
+    new distribution module
+- Preserve the current leakage rules:
+  - no IDs, target columns, or postgame timestamps in the training matrix
+  - no same-day pitch rows in the feature inputs themselves
+- Treat `evaluation.json` metrics and `baseline_model.json` schema as durable
+  debug artifacts, not throwaway local output.
+- If AGE-148 needs an additional dependency for count fitting, add it
+  deliberately in that issue instead of expanding AGE-147’s stdlib baseline.
 
 ## Open Questions
 
-- A real Statcast smoke run is still needed against live Baseball Savant CSV
-  pulls to confirm the current query template behaves cleanly for the targeted
-  pitcher and batter workflow.
-- The repo still does not have a timestamp-valid weather source for first pitch.
-  Weather stays intentionally missing until that source is chosen.
-- Park factor is currently just a reserved slot in `game_context_features`; if
-  it becomes important for the baseline model, it should come from a named
-  source in a dedicated follow-up slice rather than a hardcoded constant.
+- A real local smoke run of `train-starter-strikeout-baseline` still needs a
+  non-test date span with AGE-146 feature runs already materialized under
+  `data/normalized/statcast_search/...`.
+- The current baseline emits a mean expectation only. Probability calibration
+  and line-level over/under probabilities still belong to AGE-148.
+- Same-day Statcast outcome pulls currently hit Baseball Savant directly for the
+  training label. If that path becomes rate-limited in practice, the repo may
+  need a cached label-build slice later rather than changing the model contract
+  here.

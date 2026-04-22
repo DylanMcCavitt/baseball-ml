@@ -1,0 +1,338 @@
+from __future__ import annotations
+
+import csv
+import json
+from datetime import UTC, date, datetime, timedelta
+from io import StringIO
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from mlb_props_stack.modeling import train_starter_strikeout_baseline
+
+
+STATCAST_HEADERS = [
+    "game_date",
+    "game_pk",
+    "at_bat_number",
+    "pitch_number",
+    "pitcher",
+    "batter",
+    "pitch_type",
+    "pitch_name",
+    "release_speed",
+    "release_spin_rate",
+    "release_extension",
+    "plate_x",
+    "plate_z",
+    "zone",
+    "description",
+    "events",
+    "stand",
+    "p_throws",
+    "balls",
+    "strikes",
+    "outs_when_up",
+    "home_team",
+    "away_team",
+    "inning_topbot",
+]
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "".join(f"{json.dumps(row, sort_keys=True)}\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def _csv_text(rows: list[dict[str, object]]) -> str:
+    buffer = StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=STATCAST_HEADERS)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return buffer.getvalue()
+
+
+def _seed_feature_run(
+    output_dir: Path,
+    *,
+    official_date: date,
+    feature_rows: list[dict[str, object]],
+) -> None:
+    run_dir = (
+        output_dir
+        / "normalized"
+        / "statcast_search"
+        / f"date={official_date.isoformat()}"
+        / "run=20260421T180000Z"
+    )
+    pitcher_rows = []
+    lineup_rows = []
+    game_context_rows = []
+    for row in feature_rows:
+        pitcher_rows.append(
+            {
+                "feature_row_id": row["pitcher_feature_row_id"],
+                "official_date": official_date.isoformat(),
+                "game_pk": row["game_pk"],
+                "pitcher_id": row["pitcher_id"],
+                "pitcher_name": row["pitcher_name"],
+                "team_side": row["team_side"],
+                "team_abbreviation": row["team_abbreviation"],
+                "opponent_team_abbreviation": row["opponent_team_abbreviation"],
+                "history_start_date": (official_date - timedelta(days=30)).isoformat(),
+                "history_end_date": (official_date - timedelta(days=1)).isoformat(),
+                "features_as_of": f"{official_date.isoformat()}T15:00:00Z",
+                "feature_status": "ok",
+                "pitch_sample_size": row["pitch_sample_size"],
+                "plate_appearance_sample_size": row["plate_appearance_sample_size"],
+                "pitcher_hand": row["pitcher_hand"],
+                "pitcher_k_rate": row["pitcher_k_rate"],
+                "swinging_strike_rate": row["swinging_strike_rate"],
+                "csw_rate": row["csw_rate"],
+                "pitch_type_usage": row["pitch_type_usage"],
+                "average_release_speed": row["average_release_speed"],
+                "release_speed_delta_vs_baseline": row["release_speed_delta_vs_baseline"],
+                "average_release_extension": row["average_release_extension"],
+                "release_extension_delta_vs_baseline": row["release_extension_delta_vs_baseline"],
+                "recent_batters_faced": row["recent_batters_faced"],
+                "recent_pitch_count": row["recent_pitch_count"],
+                "rest_days": row["rest_days"],
+                "last_start_pitch_count": row["last_start_pitch_count"],
+                "last_start_batters_faced": row["last_start_batters_faced"],
+            }
+        )
+        lineup_rows.append(
+            {
+                "feature_row_id": row["lineup_feature_row_id"],
+                "official_date": official_date.isoformat(),
+                "game_pk": row["game_pk"],
+                "pitcher_id": row["pitcher_id"],
+                "pitcher_name": row["pitcher_name"],
+                "team_abbreviation": row["team_abbreviation"],
+                "opponent_team_abbreviation": row["opponent_team_abbreviation"],
+                "opponent_team_name": row["opponent_team_name"],
+                "lineup_snapshot_id": row["lineup_snapshot_id"],
+                "history_start_date": (official_date - timedelta(days=30)).isoformat(),
+                "history_end_date": (official_date - timedelta(days=1)).isoformat(),
+                "features_as_of": f"{official_date.isoformat()}T15:30:00Z",
+                "lineup_status": row["lineup_status"],
+                "lineup_is_confirmed": row["lineup_is_confirmed"],
+                "lineup_size": row["lineup_size"],
+                "available_batter_feature_count": row["available_batter_feature_count"],
+                "pitcher_hand": row["pitcher_hand"],
+                "projected_lineup_k_rate": row["projected_lineup_k_rate"],
+                "projected_lineup_k_rate_vs_pitcher_hand": row["projected_lineup_k_rate_vs_pitcher_hand"],
+                "projected_lineup_chase_rate": row["projected_lineup_chase_rate"],
+                "projected_lineup_contact_rate": row["projected_lineup_contact_rate"],
+                "lineup_continuity_count": row["lineup_continuity_count"],
+                "lineup_continuity_ratio": row["lineup_continuity_ratio"],
+                "lineup_player_ids": row["lineup_player_ids"],
+            }
+        )
+        game_context_rows.append(
+            {
+                "feature_row_id": row["game_context_feature_row_id"],
+                "official_date": official_date.isoformat(),
+                "game_pk": row["game_pk"],
+                "pitcher_id": row["pitcher_id"],
+                "pitcher_name": row["pitcher_name"],
+                "team_abbreviation": row["team_abbreviation"],
+                "opponent_team_abbreviation": row["opponent_team_abbreviation"],
+                "home_away": row["home_away"],
+                "venue_id": 5,
+                "venue_name": "Test Park",
+                "day_night": row["day_night"],
+                "double_header": row["double_header"],
+                "features_as_of": f"{official_date.isoformat()}T15:45:00Z",
+                "park_factor": None,
+                "park_factor_status": "missing_park_factor_source",
+                "rest_days": row["rest_days"],
+                "weather_status": "missing_weather_source",
+                "weather_source": None,
+                "weather_temperature_f": None,
+                "weather_wind_mph": None,
+                "weather_conditions": None,
+                "expected_leash_pitch_count": row["expected_leash_pitch_count"],
+                "expected_leash_batters_faced": row["expected_leash_batters_faced"],
+            }
+        )
+
+    _write_jsonl(run_dir / "pitcher_daily_features.jsonl", pitcher_rows)
+    _write_jsonl(run_dir / "lineup_daily_features.jsonl", lineup_rows)
+    _write_jsonl(run_dir / "game_context_features.jsonl", game_context_rows)
+
+
+def _build_outcome_csv(
+    *,
+    official_date: date,
+    game_pk: int,
+    pitcher_id: int,
+    strikeout_count: int,
+    plate_appearance_count: int,
+    home_team: str,
+    away_team: str,
+    pitcher_hand: str,
+) -> str:
+    rows: list[dict[str, object]] = []
+    for at_bat_number in range(1, plate_appearance_count + 1):
+        rows.append(
+            {
+                "game_date": official_date.isoformat(),
+                "game_pk": game_pk,
+                "at_bat_number": at_bat_number,
+                "pitch_number": 1,
+                "pitcher": pitcher_id,
+                "batter": 700000 + at_bat_number,
+                "pitch_type": "FF",
+                "pitch_name": "4-Seam Fastball",
+                "release_speed": 95.0,
+                "release_spin_rate": 2300,
+                "release_extension": 6.2,
+                "plate_x": 0.0,
+                "plate_z": 2.5,
+                "zone": 5,
+                "description": "swinging_strike" if at_bat_number <= strikeout_count else "hit_into_play",
+                "events": "strikeout" if at_bat_number <= strikeout_count else "field_out",
+                "stand": "R",
+                "p_throws": pitcher_hand,
+                "balls": 0,
+                "strikes": 2,
+                "outs_when_up": (at_bat_number - 1) % 3,
+                "home_team": home_team,
+                "away_team": away_team,
+                "inning_topbot": "Top",
+            }
+        )
+    return _csv_text(rows)
+
+
+class FakeStatcastClient:
+    def __init__(self, responses: dict[tuple[str, int], str]) -> None:
+        self.responses = responses
+
+    def fetch_csv(self, url: str) -> str:
+        query = parse_qs(urlparse(url).query)
+        pitcher_id = int(query["pitchers_lookup[]"][0])
+        inferred_date = date.fromisoformat(query["game_date_gt"][0]) + timedelta(days=1)
+        return self.responses[(inferred_date.isoformat(), pitcher_id)]
+
+
+def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(tmp_path):
+    outcome_csv_by_pitcher_and_date: dict[tuple[str, int], str] = {}
+    start_date = date(2026, 4, 16)
+    all_feature_rows = []
+    for date_index in range(5):
+        official_date = start_date + timedelta(days=date_index)
+        feature_rows = []
+        for pitcher_index in range(2):
+            pitcher_id = 680800 + pitcher_index
+            game_pk = 824440 + (date_index * 10) + pitcher_index
+            pitcher_k_rate = round(0.18 + (0.02 * pitcher_index) + (0.01 * date_index), 6)
+            lineup_k_rate = round(0.21 + (0.015 * ((date_index + pitcher_index) % 3)), 6)
+            lineup_contact_rate = round(0.73 - (0.015 * date_index) + (0.005 * pitcher_index), 6)
+            expected_leash_batters_faced = float(23 + date_index + (2 * pitcher_index))
+            naive_benchmark = pitcher_k_rate * expected_leash_batters_faced
+            home_away = "home" if pitcher_index == 0 else "away"
+            actual_strikeouts = int(
+                round(
+                    naive_benchmark
+                    + (20.0 * (lineup_k_rate - 0.22))
+                    - (12.0 * (lineup_contact_rate - 0.70))
+                    + (0.6 if home_away == "home" else -0.3)
+                )
+            )
+            row = {
+                "game_pk": game_pk,
+                "pitcher_id": pitcher_id,
+                "pitcher_name": f"Pitcher {pitcher_index + 1}",
+                "team_side": "home" if home_away == "home" else "away",
+                "team_abbreviation": "CLE" if home_away == "home" else "HOU",
+                "opponent_team_abbreviation": "HOU" if home_away == "home" else "CLE",
+                "opponent_team_name": "Houston Astros" if home_away == "home" else "Cleveland Guardians",
+                "pitcher_feature_row_id": f"pitcher-feature:{game_pk}:{pitcher_id}",
+                "lineup_feature_row_id": f"lineup-feature:{game_pk}:{pitcher_id}",
+                "game_context_feature_row_id": f"game-context:{game_pk}:{pitcher_id}",
+                "lineup_snapshot_id": f"lineup:{game_pk}:{official_date.isoformat()}",
+                "pitcher_hand": "R" if pitcher_index == 0 else "L",
+                "pitch_sample_size": 480 + (date_index * 10) + (pitcher_index * 15),
+                "plate_appearance_sample_size": 105 + (date_index * 4) + (pitcher_index * 5),
+                "pitcher_k_rate": pitcher_k_rate,
+                "swinging_strike_rate": round(0.11 + (0.005 * pitcher_index), 6),
+                "csw_rate": round(0.27 + (0.01 * date_index), 6),
+                "pitch_type_usage": {"FF": 0.58 - (0.02 * pitcher_index), "SL": 0.42 + (0.02 * pitcher_index)},
+                "average_release_speed": 94.0 + pitcher_index,
+                "release_speed_delta_vs_baseline": round(0.1 * date_index, 6),
+                "average_release_extension": 6.1 + (0.05 * pitcher_index),
+                "release_extension_delta_vs_baseline": round(0.02 * date_index, 6),
+                "recent_batters_faced": 70 + (date_index * 2),
+                "recent_pitch_count": 260 + (date_index * 8),
+                "rest_days": 5 + pitcher_index,
+                "last_start_pitch_count": 92 + (date_index * 2),
+                "last_start_batters_faced": 24 + pitcher_index,
+                "lineup_status": "confirmed" if date_index % 2 == 0 else "projected",
+                "lineup_is_confirmed": date_index % 2 == 0,
+                "lineup_size": 9,
+                "available_batter_feature_count": 9,
+                "projected_lineup_k_rate": lineup_k_rate,
+                "projected_lineup_k_rate_vs_pitcher_hand": lineup_k_rate + 0.01,
+                "projected_lineup_chase_rate": round(0.28 + (0.005 * date_index), 6),
+                "projected_lineup_contact_rate": lineup_contact_rate,
+                "lineup_continuity_count": 6 + pitcher_index,
+                "lineup_continuity_ratio": round((6 + pitcher_index) / 9, 6),
+                "lineup_player_ids": [710000 + slot for slot in range(9)],
+                "home_away": home_away,
+                "day_night": "night",
+                "double_header": "N",
+                "expected_leash_pitch_count": 95.0 + date_index,
+                "expected_leash_batters_faced": expected_leash_batters_faced,
+                "actual_strikeouts": actual_strikeouts,
+            }
+            feature_rows.append(row)
+            all_feature_rows.append(row)
+            outcome_csv_by_pitcher_and_date[(official_date.isoformat(), pitcher_id)] = _build_outcome_csv(
+                official_date=official_date,
+                game_pk=game_pk,
+                pitcher_id=pitcher_id,
+                strikeout_count=actual_strikeouts,
+                plate_appearance_count=26 + pitcher_index,
+                home_team="CLE" if home_away == "home" else "HOU",
+                away_team="HOU" if home_away == "home" else "CLE",
+                pitcher_hand=row["pitcher_hand"],
+            )
+        _seed_feature_run(tmp_path, official_date=official_date, feature_rows=feature_rows)
+
+    result = train_starter_strikeout_baseline(
+        start_date=start_date,
+        end_date=start_date + timedelta(days=4),
+        output_dir=tmp_path,
+        client=FakeStatcastClient(outcome_csv_by_pitcher_and_date),
+        now=lambda: datetime(2026, 4, 21, 18, 0, tzinfo=UTC),
+    )
+
+    evaluation = json.loads(result.evaluation_path.read_text(encoding="utf-8"))
+    model_artifact = json.loads(result.model_path.read_text(encoding="utf-8"))
+    dataset_rows = [
+        json.loads(line)
+        for line in result.dataset_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert result.row_count == 10
+    assert result.outcome_count == 10
+    assert evaluation["held_out_beats_benchmark"] == {"rmse": True, "mae": True}
+    assert evaluation["model"]["held_out"]["rmse"] < evaluation["benchmark"]["held_out"]["rmse"]
+    assert evaluation["model"]["held_out"]["mae"] <= evaluation["benchmark"]["held_out"]["mae"]
+    assert evaluation["date_splits"]["train"] == ["2026-04-16", "2026-04-17", "2026-04-18"]
+    assert evaluation["date_splits"]["validation"] == ["2026-04-19"]
+    assert evaluation["date_splits"]["test"] == ["2026-04-20"]
+    assert dataset_rows[0]["starter_strikeouts"] > 0
+    assert "starter_strikeouts" not in model_artifact["encoded_feature_names"]
+    assert "features_as_of" not in model_artifact["encoded_feature_names"]
+    assert "projected_lineup_k_rate" in model_artifact["encoded_feature_names"]
+    assert any(
+        item["feature"] == "projected_lineup_k_rate"
+        for item in evaluation["feature_importance"]
+    )

@@ -16,6 +16,10 @@ from .ingest import (
     ingest_odds_api_pitcher_lines_for_date,
     ingest_statcast_features_for_date,
 )
+from .modeling import (
+    StarterStrikeoutBaselineTrainingResult,
+    train_starter_strikeout_baseline,
+)
 from .tracking import TrackingConfig
 
 
@@ -95,6 +99,27 @@ def render_statcast_feature_ingest_summary(result: StatcastFeatureIngestResult) 
     return "\n".join(lines)
 
 
+def render_starter_strikeout_training_summary(
+    result: StarterStrikeoutBaselineTrainingResult,
+) -> str:
+    """Return a human-readable summary for one baseline training run."""
+    lines = [
+        (
+            "Starter strikeout baseline training complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"training_rows={result.row_count}",
+        f"starter_outcomes={result.outcome_count}",
+        f"dataset_path={result.dataset_path}",
+        f"outcomes_path={result.outcomes_path}",
+        f"date_splits_path={result.date_splits_path}",
+        f"model_path={result.model_path}",
+        f"evaluation_path={result.evaluation_path}",
+    ]
+    return "\n".join(lines)
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     """Create the top-level CLI parser."""
     parser = argparse.ArgumentParser(prog="mlb-props-stack")
@@ -158,6 +183,26 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=DEFAULT_HISTORY_DAYS,
         help="Number of prior official dates to include in the Statcast history window.",
     )
+
+    training_parser = subparsers.add_parser(
+        "train-starter-strikeout-baseline",
+        help="Train the first date-split starter strikeout baseline model.",
+    )
+    training_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the training window.",
+    )
+    training_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the training window.",
+    )
+    training_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where feature inputs and training artifacts live.",
+    )
     return parser
 
 
@@ -189,6 +234,15 @@ def main(argv: list[str] | None = None) -> None:
             history_days=args.history_days,
         )
         print(render_statcast_feature_ingest_summary(result))
+        return
+
+    if args.command == "train-starter-strikeout-baseline":
+        result = train_starter_strikeout_baseline(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+        )
+        print(render_starter_strikeout_training_summary(result))
         return
 
     print(render_runtime_summary())
