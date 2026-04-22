@@ -405,6 +405,91 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     )
 
 
+def test_train_starter_strikeout_baseline_skips_rows_without_same_game_outcomes(tmp_path):
+    start_date = date(2026, 4, 16)
+    responses: dict[tuple[str, int], str] = {}
+
+    for date_index in range(4):
+        official_date = start_date + timedelta(days=date_index)
+        pitcher_id = 700100 + date_index
+        game_pk = 9000 + date_index
+        feature_rows = [
+            {
+                "game_pk": game_pk,
+                "pitcher_id": pitcher_id,
+                "pitcher_name": f"Pitcher {date_index}",
+                "team_side": "home",
+                "team_abbreviation": "CLE",
+                "opponent_team_abbreviation": "HOU",
+                "opponent_team_name": "Houston Astros",
+                "pitcher_feature_row_id": f"pitcher-feature:{game_pk}:{pitcher_id}",
+                "lineup_feature_row_id": f"lineup-feature:{game_pk}:{pitcher_id}",
+                "game_context_feature_row_id": f"game-context:{game_pk}:{pitcher_id}",
+                "lineup_snapshot_id": f"lineup:{game_pk}:{official_date.isoformat()}",
+                "pitcher_hand": "R",
+                "pitch_sample_size": 400,
+                "plate_appearance_sample_size": 90,
+                "pitcher_k_rate": 0.26,
+                "swinging_strike_rate": 0.14,
+                "csw_rate": 0.29,
+                "pitch_type_usage": {"FF": 0.5},
+                "average_release_speed": 95.0,
+                "release_speed_delta_vs_baseline": 0.0,
+                "average_release_extension": 6.1,
+                "release_extension_delta_vs_baseline": 0.0,
+                "recent_batters_faced": 70,
+                "recent_pitch_count": 280,
+                "rest_days": 5,
+                "last_start_pitch_count": 92,
+                "last_start_batters_faced": 25,
+                "lineup_status": "projected",
+                "lineup_is_confirmed": False,
+                "lineup_size": 9,
+                "available_batter_feature_count": 9,
+                "projected_lineup_k_rate": 0.24,
+                "projected_lineup_k_rate_vs_pitcher_hand": 0.25,
+                "projected_lineup_chase_rate": 0.31,
+                "projected_lineup_contact_rate": 0.74,
+                "lineup_continuity_count": 6,
+                "lineup_continuity_ratio": 0.67,
+                "lineup_player_ids": [710000 + slot for slot in range(9)],
+                "home_away": "home",
+                "day_night": "night",
+                "double_header": "N",
+                "expected_leash_pitch_count": 95.0,
+                "expected_leash_batters_faced": 25.0,
+            }
+        ]
+        _seed_feature_run(tmp_path, official_date=official_date, feature_rows=feature_rows)
+        if date_index == 1:
+            responses[(official_date.isoformat(), pitcher_id)] = _csv_text([])
+        else:
+            responses[(official_date.isoformat(), pitcher_id)] = _build_outcome_csv(
+                official_date=official_date,
+                game_pk=game_pk,
+                pitcher_id=pitcher_id,
+                strikeout_count=6 + date_index,
+                plate_appearance_count=24,
+                home_team="CLE",
+                away_team="HOU",
+                pitcher_hand="R",
+            )
+
+    result = train_starter_strikeout_baseline(
+        start_date=start_date,
+        end_date=start_date + timedelta(days=3),
+        output_dir=tmp_path,
+        client=FakeStatcastClient(responses),
+        now=iter(
+            datetime(2026, 4, 22, 18, 0, tzinfo=UTC) + timedelta(minutes=index)
+            for index in range(20)
+        ).__next__,
+    )
+
+    assert result.row_count == 3
+    assert result.outcome_count == 3
+
+
 def test_line_and_ladder_probability_helpers_are_monotonic_and_complementary():
     over_probability, under_probability = starter_strikeout_line_probability(
         mean=6.2,

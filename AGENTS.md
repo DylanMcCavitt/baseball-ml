@@ -147,6 +147,18 @@ Fallback if using a virtualenv instead of `uv`:
 If you change contracts, pricing logic, CLI behavior, or backtest rules, add or
 update focused tests in the same issue.
 
+If you change contracts, pricing logic, CLI behavior, backtest rules, ingest
+logic, modeling paths, paper tracking, or dashboard behavior:
+
+- run the baseline repo checks above
+- run the affected runtime checks from `docs/review_runtime_checks.md`
+- verify the produced artifacts or the loaded UI, not just the process exit
+  code
+
+Do not mark an issue or PR as verified based only on `uv run pytest` and
+`uv run python -m mlb_props_stack` when the changed code lives behind a
+different runtime entrypoint.
+
 ## Documentation Expectations
 
 - Keep docs operational and specific.

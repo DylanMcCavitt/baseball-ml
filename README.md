@@ -417,6 +417,11 @@ That keeps the current scaffold honest without pretending the repo already has a
 full training or deployment pipeline. As model, feature, and data workflows land,
 CI can grow from this baseline instead of starting as placeholder ceremony.
 
+Those CI checks are only the baseline repo gate. They do not prove that
+Streamlit startup, live CLI entrypoints, or generated artifacts work end to
+end. For PR review and handoff on runtime-facing changes, also run the affected
+checks in [`docs/review_runtime_checks.md`](docs/review_runtime_checks.md).
+
 ## Future Hooks
 
 - `mlb_props_stack.tracking.TrackingConfig` is the reserved place for future
