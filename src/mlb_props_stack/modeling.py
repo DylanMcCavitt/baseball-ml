@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, date, datetime, timedelta
 import json
-from math import sqrt
+from math import exp, floor, log, sqrt
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -18,8 +18,15 @@ from .ingest.statcast_features import (
 
 MODEL_VERSION = "starter-strikeout-baseline-v1"
 BENCHMARK_NAME = "pitcher_k_rate_x_expected_leash_batters_faced"
+COUNT_DISTRIBUTION_NAME = "negative_binomial_global_dispersion_v1"
+COUNT_DISTRIBUTION_FIT_METHOD = "method_of_moments"
 RIDGE_ALPHA = 1.0
 OUTCOME_QUERY_PADDING_DAYS = 1
+DISTRIBUTION_TAIL_TOLERANCE = 1e-9
+MIN_DISTRIBUTION_MEAN = 1e-6
+MIN_DISPERSION_ALPHA = 1e-6
+MIN_PROBABILITY = 1e-12
+MAX_DISTRIBUTION_SUPPORT = 250
 BASE_NUMERIC_FEATURES = (
     "pitch_sample_size",
     "plate_appearance_sample_size",
@@ -157,11 +164,13 @@ class StarterStrikeoutBaselineTrainingResult:
     run_id: str
     row_count: int
     outcome_count: int
+    dispersion_alpha: float
     dataset_path: Path
     outcomes_path: Path
     date_splits_path: Path
     model_path: Path
     evaluation_path: Path
+    ladder_probabilities_path: Path
 
 
 @dataclass(frozen=True)
@@ -672,6 +681,174 @@ def _predict_mean(row: StarterStrikeoutTrainingRow, model: _LinearModel) -> floa
     return max(0.0, mean_prediction)
 
 
+def _normalized_count_distribution(
+    mean: float,
+    dispersion_alpha: float,
+    *,
+    minimum_count: int = 0,
+    tail_tolerance: float = DISTRIBUTION_TAIL_TOLERANCE,
+) -> list[float]:
+    if mean < 0.0:
+        raise ValueError("mean must be >= 0.0")
+    if dispersion_alpha < 0.0:
+        raise ValueError("dispersion_alpha must be >= 0.0")
+    if minimum_count < 0:
+        raise ValueError("minimum_count must be >= 0")
+
+    if mean == 0.0:
+        return [1.0, *([0.0] * minimum_count)]
+
+    effective_mean = max(MIN_DISTRIBUTION_MEAN, mean)
+    effective_dispersion_alpha = (
+        0.0 if dispersion_alpha <= MIN_DISPERSION_ALPHA else dispersion_alpha
+    )
+    probabilities: list[float]
+    cumulative: float
+    if effective_dispersion_alpha == 0.0:
+        probabilities = [exp(-effective_mean)]
+        cumulative = probabilities[0]
+        while cumulative < 1.0 - tail_tolerance or len(probabilities) - 1 < minimum_count:
+            count = len(probabilities)
+            probabilities.append(probabilities[-1] * effective_mean / count)
+            cumulative += probabilities[-1]
+            if len(probabilities) > MAX_DISTRIBUTION_SUPPORT:
+                raise ValueError("Poisson support exceeded the configured maximum support.")
+    else:
+        size = 1.0 / effective_dispersion_alpha
+        failure_probability = effective_mean / (size + effective_mean)
+        success_probability = size / (size + effective_mean)
+        probabilities = [success_probability**size]
+        cumulative = probabilities[0]
+        while cumulative < 1.0 - tail_tolerance or len(probabilities) - 1 < minimum_count:
+            count = len(probabilities)
+            previous_probability = probabilities[-1]
+            probabilities.append(
+                previous_probability
+                * ((count - 1 + size) / count)
+                * failure_probability
+            )
+            cumulative += probabilities[-1]
+            if len(probabilities) > MAX_DISTRIBUTION_SUPPORT:
+                raise ValueError(
+                    "Negative-binomial support exceeded the configured maximum support."
+                )
+
+    total_probability = sum(probabilities)
+    if total_probability <= 0.0:
+        raise ValueError("Count distribution total probability must be positive.")
+    return [probability / total_probability for probability in probabilities]
+
+
+def starter_strikeout_line_probability(
+    *,
+    mean: float,
+    line: float,
+    dispersion_alpha: float,
+    tail_tolerance: float = DISTRIBUTION_TAIL_TOLERANCE,
+) -> tuple[float, float]:
+    """Return over/under probabilities for one strikeout line."""
+    if line < 0.0:
+        raise ValueError("line must be >= 0.0")
+    threshold = int(floor(line)) + 1
+    probabilities = _normalized_count_distribution(
+        mean,
+        dispersion_alpha,
+        minimum_count=threshold,
+        tail_tolerance=tail_tolerance,
+    )
+    under_probability = sum(probabilities[:threshold])
+    over_probability = max(0.0, 1.0 - under_probability)
+    return over_probability, under_probability
+
+
+def starter_strikeout_ladder_probabilities(
+    *,
+    mean: float,
+    dispersion_alpha: float,
+    tail_tolerance: float = DISTRIBUTION_TAIL_TOLERANCE,
+) -> list[dict[str, float]]:
+    """Return ladder probabilities for half-strikeout lines."""
+    probabilities = _normalized_count_distribution(
+        mean,
+        dispersion_alpha,
+        tail_tolerance=tail_tolerance,
+    )
+    ladder_rows: list[dict[str, float]] = []
+    cumulative_probability = 0.0
+    for strikeout_count, exact_probability in enumerate(probabilities):
+        cumulative_probability += exact_probability
+        ladder_rows.append(
+            {
+                "line": round(strikeout_count + 0.5, 6),
+                "over_probability": round(max(0.0, 1.0 - cumulative_probability), 6),
+                "under_probability": round(cumulative_probability, 6),
+            }
+        )
+    return ladder_rows
+
+
+def _fit_negative_binomial_dispersion_alpha(
+    rows: list[StarterStrikeoutTrainingRow],
+    mean_predictions: list[float],
+) -> float:
+    if len(rows) != len(mean_predictions):
+        raise ValueError("rows and mean_predictions must be aligned")
+    denominator = sum(max(MIN_DISTRIBUTION_MEAN, mean_prediction) ** 2 for mean_prediction in mean_predictions)
+    if denominator == 0.0:
+        return 0.0
+    numerator = sum(
+        (float(row.starter_strikeouts) - max(MIN_DISTRIBUTION_MEAN, mean_prediction)) ** 2
+        - max(MIN_DISTRIBUTION_MEAN, mean_prediction)
+        for row, mean_prediction in zip(rows, mean_predictions)
+    )
+    fitted_alpha = max(0.0, numerator / denominator)
+    return 0.0 if fitted_alpha <= MIN_DISPERSION_ALPHA else fitted_alpha
+
+
+def _ranked_probability_score(actual_count: int, probabilities: list[float]) -> float:
+    cumulative_probability = 0.0
+    score = 0.0
+    for strikeout_count, probability in enumerate(probabilities):
+        cumulative_probability += probability
+        observed_cdf = 1.0 if strikeout_count >= actual_count else 0.0
+        difference = cumulative_probability - observed_cdf
+        score += difference * difference
+    return score / max(1, len(probabilities) - 1)
+
+
+def _distribution_metrics(
+    rows: list[StarterStrikeoutTrainingRow],
+    mean_predictions: list[float],
+    *,
+    dispersion_alpha: float,
+) -> dict[str, Any]:
+    if len(rows) != len(mean_predictions):
+        raise ValueError("rows and mean_predictions must be aligned")
+    negative_log_likelihoods: list[float] = []
+    ranked_probability_scores: list[float] = []
+    for row, mean_prediction in zip(rows, mean_predictions):
+        probabilities = _normalized_count_distribution(
+            mean_prediction,
+            dispersion_alpha,
+            minimum_count=row.starter_strikeouts,
+        )
+        exact_probability = probabilities[row.starter_strikeouts]
+        negative_log_likelihoods.append(-log(max(exact_probability, MIN_PROBABILITY)))
+        ranked_probability_scores.append(
+            _ranked_probability_score(row.starter_strikeouts, probabilities)
+        )
+    return {
+        "mean_negative_log_likelihood": round(
+            sum(negative_log_likelihoods) / len(negative_log_likelihoods),
+            6,
+        ),
+        "mean_ranked_probability_score": round(
+            sum(ranked_probability_scores) / len(ranked_probability_scores),
+            6,
+        ),
+    }
+
+
 def _rmse(actuals: list[float], predictions: list[float]) -> float:
     return round(sqrt(sum((actual - prediction) ** 2 for actual, prediction in zip(actuals, predictions)) / len(actuals)), 6)
 
@@ -749,10 +926,16 @@ def _feature_importance(model: _LinearModel) -> list[dict[str, float | str]]:
     return sorted(importances, key=lambda item: (-float(item["absolute_importance"]), str(item["feature"])))
 
 
-def _model_artifact(model: _LinearModel) -> dict[str, Any]:
+def _model_artifact(model: _LinearModel, *, dispersion_alpha: float) -> dict[str, Any]:
     return {
         "model_version": MODEL_VERSION,
         "ridge_alpha": RIDGE_ALPHA,
+        "count_distribution": {
+            "name": COUNT_DISTRIBUTION_NAME,
+            "fit_method": COUNT_DISTRIBUTION_FIT_METHOD,
+            "dispersion_alpha": round(dispersion_alpha, 6),
+            "variance_formula": "variance = mean + alpha * mean^2",
+        },
         "intercept": round(model.intercept, 6),
         "encoded_feature_names": list(model.vectorizer.encoded_feature_names),
         "coefficients": {
@@ -820,6 +1003,11 @@ def train_starter_strikeout_baseline(
         raise ValueError("Date splits must leave at least one row in train, validation, and test.")
 
     model = _fit_ridge_regression(train_rows)
+    train_model_predictions = [_predict_mean(row, model) for row in train_rows]
+    dispersion_alpha = _fit_negative_binomial_dispersion_alpha(
+        train_rows,
+        train_model_predictions,
+    )
     evaluation_rows = {
         "train": train_rows,
         "validation": validation_rows,
@@ -838,6 +1026,14 @@ def train_starter_strikeout_baseline(
         },
         "benchmark": {},
         "model": {},
+        "count_distribution": {
+            "name": COUNT_DISTRIBUTION_NAME,
+            "fit_method": COUNT_DISTRIBUTION_FIT_METHOD,
+            "dispersion_alpha": round(dispersion_alpha, 6),
+            "variance_formula": "variance = mean + alpha * mean^2",
+            "poisson": {},
+            "negative_binomial": {},
+        },
     }
     for split_name, split_rows in evaluation_rows.items():
         actuals = [float(row.starter_strikeouts) for row in split_rows]
@@ -845,9 +1041,37 @@ def train_starter_strikeout_baseline(
         model_predictions = [_predict_mean(row, model) for row in split_rows]
         evaluation["benchmark"][split_name] = _metrics(actuals, benchmark_predictions)
         evaluation["model"][split_name] = _metrics(actuals, model_predictions)
+        evaluation["count_distribution"]["poisson"][split_name] = _distribution_metrics(
+            split_rows,
+            model_predictions,
+            dispersion_alpha=0.0,
+        )
+        evaluation["count_distribution"]["negative_binomial"][split_name] = _distribution_metrics(
+            split_rows,
+            model_predictions,
+            dispersion_alpha=dispersion_alpha,
+        )
     evaluation["held_out_beats_benchmark"] = {
         "rmse": evaluation["model"]["held_out"]["rmse"] < evaluation["benchmark"]["held_out"]["rmse"],
         "mae": evaluation["model"]["held_out"]["mae"] <= evaluation["benchmark"]["held_out"]["mae"],
+    }
+    evaluation["count_distribution"]["held_out_beats_poisson"] = {
+        "mean_negative_log_likelihood": (
+            evaluation["count_distribution"]["negative_binomial"]["held_out"][
+                "mean_negative_log_likelihood"
+            ]
+            < evaluation["count_distribution"]["poisson"]["held_out"][
+                "mean_negative_log_likelihood"
+            ]
+        ),
+        "mean_ranked_probability_score": (
+            evaluation["count_distribution"]["negative_binomial"]["held_out"][
+                "mean_ranked_probability_score"
+            ]
+            <= evaluation["count_distribution"]["poisson"]["held_out"][
+                "mean_ranked_probability_score"
+            ]
+        ),
     }
 
     run_id = now().astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -863,20 +1087,53 @@ def train_starter_strikeout_baseline(
     date_splits_path = normalized_root / "date_splits.json"
     model_path = normalized_root / "baseline_model.json"
     evaluation_path = normalized_root / "evaluation.json"
+    ladder_probabilities_path = normalized_root / "ladder_probabilities.jsonl"
     _write_jsonl(dataset_path, rows_with_outcomes)
     _write_jsonl(outcomes_path, outcome_records)
     _write_json(date_splits_path, date_splits)
-    _write_json(model_path, _model_artifact(model))
+    _write_json(model_path, _model_artifact(model, dispersion_alpha=dispersion_alpha))
     _write_json(evaluation_path, evaluation)
+    split_by_date = {
+        split_date: split_name
+        for split_name, split_dates in date_splits.items()
+        for split_date in split_dates
+    }
+    _write_jsonl(
+        ladder_probabilities_path,
+        [
+            {
+                "training_row_id": row.training_row_id,
+                "official_date": row.official_date,
+                "game_pk": row.game_pk,
+                "pitcher_id": row.pitcher_id,
+                "pitcher_name": row.pitcher_name,
+                "split": split_by_date[row.official_date],
+                "actual_strikeouts": row.starter_strikeouts,
+                "naive_benchmark_mean": round(row.naive_benchmark_mean, 6),
+                "model_mean": round(_predict_mean(row, model), 6),
+                "count_distribution": {
+                    "name": COUNT_DISTRIBUTION_NAME,
+                    "dispersion_alpha": round(dispersion_alpha, 6),
+                },
+                "ladder_probabilities": starter_strikeout_ladder_probabilities(
+                    mean=_predict_mean(row, model),
+                    dispersion_alpha=dispersion_alpha,
+                ),
+            }
+            for row in rows_with_outcomes
+        ],
+    )
     return StarterStrikeoutBaselineTrainingResult(
         start_date=start_date,
         end_date=end_date,
         run_id=run_id,
         row_count=len(rows_with_outcomes),
         outcome_count=len(outcome_records),
+        dispersion_alpha=round(dispersion_alpha, 6),
         dataset_path=dataset_path,
         outcomes_path=outcomes_path,
         date_splits_path=date_splits_path,
         model_path=model_path,
         evaluation_path=evaluation_path,
+        ladder_probabilities_path=ladder_probabilities_path,
     )

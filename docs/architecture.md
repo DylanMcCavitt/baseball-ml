@@ -44,7 +44,7 @@ modeling work must honor.
 | Runtime defaults | `src/mlb_props_stack/config.py` | market name, edge threshold, Kelly fraction, bankroll cap, timezone |
 | Prop and projection contracts | `src/mlb_props_stack/markets.py` | `PropLine`, `PropProjection`, `EdgeDecision`, `PropSelectionKey`, `ProjectionInputRef` |
 | Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py`, `src/mlb_props_stack/ingest/odds_api.py`, `src/mlb_props_stack/ingest/statcast_features.py` | fetch schedule, `feed/live`, sportsbook event-odds payloads, and targeted Statcast CSV pulls; preserve raw snapshots; normalize `games`, `probable_starters`, `lineup_snapshots`, `event_game_mappings`, `prop_line_snapshots`, `pitch_level_base`, `pitcher_daily_features`, `lineup_daily_features`, and `game_context_features` |
-| Baseline modeling | `src/mlb_props_stack/modeling.py` | join AGE-146 feature tables into a date-keyed training dataset, derive official starter strikeout labels from same-day Statcast pulls, fit the first trainable baseline expectation model, and save explicit date splits plus evaluation artifacts |
+| Baseline modeling | `src/mlb_props_stack/modeling.py` | join AGE-146 feature tables into a date-keyed training dataset, derive official starter strikeout labels from same-day Statcast pulls, fit the first trainable baseline expectation model, fit a global strikeout-count distribution on top of that mean, and save explicit date splits plus evaluation artifacts |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, emit the best actionable side |
 | Evaluation guardrails | `src/mlb_props_stack/backtest.py` | walk-forward policy flags and the baseline honesty checklist |
@@ -192,6 +192,17 @@ The normalized model-training files are:
 - `evaluation.json`
   RMSE, MAE, and Spearman rank correlation for both the naive benchmark and the
   trainable baseline, plus coefficient-based feature importance
+
+AGE-148 extends those same baseline runs with:
+
+- a fitted global negative-binomial dispersion parameter stored inside
+  `baseline_model.json`
+- `ladder_probabilities.jsonl`
+  one row per starter-game with the predicted mean and half-strikeout ladder
+  over or under probabilities
+- held-out count-distribution metrics in `evaluation.json`
+  so the fitted distribution can be compared against a Poisson fallback using
+  the same mean predictions
 
 The lineup guardrail in AGE-146 is intentionally strict:
 

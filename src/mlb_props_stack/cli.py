@@ -111,11 +111,13 @@ def render_starter_strikeout_training_summary(
         f"run_id={result.run_id}",
         f"training_rows={result.row_count}",
         f"starter_outcomes={result.outcome_count}",
+        f"dispersion_alpha={result.dispersion_alpha:.6f}",
         f"dataset_path={result.dataset_path}",
         f"outcomes_path={result.outcomes_path}",
         f"date_splits_path={result.date_splits_path}",
         f"model_path={result.model_path}",
         f"evaluation_path={result.evaluation_path}",
+        f"ladder_probabilities_path={result.ladder_probabilities_path}",
     ]
     return "\n".join(lines)
 
