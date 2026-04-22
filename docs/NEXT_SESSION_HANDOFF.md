@@ -4,48 +4,47 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Active issue branch: `feat/offline-eval-report`
-- `main` already includes the merged `AGE-189` runtime-smoke coverage work
-- This branch contains the offline evaluation-report slice and is not merged yet
+- Active issue branch: `feat/improve-strikeout-baseline-window`
+- `main` already includes the merged offline evaluation-report work
+- This branch contains the starter-baseline improvement slice plus one fixed-window
+  artifact bundle under
+  `data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-21/`
+  and is not merged yet
 
 ## What Was Completed In This Slice
 
 - `src/mlb_props_stack/modeling.py`
-  - adds `evaluation_summary.json` and `evaluation_summary.md` to each
-    `train-starter-strikeout-baseline` run
-  - summarizes held-out benchmark-vs-model metrics, held-out calibration
-    metrics, top feature importance, and same-window previous-run deltas
-  - carries the new summary paths plus headline held-out metrics in
-    `StarterStrikeoutBaselineTrainingResult`
-- `src/mlb_props_stack/cli.py`
-  - prints the held-out model and benchmark RMSE / MAE directly after training
-  - prints the previous run ID when a prior run exists for the same date window
-  - prints the new evaluation summary artifact paths
+  - raises the ridge penalty from `1.0` to `10.0` for the early short-window
+    baseline
+  - changes feature selection so the mean model always trains on a dense
+    pitcher/workload core and only adds lineup-derived numeric fields when the
+    train window has enough populated, non-constant lineup data
+  - removes categorical dummy fields from the baseline vectorizer so short
+    windows do not overfit to team-side splits with thin history
 - `tests/test_modeling.py`
-  - verifies the summary JSON and markdown files are written
-  - verifies previous-run comparison is populated and marks improved held-out
-    RMSE / MAE deltas correctly
-- `tests/test_cli.py`
-  - locks the new training-summary output lines
+  - adds coverage for sparse optional lineup fields being excluded from the
+    trained schema when they are absent in the train window
 - `README.md`
-  - documents the new summary artifacts in the training section
+  - documents the more conservative short-window baseline behavior
 - `docs/modeling.md`
-  - documents that training now emits a readable offline report plus previous
-    run comparison
-- `docs/review_runtime_checks.md`
-  - adds `evaluation_summary.json` and `evaluation_summary.md` to the required
-    artifact inspection list for training work
+  - documents the dense-core plus conditional-lineup feature policy
+- `data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-21/run=20260422T202712Z/`
+  - saves the new fixed-window training artifacts, including
+    `evaluation.json`, `evaluation_summary.json`, `evaluation_summary.md`,
+    `calibration_summary.json`, `raw_vs_calibrated_probabilities.jsonl`, and
+    `ladder_probabilities.jsonl`
+- `data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-21/run=20260422T194922Z/evaluation.json`
+  - copied in so the new local run can compute same-window previous-run deltas
 
 ## Files Changed
 
 - `README.md`
 - `docs/NEXT_SESSION_HANDOFF.md`
 - `docs/modeling.md`
-- `docs/review_runtime_checks.md`
-- `src/mlb_props_stack/cli.py`
 - `src/mlb_props_stack/modeling.py`
-- `tests/test_cli.py`
 - `tests/test_modeling.py`
+- `data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-21/run=20260422T194922Z/evaluation.json`
+- `data/normalized/starter_strikeout_baseline/start=2026-04-18_end=2026-04-21/run=20260422T202712Z/`
 
 ## Verification
 
@@ -53,52 +52,64 @@ Commands run successfully on April 22, 2026:
 
 ```bash
 uv sync --extra dev
-uv run pytest tests/test_cli.py tests/test_modeling.py
+uv run pytest tests/test_modeling.py
+uv run pytest tests/test_runtime_smokes.py
 uv run pytest
-uv run python -m compileall src tests
 uv run python -m mlb_props_stack
+uv run python -m mlb_props_stack train-starter-strikeout-baseline \
+  --start-date 2026-04-18 \
+  --end-date 2026-04-21 \
+  --output-dir data
 ```
 
 Observed results:
 
-- focused pytest run:
-  - `12 passed`
-- full pytest run:
-  - `65 passed`
-- `uv run python -m compileall src tests`
-  - compiled all source and test modules successfully
+- `uv run pytest tests/test_modeling.py`
+  - `5 passed`
+- `uv run pytest tests/test_runtime_smokes.py`
+  - `3 passed`
+- `uv run pytest`
+  - `66 passed`
 - `uv run python -m mlb_props_stack`
   - printed the runtime summary successfully
+- fixed-window training run `20260422T202712Z`
+  - held-out model RMSE: `2.322574`
+  - held-out benchmark RMSE: `2.518693`
+  - held-out model MAE: `1.960881`
+  - held-out benchmark MAE: `2.047866`
+  - `held_out_status=beating_benchmark`
+  - previous run for the same window: `20260422T194922Z`
+- same-window deltas versus `20260422T194922Z`
+  - held-out RMSE delta: `-0.899748`
+  - held-out MAE delta: `-0.676436`
+  - held-out Spearman delta: `+0.244693`
 
 ## Recommended Next Issue
 
-- Improve the starter strikeout baseline against the naive benchmark using the
-  new readable offline report as the acceptance gate
+- Tighten short-window probability-calibration selection so the calibrator only
+  ships when it does not regress held-out log loss, or falls back to identity
+  when the fitted ladder calibration is directionally mixed
 
 Why this should go next:
 
-- the repo now produces interpretable offline summaries, so model iteration can
-  be judged quickly without hand-parsing `evaluation.json`
-- the latest saved held-out run still underperforms the naive benchmark, so the
-  clearest product value is improving the actual model rather than more report
-  plumbing
-
-Suggested acceptance criteria:
-
-- keep a fixed historical window for before / after comparison
-- record held-out RMSE and MAE for both benchmark and model in the PR
-- do not call the change an improvement unless held-out metrics actually beat
-  the prior run
+- the mean model now beats both the naive benchmark and the previous run on the
+  fixed historical window, so the clearest remaining modeling regression is in
+  calibration selection rather than the mean baseline itself
+- the new run improved held-out Brier score and expected calibration error, but
+  held-out calibrated log loss worsened from `0.286245` to `0.346381`
 
 ## Constraints And Open Questions
 
-- The new summaries improve readability, but the current training loop still
-  fetches same-day Statcast outcome rows when labels are rebuilt
-- If fast offline retraining becomes the next real pain point, the follow-up
-  slice should cache or reuse historical outcome labels so local eval does not
-  depend on live network access each time
-- Keep future model-improvement reviews honest:
-  - compare against the naive benchmark
-  - compare against the previous run on the same date window
-  - preserve the timestamp-valid feature rules already encoded in the training
-    data
+- The fixed-window mean model improvement is real on RMSE and MAE, but do not
+  oversell the calibration layer yet:
+  - `calibration_summary.json` and `evaluation_summary.md` show better held-out
+    Brier score and ECE
+  - the same artifacts also show worse held-out calibrated log loss
+- Optional lineup features can still disappear from the trained schema when the
+  train window has missing or late lineup data. Check
+  `baseline_model.json -> encoded_feature_names` before interpreting the
+  coefficient table.
+- Training still rebuilds same-day Statcast outcome labels by refetching
+  historical outcome rows during each run. If repeated offline retraining
+  becomes painful again, caching or reusing those labels is still an open
+  follow-up.

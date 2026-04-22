@@ -276,6 +276,14 @@ The training CLI summary also now prints the held-out RMSE and MAE for both the
 benchmark and the model, plus the previous run ID when the same date window has
 already been trained before.
 
+The current baseline fit is intentionally conservative on short windows:
+
+- it always trains on a dense core of pitcher and workload features
+- it only adds lineup-derived numeric fields when those columns are populated
+  and variable across the training dates
+- it drops categorical dummy fields from the early baseline so sparse,
+  short-window runs do not overfit to team-side splits alone
+
 ## Edge Candidate Build
 
 `AGE-150` turns saved calibrated ladder probabilities plus real line snapshots

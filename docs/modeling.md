@@ -220,7 +220,9 @@ Current AGE-147 behavior:
 - writes a naive benchmark based on
   `pitcher_k_rate * expected_leash_batters_faced`
 - trains a deterministic ridge-style linear regressor with only pregame-valid
-  feature fields
+  feature fields, anchored on a dense pitcher/workload core and only adding
+  lineup numeric fields when the train window actually has enough populated,
+  non-constant lineup data to support them
 - reports RMSE, MAE, and Spearman rank correlation plus coefficient-based
   feature importance in `evaluation.json`
 - writes `evaluation_summary.json` and `evaluation_summary.md` so each run has

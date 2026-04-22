@@ -23,7 +23,7 @@ COUNT_DISTRIBUTION_NAME = "negative_binomial_global_dispersion_v1"
 COUNT_DISTRIBUTION_FIT_METHOD = "method_of_moments"
 PROBABILITY_CALIBRATOR_NAME = "isotonic_ladder_probability_calibrator_v1"
 PROBABILITY_CALIBRATOR_SOURCE = "out_of_fold_ladder_events"
-RIDGE_ALPHA = 1.0
+RIDGE_ALPHA = 10.0
 OUTCOME_QUERY_PADDING_DAYS = 1
 DISTRIBUTION_TAIL_TOLERANCE = 1e-9
 MIN_DISTRIBUTION_MEAN = 1e-6
@@ -32,43 +32,29 @@ MIN_PROBABILITY = 1e-12
 MAX_DISTRIBUTION_SUPPORT = 250
 OOF_MIN_TRAIN_DATES = 2
 RELIABILITY_BIN_COUNT = 10
-BASE_NUMERIC_FEATURES = (
+OPTIONAL_FEATURE_MIN_COVERAGE = 0.75
+MIN_FEATURE_VARIANCE = 1e-9
+CORE_NUMERIC_FEATURES = (
     "pitch_sample_size",
     "plate_appearance_sample_size",
     "pitcher_k_rate",
     "swinging_strike_rate",
     "csw_rate",
-    "average_release_speed",
-    "release_speed_delta_vs_baseline",
-    "average_release_extension",
-    "release_extension_delta_vs_baseline",
     "recent_batters_faced",
     "recent_pitch_count",
     "rest_days",
-    "last_start_pitch_count",
     "last_start_batters_faced",
+    "expected_leash_batters_faced",
+    "lineup_is_confirmed",
+)
+OPTIONAL_NUMERIC_FEATURES = (
     "projected_lineup_k_rate",
     "projected_lineup_k_rate_vs_pitcher_hand",
     "projected_lineup_chase_rate",
     "projected_lineup_contact_rate",
-    "lineup_size",
-    "available_batter_feature_count",
-    "lineup_continuity_count",
     "lineup_continuity_ratio",
-    "expected_leash_pitch_count",
-    "expected_leash_batters_faced",
-    "lineup_is_confirmed",
 )
-CATEGORICAL_FEATURES = (
-    "pitcher_feature_status",
-    "lineup_status",
-    "pitcher_hand",
-    "home_away",
-    "day_night",
-    "double_header",
-    "park_factor_status",
-    "weather_status",
-)
+CATEGORICAL_FEATURES: tuple[str, ...] = ()
 PROHIBITED_MODEL_FEATURE_FIELDS = frozenset(
     {
         "starter_strikeouts",
@@ -815,6 +801,22 @@ def _feature_categorical_value(row: StarterStrikeoutTrainingRow, field_name: str
     return str(value)
 
 
+def _selected_numeric_features(train_rows: list[StarterStrikeoutTrainingRow]) -> tuple[str, ...]:
+    selected_features = list(CORE_NUMERIC_FEATURES)
+    for feature_name in OPTIONAL_NUMERIC_FEATURES:
+        values = [
+            value
+            for row in train_rows
+            if (value := _feature_numeric_value(row, feature_name)) is not None
+        ]
+        if len(values) / len(train_rows) < OPTIONAL_FEATURE_MIN_COVERAGE:
+            continue
+        if max(values) - min(values) <= MIN_FEATURE_VARIANCE:
+            continue
+        selected_features.append(feature_name)
+    return tuple(selected_features)
+
+
 def _build_vectorizer(train_rows: list[StarterStrikeoutTrainingRow]) -> _FeatureVectorizer:
     pitch_type_features = tuple(
         f"pitch_type_usage:{pitch_type}"
@@ -827,7 +829,7 @@ def _build_vectorizer(train_rows: list[StarterStrikeoutTrainingRow]) -> _Feature
             }
         )
     )
-    numeric_features = tuple((*BASE_NUMERIC_FEATURES, *pitch_type_features))
+    numeric_features = tuple((*_selected_numeric_features(train_rows), *pitch_type_features))
     numeric_means: dict[str, float] = {}
     numeric_stds: dict[str, float] = {}
     for feature_name in numeric_features:
