@@ -4,6 +4,8 @@ from pathlib import Path
 
 from mlb_props_stack.dashboard.lib.data import (
     DashboardSettings,
+    get_feature_importance,
+    get_pmf,
     list_available_board_dates,
     load_board_dataframe,
     ticker_context,
@@ -16,6 +18,11 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
         "".join(f"{json.dumps(row, sort_keys=True)}\n" for row in rows),
         encoding="utf-8",
     )
+
+
+def _write_json(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
 
 
 def test_board_can_replay_historical_backtest_rows(tmp_path: Path) -> None:
@@ -83,3 +90,92 @@ def test_board_can_replay_historical_backtest_rows(tmp_path: Path) -> None:
 
     ticker = ticker_context(board, settings=DashboardSettings())
     assert ticker["live_label"] == "HIST REPLAY"
+
+
+def test_pitcher_drilldown_uses_replayed_model_run(tmp_path: Path) -> None:
+    older_run = (
+        tmp_path
+        / "normalized"
+        / "starter_strikeout_baseline"
+        / "start=2026-04-18_end=2026-04-22"
+        / "run=20260422T180000Z"
+    )
+    newer_run = (
+        tmp_path
+        / "normalized"
+        / "starter_strikeout_baseline"
+        / "start=2026-04-18_end=2026-04-22"
+        / "run=20260422T190000Z"
+    )
+
+    _write_jsonl(
+        older_run / "ladder_probabilities.jsonl",
+        [
+            {
+                "official_date": "2026-04-22",
+                "pitcher_id": 700001,
+                "model_mean": 6.0,
+                "count_distribution": {"dispersion_alpha": 0.2},
+            }
+        ],
+    )
+    _write_json(
+        older_run / "evaluation_summary.json",
+        {
+            "run_id": "20260422T180000Z",
+            "top_feature_importance": [{"name": "older_feature", "importance": 0.9}],
+        },
+    )
+    _write_jsonl(
+        older_run / "training_dataset.jsonl",
+        [
+            {
+                "official_date": "2026-04-22",
+                "training_row_id": "older-row",
+                "older_feature": 1.5,
+            }
+        ],
+    )
+
+    _write_jsonl(
+        newer_run / "ladder_probabilities.jsonl",
+        [
+            {
+                "official_date": "2026-04-22",
+                "pitcher_id": 700001,
+                "model_mean": 9.0,
+                "count_distribution": {"dispersion_alpha": 0.6},
+            }
+        ],
+    )
+    _write_json(
+        newer_run / "evaluation_summary.json",
+        {
+            "run_id": "20260422T190000Z",
+            "top_feature_importance": [{"name": "newer_feature", "importance": 1.2}],
+        },
+    )
+    _write_jsonl(
+        newer_run / "training_dataset.jsonl",
+        [
+            {
+                "official_date": "2026-04-22",
+                "training_row_id": "newer-row",
+                "newer_feature": 2.5,
+            }
+        ],
+    )
+
+    _, ladder_row = get_pmf(
+        tmp_path,
+        official_date="2026-04-22",
+        pitcher_mlb_id=700001,
+        line=5.5,
+        model_run_id="20260422T180000Z",
+    )
+    assert ladder_row is not None
+    assert ladder_row["model_mean"] == 6.0
+
+    importance = get_feature_importance(tmp_path, run_id="20260422T180000Z")
+    assert list(importance["name"]) == ["older_feature"]
+    assert list(importance["last_value"]) == [1.5]

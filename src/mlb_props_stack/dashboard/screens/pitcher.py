@@ -159,12 +159,16 @@ def render_pitcher_screen(
         official_date=str(row["official_date"]),
         pitcher_mlb_id=int(row["pitcher_mlb_id"]) if pd.notna(row["pitcher_mlb_id"]) else None,
         line=float(row["line"]),
+        model_run_id=str(row["model_run_id"]) if row.get("model_run_id") else None,
     )
     recent_form = get_recent_form(
         output_root,
         pitcher_mlb_id=int(row["pitcher_mlb_id"]) if pd.notna(row["pitcher_mlb_id"]) else None,
     )
-    importance = get_feature_importance(output_root)
+    importance = get_feature_importance(
+        output_root,
+        run_id=str(row["model_run_id"]) if row.get("model_run_id") else None,
+    )
 
     top_columns = st.columns([2, 1], gap="medium")
     with top_columns[0]:

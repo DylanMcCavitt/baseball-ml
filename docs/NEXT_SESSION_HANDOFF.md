@@ -4,7 +4,7 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Active issue branch: `feat/dashboard-ui-strike-ops`
+- Last completed issue branch: `feat/dashboard-ui-strike-ops`
 - This slice delivers the first real Strike Ops dashboard workbench and adds a
   historical replay path so model iteration can happen off saved artifacts
 - Current status: dashboard scaffolding is in place, but the local checkout

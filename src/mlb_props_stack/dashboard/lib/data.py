@@ -748,13 +748,24 @@ def _find_pitcher_ladder_row(
     *,
     official_date: str,
     pitcher_mlb_id: int | None,
+    model_run_id: str | None = None,
 ) -> tuple[dict[str, Any] | None, Path | None]:
     if pitcher_mlb_id is None:
         return None, None
-    for run_dir in reversed(_latest_run_dirs(
-        output_root / "normalized" / "starter_strikeout_baseline",
-        "ladder_probabilities.jsonl",
-    )):
+    run_dirs: list[Path]
+    if model_run_id is not None:
+        resolved_run_dir = latest_model_run_dir(output_root, run_id=model_run_id)
+        run_dirs = [resolved_run_dir] if resolved_run_dir is not None else []
+    else:
+        run_dirs = list(
+            reversed(
+                _latest_run_dirs(
+                    output_root / "normalized" / "starter_strikeout_baseline",
+                    "ladder_probabilities.jsonl",
+                )
+            )
+        )
+    for run_dir in run_dirs:
         for row in _load_ladder_rows(output_root, run_dir):
             if (
                 str(row.get("official_date")) == official_date
@@ -788,12 +799,14 @@ def get_pmf(
     official_date: str,
     pitcher_mlb_id: int | None,
     line: float,
+    model_run_id: str | None = None,
 ) -> tuple[list[dict[str, float | str]], dict[str, Any] | None]:
     """Return discrete PMF rows for the selected pitcher/date."""
     ladder_row, _ = _find_pitcher_ladder_row(
         output_root,
         official_date=official_date,
         pitcher_mlb_id=pitcher_mlb_id,
+        model_run_id=model_run_id,
     )
     if ladder_row is None:
         return [], None
@@ -1023,29 +1036,37 @@ def get_calibration(output_root: Path) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _latest_feature_values(output_root: Path) -> dict[str, Any]:
-    rows = _latest_run_dirs(
-        output_root / "normalized" / "starter_strikeout_baseline",
-        "training_dataset.jsonl",
-    )
-    if not rows:
+def _feature_values_for_run(
+    output_root: Path,
+    *,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    run_dir = latest_model_run_dir(output_root, run_id=run_id)
+    if run_dir is None:
         return {}
-    dataset = _load_jsonl(str(rows[-1] / "training_dataset.jsonl"))
+    dataset_path = run_dir / "training_dataset.jsonl"
+    if not dataset_path.exists():
+        return {}
+    dataset = _load_jsonl(str(dataset_path))
     if not dataset:
         return {}
     latest_row = max(dataset, key=lambda row: (str(row.get("official_date")), str(row.get("training_row_id"))))
     return latest_row
 
 
-def get_feature_importance(output_root: Path) -> pd.DataFrame:
+def get_feature_importance(
+    output_root: Path,
+    *,
+    run_id: str | None = None,
+) -> pd.DataFrame:
     """Return feature-importance rows for the features screen."""
-    summary = load_latest_model_summary(output_root)
-    run_dir = latest_model_run_dir(output_root)
+    summary = load_latest_model_summary(output_root, run_id=run_id)
+    run_dir = latest_model_run_dir(output_root, run_id=run_id)
     if summary is None or run_dir is None:
         return pd.DataFrame(columns=["name", "importance", "direction", "last_value"])
     evaluation = _load_json(str(run_dir / "evaluation.json")) if (run_dir / "evaluation.json").exists() else {}
     feature_rows = evaluation.get("feature_importance") or summary.get("top_feature_importance") or []
-    latest_values = _latest_feature_values(output_root)
+    latest_values = _feature_values_for_run(output_root, run_id=run_id)
     normalized: list[dict[str, Any]] = []
     for row in feature_rows:
         feature_name = str(row.get("feature") or row.get("name") or "")
