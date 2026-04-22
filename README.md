@@ -142,6 +142,12 @@ Fetch current pitcher strikeout lines for one official date:
 ODDS_API_KEY=YOUR_KEY uv run python -m mlb_props_stack ingest-odds-api-lines --date 2026-04-21
 ```
 
+If `ODDS_API_KEY` is not already exported in the shell, the CLI will also try to
+load a repo-local `.env` without overriding existing environment variables. In a
+git worktree, it first checks the current worktree root and then falls back to a
+sibling checkout from the same repo, which lets one ignored local `.env` in the
+canonical checkout keep working across fresh issue worktrees.
+
 By default that writes:
 
 - raw events snapshots under `data/raw/the_odds_api/date=YYYY-MM-DD/events/`

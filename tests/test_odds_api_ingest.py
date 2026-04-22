@@ -10,6 +10,7 @@ from mlb_props_stack.ingest import (
     ingest_odds_api_pitcher_lines_for_date,
 )
 from mlb_props_stack.ingest.odds_api import (
+    OddsAPIClient,
     normalize_event_odds_payload,
     normalize_events_payload,
 )
@@ -186,6 +187,18 @@ class StubOddsClient:
         if "/events/" in url and "/odds?" in url:
             return sample_event_odds_payload()
         return sample_events_payload()
+
+
+def test_odds_api_client_loads_repo_env_when_shell_env_is_missing(monkeypatch) -> None:
+    monkeypatch.delenv("ODDS_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "mlb_props_stack.ingest.odds_api.load_repo_env",
+        lambda: monkeypatch.setenv("ODDS_API_KEY", "loaded-from-dotenv"),
+    )
+
+    client = OddsAPIClient()
+
+    assert client.api_key == "loaded-from-dotenv"
 
 
 def test_ingest_odds_api_pitcher_lines_for_date_writes_raw_and_normalized_outputs(

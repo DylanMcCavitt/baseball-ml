@@ -12,6 +12,7 @@ import unicodedata
 from urllib.parse import urlencode
 from urllib.request import urlopen
 
+from ..env import load_repo_env
 from .mlb_stats_api import (
     GameRecord,
     ProbableStarterRecord,
@@ -114,6 +115,7 @@ class OddsAPIClient:
         api_key: str | None = None,
         timeout_seconds: float = 30.0,
     ) -> None:
+        load_repo_env()
         resolved_api_key = (api_key or os.environ.get("ODDS_API_KEY") or "").strip()
         if not resolved_api_key:
             raise ValueError(
