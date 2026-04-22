@@ -179,6 +179,14 @@ class StarterStrikeoutBaselineTrainingResult:
     probability_calibrator_path: Path
     raw_vs_calibrated_path: Path
     calibration_summary_path: Path
+    evaluation_summary_path: Path
+    evaluation_summary_markdown_path: Path
+    held_out_status: str
+    held_out_model_rmse: float | None
+    held_out_benchmark_rmse: float | None
+    held_out_model_mae: float | None
+    held_out_benchmark_mae: float | None
+    previous_run_id: str | None
 
 
 @dataclass(frozen=True)
@@ -1598,6 +1606,413 @@ def _feature_importance(model: _LinearModel) -> list[dict[str, float | str]]:
     return sorted(importances, key=lambda item: (-float(item["absolute_importance"]), str(item["feature"])))
 
 
+def _metric_value(payload: dict[str, Any], *path: str) -> float | None:
+    current: Any = payload
+    for key in path:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+        if current is None:
+            return None
+    if isinstance(current, bool) or not isinstance(current, (int, float)):
+        return None
+    return round(float(current), 6)
+
+
+def _comparison_entry(
+    *,
+    current: float | None,
+    previous: float | None,
+    lower_is_better: bool,
+) -> dict[str, Any] | None:
+    if current is None or previous is None:
+        return None
+    delta = round(current - previous, 6)
+    if abs(delta) < 1e-9:
+        status = "unchanged"
+    elif (delta < 0.0 and lower_is_better) or (delta > 0.0 and not lower_is_better):
+        status = "improved"
+    else:
+        status = "worsened"
+    return {
+        "current": current,
+        "previous": previous,
+        "delta": delta,
+        "status": status,
+    }
+
+
+def _held_out_status(beats_benchmark: dict[str, bool]) -> str:
+    if all(bool(value) for value in beats_benchmark.values()):
+        return "beating_benchmark"
+    if any(bool(value) for value in beats_benchmark.values()):
+        return "mixed_vs_benchmark"
+    return "underperforming_benchmark"
+
+
+def _latest_previous_training_run(
+    output_root: Path,
+    *,
+    start_date: date,
+    end_date: date,
+) -> Path | None:
+    run_root = (
+        output_root
+        / "normalized"
+        / "starter_strikeout_baseline"
+        / f"start={start_date.isoformat()}_end={end_date.isoformat()}"
+    )
+    if not run_root.exists():
+        return None
+    run_dirs = sorted(
+        path
+        for path in run_root.glob("run=*")
+        if path.is_dir() and path.joinpath("evaluation.json").exists()
+    )
+    if not run_dirs:
+        return None
+    return run_dirs[-1]
+
+
+def _evaluation_summary_payload(
+    *,
+    start_date: date,
+    end_date: date,
+    run_id: str,
+    evaluation: dict[str, Any],
+    evaluation_path: Path,
+    previous_run_dir: Path | None,
+) -> dict[str, Any]:
+    held_out_status = _held_out_status(evaluation["held_out_beats_benchmark"])
+    held_out_probability_metrics = (
+        evaluation["probability_calibration"]["honest_held_out"]["held_out"]
+    )
+    summary: dict[str, Any] = {
+        "summary_version": "starter_strikeout_baseline_evaluation_v1",
+        "model_version": evaluation["model_version"],
+        "benchmark_name": evaluation["benchmark_name"],
+        "run_id": run_id,
+        "date_window": {
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        },
+        "evaluation_path": str(evaluation_path),
+        "row_counts": evaluation["row_counts"],
+        "date_splits": evaluation["date_splits"],
+        "held_out_performance": {
+            "status": held_out_status,
+            "benchmark": evaluation["benchmark"]["held_out"],
+            "model": evaluation["model"]["held_out"],
+            "beats_benchmark": evaluation["held_out_beats_benchmark"],
+        },
+        "held_out_probability_calibration": {
+            "raw": {
+                "mean_brier_score": _metric_value(
+                    held_out_probability_metrics,
+                    "raw",
+                    "mean_brier_score",
+                ),
+                "mean_log_loss": _metric_value(
+                    held_out_probability_metrics,
+                    "raw",
+                    "mean_log_loss",
+                ),
+                "expected_calibration_error": _metric_value(
+                    held_out_probability_metrics,
+                    "raw",
+                    "expected_calibration_error",
+                ),
+            },
+            "calibrated": {
+                "mean_brier_score": _metric_value(
+                    held_out_probability_metrics,
+                    "calibrated",
+                    "mean_brier_score",
+                ),
+                "mean_log_loss": _metric_value(
+                    held_out_probability_metrics,
+                    "calibrated",
+                    "mean_log_loss",
+                ),
+                "expected_calibration_error": _metric_value(
+                    held_out_probability_metrics,
+                    "calibrated",
+                    "expected_calibration_error",
+                ),
+            },
+            "improves_raw": evaluation["probability_calibration"]["held_out_improves_raw"],
+        },
+        "held_out_count_distribution": {
+            "dispersion_alpha": _metric_value(
+                evaluation,
+                "count_distribution",
+                "dispersion_alpha",
+            ),
+            "poisson": evaluation["count_distribution"]["poisson"]["held_out"],
+            "negative_binomial": evaluation["count_distribution"]["negative_binomial"][
+                "held_out"
+            ],
+            "beats_poisson": evaluation["count_distribution"]["held_out_beats_poisson"],
+        },
+        "top_feature_importance": evaluation["feature_importance"][:10],
+        "previous_run_comparison": None,
+    }
+
+    if previous_run_dir is None:
+        return summary
+
+    previous_evaluation_path = previous_run_dir / "evaluation.json"
+    previous_evaluation = _load_json(previous_evaluation_path)
+    summary["previous_run_comparison"] = {
+        "previous_run_id": _path_run_id(previous_run_dir),
+        "evaluation_path": str(previous_evaluation_path),
+        "held_out_model": {
+            "rmse": _comparison_entry(
+                current=_metric_value(evaluation, "model", "held_out", "rmse"),
+                previous=_metric_value(
+                    previous_evaluation,
+                    "model",
+                    "held_out",
+                    "rmse",
+                ),
+                lower_is_better=True,
+            ),
+            "mae": _comparison_entry(
+                current=_metric_value(evaluation, "model", "held_out", "mae"),
+                previous=_metric_value(
+                    previous_evaluation,
+                    "model",
+                    "held_out",
+                    "mae",
+                ),
+                lower_is_better=True,
+            ),
+            "spearman_rank_correlation": _comparison_entry(
+                current=_metric_value(
+                    evaluation,
+                    "model",
+                    "held_out",
+                    "spearman_rank_correlation",
+                ),
+                previous=_metric_value(
+                    previous_evaluation,
+                    "model",
+                    "held_out",
+                    "spearman_rank_correlation",
+                ),
+                lower_is_better=False,
+            ),
+        },
+        "held_out_probability_calibration": {
+            "mean_brier_score": _comparison_entry(
+                current=_metric_value(
+                    held_out_probability_metrics,
+                    "calibrated",
+                    "mean_brier_score",
+                ),
+                previous=_metric_value(
+                    previous_evaluation,
+                    "probability_calibration",
+                    "honest_held_out",
+                    "held_out",
+                    "calibrated",
+                    "mean_brier_score",
+                ),
+                lower_is_better=True,
+            ),
+            "mean_log_loss": _comparison_entry(
+                current=_metric_value(
+                    held_out_probability_metrics,
+                    "calibrated",
+                    "mean_log_loss",
+                ),
+                previous=_metric_value(
+                    previous_evaluation,
+                    "probability_calibration",
+                    "honest_held_out",
+                    "held_out",
+                    "calibrated",
+                    "mean_log_loss",
+                ),
+                lower_is_better=True,
+            ),
+            "expected_calibration_error": _comparison_entry(
+                current=_metric_value(
+                    held_out_probability_metrics,
+                    "calibrated",
+                    "expected_calibration_error",
+                ),
+                previous=_metric_value(
+                    previous_evaluation,
+                    "probability_calibration",
+                    "honest_held_out",
+                    "held_out",
+                    "calibrated",
+                    "expected_calibration_error",
+                ),
+                lower_is_better=True,
+            ),
+        },
+    }
+    return summary
+
+
+def _render_evaluation_summary_markdown(summary: dict[str, Any]) -> str:
+    def _format_value(value: Any) -> str:
+        if value is None:
+            return "n/a"
+        if isinstance(value, bool):
+            return "yes" if value else "no"
+        if isinstance(value, float):
+            return f"{value:.6f}"
+        return str(value)
+
+    row_counts = summary["row_counts"]
+    held_out = summary["held_out_performance"]
+    calibration = summary["held_out_probability_calibration"]
+    count_distribution = summary["held_out_count_distribution"]
+
+    lines = [
+        "# Starter Strikeout Baseline Evaluation Summary",
+        "",
+        f"- Run ID: `{summary['run_id']}`",
+        (
+            "- Date window: "
+            f"`{summary['date_window']['start_date']}` -> `{summary['date_window']['end_date']}`"
+        ),
+        (
+            "- Row counts: "
+            f"train={row_counts['train']}, validation={row_counts['validation']}, "
+            f"test={row_counts['test']}, held_out={row_counts['held_out']}"
+        ),
+        f"- Held-out status: `{held_out['status']}`",
+        "",
+        "## Held-Out Performance",
+        "",
+        "| Metric | Benchmark | Model | Model Beats Benchmark |",
+        "| --- | ---: | ---: | --- |",
+        (
+            f"| RMSE | {_format_value(held_out['benchmark']['rmse'])} | "
+            f"{_format_value(held_out['model']['rmse'])} | "
+            f"{_format_value(held_out['beats_benchmark']['rmse'])} |"
+        ),
+        (
+            f"| MAE | {_format_value(held_out['benchmark']['mae'])} | "
+            f"{_format_value(held_out['model']['mae'])} | "
+            f"{_format_value(held_out['beats_benchmark']['mae'])} |"
+        ),
+        (
+            "| Spearman | "
+            f"{_format_value(held_out['benchmark']['spearman_rank_correlation'])} | "
+            f"{_format_value(held_out['model']['spearman_rank_correlation'])} | n/a |"
+        ),
+        "",
+        "## Held-Out Probability Calibration",
+        "",
+        "| Metric | Raw | Calibrated | Improved |",
+        "| --- | ---: | ---: | --- |",
+        (
+            f"| Mean Brier Score | {_format_value(calibration['raw']['mean_brier_score'])} | "
+            f"{_format_value(calibration['calibrated']['mean_brier_score'])} | "
+            f"{_format_value(calibration['improves_raw']['mean_brier_score'])} |"
+        ),
+        (
+            f"| Mean Log Loss | {_format_value(calibration['raw']['mean_log_loss'])} | "
+            f"{_format_value(calibration['calibrated']['mean_log_loss'])} | "
+            f"{_format_value(calibration['improves_raw']['mean_log_loss'])} |"
+        ),
+        (
+            "| Expected Calibration Error | "
+            f"{_format_value(calibration['raw']['expected_calibration_error'])} | "
+            f"{_format_value(calibration['calibrated']['expected_calibration_error'])} | "
+            f"{_format_value(calibration['improves_raw']['expected_calibration_error'])} |"
+        ),
+        "",
+        "## Held-Out Count Distribution",
+        "",
+        (
+            f"- Dispersion alpha: "
+            f"`{_format_value(count_distribution['dispersion_alpha'])}`"
+        ),
+        (
+            "- Negative binomial beats Poisson on held-out metrics: "
+            f"`{count_distribution['beats_poisson']}`"
+        ),
+        "",
+        "## Top Feature Importance",
+        "",
+        "| Feature | Coefficient | Absolute Importance |",
+        "| --- | ---: | ---: |",
+    ]
+    for feature in summary["top_feature_importance"]:
+        lines.append(
+            f"| `{feature['feature']}` | {_format_value(feature['coefficient'])} | "
+            f"{_format_value(feature['absolute_importance'])} |"
+        )
+
+    lines.extend(["", "## Comparison To Previous Run", ""])
+    previous_run = summary.get("previous_run_comparison")
+    if previous_run is None:
+        lines.append("No previous run was found for this exact date window.")
+        return "\n".join(lines) + "\n"
+
+    lines.extend(
+        [
+            f"- Previous run ID: `{previous_run['previous_run_id']}`",
+            f"- Previous evaluation: `{previous_run['evaluation_path']}`",
+            "",
+            "### Held-Out Model Metric Deltas",
+            "",
+            "| Metric | Previous | Current | Delta | Status |",
+            "| --- | ---: | ---: | ---: | --- |",
+        ]
+    )
+    for label, item in (
+        ("RMSE", previous_run["held_out_model"]["rmse"]),
+        ("MAE", previous_run["held_out_model"]["mae"]),
+        ("Spearman", previous_run["held_out_model"]["spearman_rank_correlation"]),
+    ):
+        if item is None:
+            lines.append(f"| {label} | n/a | n/a | n/a | n/a |")
+            continue
+        lines.append(
+            f"| {label} | {_format_value(item['previous'])} | {_format_value(item['current'])} | "
+            f"{_format_value(item['delta'])} | {item['status']} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "### Held-Out Calibrated Probability Deltas",
+            "",
+            "| Metric | Previous | Current | Delta | Status |",
+            "| --- | ---: | ---: | ---: | --- |",
+        ]
+    )
+    for label, item in (
+        (
+            "Mean Brier Score",
+            previous_run["held_out_probability_calibration"]["mean_brier_score"],
+        ),
+        (
+            "Mean Log Loss",
+            previous_run["held_out_probability_calibration"]["mean_log_loss"],
+        ),
+        (
+            "Expected Calibration Error",
+            previous_run["held_out_probability_calibration"]["expected_calibration_error"],
+        ),
+    ):
+        if item is None:
+            lines.append(f"| {label} | n/a | n/a | n/a | n/a |")
+            continue
+        lines.append(
+            f"| {label} | {_format_value(item['previous'])} | {_format_value(item['current'])} | "
+            f"{_format_value(item['delta'])} | {item['status']} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def _model_artifact(
     model: _LinearModel,
     *,
@@ -2087,6 +2502,21 @@ def train_starter_strikeout_baseline(
     probability_calibrator_path = normalized_root / "probability_calibrator.json"
     raw_vs_calibrated_path = normalized_root / "raw_vs_calibrated_probabilities.jsonl"
     calibration_summary_path = normalized_root / "calibration_summary.json"
+    evaluation_summary_path = normalized_root / "evaluation_summary.json"
+    evaluation_summary_markdown_path = normalized_root / "evaluation_summary.md"
+    previous_run_dir = _latest_previous_training_run(
+        output_root,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    evaluation_summary = _evaluation_summary_payload(
+        start_date=start_date,
+        end_date=end_date,
+        run_id=run_id,
+        evaluation=evaluation,
+        evaluation_path=evaluation_path,
+        previous_run_dir=previous_run_dir,
+    )
     _write_jsonl(dataset_path, rows_with_outcomes)
     _write_jsonl(outcomes_path, outcome_records)
     _write_json(date_splits_path, date_splits)
@@ -2101,6 +2531,11 @@ def train_starter_strikeout_baseline(
     _write_json(probability_calibrator_path, production_calibrator)
     _write_json(evaluation_path, evaluation)
     _write_json(calibration_summary_path, evaluation["probability_calibration"])
+    _write_json(evaluation_summary_path, evaluation_summary)
+    _write_text(
+        evaluation_summary_markdown_path,
+        _render_evaluation_summary_markdown(evaluation_summary),
+    )
     _write_jsonl(raw_vs_calibrated_path, honest_held_out_probability_rows)
     _write_jsonl(
         ladder_probabilities_path,
@@ -2128,4 +2563,16 @@ def train_starter_strikeout_baseline(
         probability_calibrator_path=probability_calibrator_path,
         raw_vs_calibrated_path=raw_vs_calibrated_path,
         calibration_summary_path=calibration_summary_path,
+        evaluation_summary_path=evaluation_summary_path,
+        evaluation_summary_markdown_path=evaluation_summary_markdown_path,
+        held_out_status=str(evaluation_summary["held_out_performance"]["status"]),
+        held_out_model_rmse=_metric_value(evaluation, "model", "held_out", "rmse"),
+        held_out_benchmark_rmse=_metric_value(evaluation, "benchmark", "held_out", "rmse"),
+        held_out_model_mae=_metric_value(evaluation, "model", "held_out", "mae"),
+        held_out_benchmark_mae=_metric_value(evaluation, "benchmark", "held_out", "mae"),
+        previous_run_id=(
+            None
+            if evaluation_summary["previous_run_comparison"] is None
+            else str(evaluation_summary["previous_run_comparison"]["previous_run_id"])
+        ),
     )

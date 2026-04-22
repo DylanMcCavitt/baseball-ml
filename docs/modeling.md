@@ -223,6 +223,9 @@ Current AGE-147 behavior:
   feature fields
 - reports RMSE, MAE, and Spearman rank correlation plus coefficient-based
   feature importance in `evaluation.json`
+- writes `evaluation_summary.json` and `evaluation_summary.md` so each run has
+  a readable held-out benchmark comparison, calibration snapshot, top-feature
+  table, and previous-run delta on the same date window when available
 
 AGE-148 adds the first explicit count-distribution layer on top of that mean:
 
@@ -247,6 +250,8 @@ AGE-149 adds explicit probability calibration on top of those raw ladders:
   expected calibration error for raw vs calibrated probabilities
 - `ladder_probabilities.jsonl` now carries both the raw ladder and a calibrated
   ladder so later pricing work can consume the calibrated side directly
+- the training CLI now surfaces held-out RMSE / MAE for the model and the naive
+  benchmark directly, instead of forcing every review to open raw JSON first
 
 AGE-150 turns those saved ladders into replayable pricing rows:
 
