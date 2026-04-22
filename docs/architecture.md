@@ -48,7 +48,7 @@ modeling work must honor.
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, devig, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
 | Evaluation guardrails | `src/mlb_props_stack/backtest.py` | cutoff-safe snapshot selection, walk-forward backtest joins, join-audit artifacts, chart-ready reporting tables, and the baseline honesty checklist |
-| Reserved future seams | `src/mlb_props_stack/tracking.py`, `src/mlb_props_stack/dashboard/app.py` | tracking and dashboard entrypoints only, not full implementations yet |
+| Tracking and dashboard seams | `src/mlb_props_stack/tracking.py`, `src/mlb_props_stack/dashboard/app.py` | reserved tracking config plus the first Streamlit slate-review page and its future expansion point |
 
 The most important current contract boundary is the join between
 `PropLine.selection_key` and `PropProjection.selection_key`. Future adapters can
@@ -89,10 +89,14 @@ In code terms, that flow should eventually materialize as:
    projection to the market
 5. `build_edge_candidates_for_date()` writes auditable edge rows keyed by line
    snapshot and model version
-6. `build_walk_forward_backtest()` selects the latest exact-line snapshot at or
+6. `generate_starter_strikeout_inference_for_date()` scores one target-date
+   slate from the latest historical baseline run that ends before that date
+7. `build_daily_candidate_workflow()` writes ranked `daily_candidates` plus
+   cumulative `paper_results` for recent paper tracking
+8. `build_walk_forward_backtest()` selects the latest exact-line snapshot at or
    before the configured cutoff, joins it to held-out probabilities and final
    outcomes, and writes replayable backtest artifacts
-7. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
+9. `BacktestPolicy` and `BACKTEST_CHECKLIST` define which historical runs are
    considered valid
 
 ## Current AGE-144, AGE-145, And AGE-146 Output Shape
@@ -257,6 +261,25 @@ first dashboard-ready reporting artifacts on top of those decision seams:
   stores daily and overall realized stake, profit, and ROI rows
 - `data/normalized/walk_forward_backtest/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../edge_bucket_summary.jsonl`
   stores one realized summary row per configured edge bucket
+
+AGE-153 adds the first target-date operating loop on top of those same seams:
+
+- `data/normalized/starter_strikeout_inference/date=YYYY-MM-DD/run=.../`
+  stores target-date ladder probabilities scored from the latest historical
+  baseline run whose end date is still before the requested slate
+- `data/normalized/daily_candidates/date=YYYY-MM-DD/run=.../daily_candidates.jsonl`
+  stores the ranked current sheet, including actionable and below-threshold
+  scored props for that slate
+- `data/normalized/paper_results/date=YYYY-MM-DD/run=.../paper_results.jsonl`
+  stores only actionable paper bets from the latest daily sheet per date, with
+  pending vs settled status and same-line CLV where the exact close exists
+
+The Streamlit dashboard now reads those AGE-153 artifacts directly:
+
+- `daily_candidates`
+  powers the current-slate table and slate-level counts
+- `paper_results`
+  powers recent paper performance and per-bet result review
 
 The first backtest slice intentionally uses held-out probabilities from
 `raw_vs_calibrated_probabilities.jsonl` rather than the production calibrator

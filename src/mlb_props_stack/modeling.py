@@ -182,6 +182,20 @@ class StarterStrikeoutBaselineTrainingResult:
 
 
 @dataclass(frozen=True)
+class StarterStrikeoutInferenceResult:
+    """Filesystem output summary for one target-date inference run."""
+
+    target_date: date
+    run_id: str
+    source_model_run_id: str
+    source_model_path: Path
+    feature_run_dir: Path
+    model_path: Path
+    ladder_probabilities_path: Path
+    projection_count: int
+
+
+@dataclass(frozen=True)
 class _FeatureVectorizer:
     numeric_features: tuple[str, ...]
     numeric_means: dict[str, float]
@@ -257,12 +271,20 @@ def _write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _load_jsonl_rows(path: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.strip():
             rows.append(json.loads(line))
     return rows
+
+
+def _path_run_id(run_dir: Path) -> str:
+    return run_dir.name.split("=", 1)[-1]
 
 
 def _clip_probability(probability: float) -> float:
@@ -830,6 +852,29 @@ def _build_vectorizer(train_rows: list[StarterStrikeoutTrainingRow]) -> _Feature
     )
 
 
+def _coerce_feature_vectorizer(payload: dict[str, Any]) -> _FeatureVectorizer:
+    numeric_feature_stats = payload["numeric_feature_stats"]
+    categorical_feature_levels = payload["categorical_feature_levels"]
+    return _FeatureVectorizer(
+        numeric_features=tuple(str(feature_name) for feature_name in numeric_feature_stats),
+        numeric_means={
+            str(feature_name): float(stats["mean"])
+            for feature_name, stats in numeric_feature_stats.items()
+        },
+        numeric_stds={
+            str(feature_name): float(stats["std"])
+            for feature_name, stats in numeric_feature_stats.items()
+        },
+        categorical_levels={
+            str(feature_name): tuple(str(level) for level in levels)
+            for feature_name, levels in categorical_feature_levels.items()
+        },
+        encoded_feature_names=tuple(
+            str(feature_name) for feature_name in payload["encoded_feature_names"]
+        ),
+    )
+
+
 def _encode_row(row: StarterStrikeoutTrainingRow, vectorizer: _FeatureVectorizer) -> list[float]:
     encoded: list[float] = []
     for feature_name in vectorizer.numeric_features:
@@ -901,6 +946,62 @@ def _predict_mean(row: StarterStrikeoutTrainingRow, model: _LinearModel) -> floa
         for coefficient, feature_value in zip(model.coefficients, encoded)
     )
     return max(0.0, mean_prediction)
+
+
+def _coerce_linear_model(payload: dict[str, Any]) -> _LinearModel:
+    vectorizer = _coerce_feature_vectorizer(payload)
+    coefficient_map = payload["coefficients"]
+    return _LinearModel(
+        intercept=float(payload["intercept"]),
+        coefficients=tuple(
+            float(coefficient_map[feature_name])
+            for feature_name in vectorizer.encoded_feature_names
+        ),
+        vectorizer=vectorizer,
+    )
+
+
+def _run_dir_end_date(run_dir: Path) -> date | None:
+    label = run_dir.parent.name
+    if label.startswith("start=") and "_end=" in label:
+        try:
+            return date.fromisoformat(label.split("_end=", 1)[1])
+        except ValueError:
+            pass
+    dataset_path = run_dir / "training_dataset.jsonl"
+    if not dataset_path.exists():
+        return None
+    available_dates = [
+        date.fromisoformat(str(row["official_date"]))
+        for row in _load_jsonl_rows(dataset_path)
+        if row.get("official_date")
+    ]
+    if not available_dates:
+        return None
+    return max(available_dates)
+
+
+def _latest_honest_model_run_before_date(output_root: Path, *, target_date: date) -> Path:
+    model_root = output_root / "normalized" / "starter_strikeout_baseline"
+    candidate_runs: list[tuple[date, Path]] = []
+    for run_dir in model_root.rglob("run=*"):
+        if not run_dir.is_dir():
+            continue
+        if not run_dir.joinpath("baseline_model.json").exists():
+            continue
+        if not run_dir.joinpath("ladder_probabilities.jsonl").exists():
+            continue
+        run_end_date = _run_dir_end_date(run_dir)
+        if run_end_date is None or run_end_date >= target_date:
+            continue
+        candidate_runs.append((run_end_date, run_dir))
+    if not candidate_runs:
+        raise FileNotFoundError(
+            "No starter strikeout baseline run ends before "
+            f"{target_date.isoformat()}. Train a historical baseline first."
+        )
+    candidate_runs.sort(key=lambda item: (item[0], str(item[1])))
+    return candidate_runs[-1][1]
 
 
 def _normalized_count_distribution(
@@ -1528,6 +1629,145 @@ def _model_artifact(
         },
         "probability_calibration": calibrator_payload,
     }
+
+
+def generate_starter_strikeout_inference_for_date(
+    *,
+    target_date: date,
+    output_dir: Path | str = "data",
+    source_model_run_dir: Path | str | None = None,
+    now: Callable[[], datetime] = utc_now,
+) -> StarterStrikeoutInferenceResult:
+    """Score one target date from the latest non-leaky saved baseline model."""
+    output_root = Path(output_dir)
+    resolved_source_model_run_dir = (
+        Path(source_model_run_dir)
+        if source_model_run_dir is not None
+        else _latest_honest_model_run_before_date(output_root, target_date=target_date)
+    )
+    source_model_path = resolved_source_model_run_dir / "baseline_model.json"
+    source_model_artifact = _load_json(source_model_path)
+    probability_calibration = source_model_artifact.get("probability_calibration")
+    if probability_calibration is None:
+        raise ValueError(
+            "baseline_model.json is missing probability_calibration metadata."
+        )
+
+    feature_run_dir = _latest_feature_run_dir(
+        output_root / "normalized" / "statcast_search" / f"date={target_date.isoformat()}"
+    )
+    inference_rows = sorted(
+        _load_feature_rows_for_date(target_date=target_date, output_dir=output_root),
+        key=lambda row: (row.official_date, row.game_pk, row.pitcher_id),
+    )
+    if not inference_rows:
+        raise FileNotFoundError(
+            "No AGE-146 Statcast feature rows were found for "
+            f"{target_date.isoformat()}."
+        )
+
+    model = _coerce_linear_model(source_model_artifact)
+    dispersion_alpha = float(source_model_artifact["count_distribution"]["dispersion_alpha"])
+    calibrator = _coerce_probability_calibrator(probability_calibration)
+    source_date_splits_path = resolved_source_model_run_dir / "date_splits.json"
+    source_date_splits = (
+        _load_json(source_date_splits_path) if source_date_splits_path.exists() else {}
+    )
+    train_dates = sorted(str(value) for value in source_date_splits.get("train", []))
+    inference_generated_at = now().astimezone(UTC)
+    run_id = inference_generated_at.strftime("%Y%m%dT%H%M%SZ")
+
+    ladder_rows: list[dict[str, Any]] = []
+    for row in inference_rows:
+        model_mean = _predict_mean(row, model)
+        raw_ladder = starter_strikeout_ladder_probabilities(
+            mean=model_mean,
+            dispersion_alpha=dispersion_alpha,
+        )
+        ladder_rows.append(
+            {
+                "training_row_id": row.training_row_id,
+                "official_date": row.official_date,
+                "game_pk": row.game_pk,
+                "pitcher_id": row.pitcher_id,
+                "pitcher_name": row.pitcher_name,
+                "split": "inference",
+                "feature_row_id": row.training_row_id,
+                "lineup_snapshot_id": row.lineup_snapshot_id,
+                "features_as_of": row.features_as_of,
+                "projection_generated_at": row.features_as_of,
+                "inference_generated_at": inference_generated_at,
+                "model_train_from_date": train_dates[0] if train_dates else None,
+                "model_train_through_date": train_dates[-1] if train_dates else None,
+                "naive_benchmark_mean": round(row.naive_benchmark_mean, 6),
+                "model_mean": round(model_mean, 6),
+                "count_distribution": {
+                    "name": COUNT_DISTRIBUTION_NAME,
+                    "dispersion_alpha": round(dispersion_alpha, 6),
+                },
+                "probability_calibration": {
+                    "name": calibrator.name,
+                    "sample_count": calibrator.sample_count,
+                    "fit_from_date": calibrator.fitted_from_date,
+                    "fit_through_date": calibrator.fitted_through_date,
+                    "is_identity": calibrator.is_identity,
+                },
+                "ladder_probabilities": raw_ladder,
+                "calibrated_ladder_probabilities": (
+                    calibrate_starter_strikeout_ladder_probabilities(
+                        raw_ladder,
+                        calibrator,
+                    )
+                ),
+            }
+        )
+
+    normalized_root = (
+        output_root
+        / "normalized"
+        / "starter_strikeout_inference"
+        / f"date={target_date.isoformat()}"
+        / f"run={run_id}"
+    )
+    model_path = normalized_root / "baseline_model.json"
+    ladder_probabilities_path = normalized_root / "ladder_probabilities.jsonl"
+    inference_manifest_path = normalized_root / "inference_manifest.json"
+    _write_json(
+        model_path,
+        {
+            **source_model_artifact,
+            "source_model_run_id": _path_run_id(resolved_source_model_run_dir),
+            "source_model_path": source_model_path,
+            "target_date": target_date,
+            "feature_run_dir": feature_run_dir,
+            "inference_generated_at": inference_generated_at,
+            "model_train_from_date": train_dates[0] if train_dates else None,
+            "model_train_through_date": train_dates[-1] if train_dates else None,
+        },
+    )
+    _write_jsonl(ladder_probabilities_path, ladder_rows)
+    _write_json(
+        inference_manifest_path,
+        {
+            "target_date": target_date,
+            "run_id": run_id,
+            "source_model_run_id": _path_run_id(resolved_source_model_run_dir),
+            "source_model_path": source_model_path,
+            "feature_run_dir": feature_run_dir,
+            "projection_count": len(ladder_rows),
+            "inference_generated_at": inference_generated_at,
+        },
+    )
+    return StarterStrikeoutInferenceResult(
+        target_date=target_date,
+        run_id=run_id,
+        source_model_run_id=_path_run_id(resolved_source_model_run_dir),
+        source_model_path=source_model_path,
+        feature_run_dir=feature_run_dir,
+        model_path=model_path,
+        ladder_probabilities_path=ladder_probabilities_path,
+        projection_count=len(ladder_rows),
+    )
 
 
 def train_starter_strikeout_baseline(

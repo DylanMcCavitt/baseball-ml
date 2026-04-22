@@ -14,7 +14,10 @@ authors = [
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+  "pytest>=8.0",
+  "streamlit>=1.44,<2",
+]
 
 [project.scripts]
 mlb-props-stack = "mlb_props_stack.cli:main"

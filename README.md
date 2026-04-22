@@ -56,10 +56,13 @@ That is a math-and-process problem first, and a betting problem second.
   reproducible trainable baseline model.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
+- `src/mlb_props_stack/paper_tracking.py`
+  Target-date inference, daily candidate sheet generation, and cumulative paper
+  result refreshes.
 - `src/mlb_props_stack/backtest.py`
   Backtest policy and evaluation guardrails.
 - `src/mlb_props_stack/dashboard/app.py`
-  Placeholder module where the future Streamlit dashboard will live.
+  Streamlit page for the current slate and recent paper-tracking performance.
 - `docs/architecture.md`
   Product and system architecture.
 - `docs/modeling.md`
@@ -346,6 +349,60 @@ The current backtest runner stays honest in two important ways:
   `raw_vs_calibrated_probabilities.jsonl` for headline backtest rows instead of
   the production calibrator embedded in `ladder_probabilities.jsonl`
 
+## Daily Candidate Workflow
+
+`AGE-153` adds the first repeatable paper-tracking loop for the live slate.
+
+This command expects:
+
+- a prior AGE-146 feature build for the target date under
+  `data/normalized/statcast_search/...`
+- a prior AGE-145 odds ingest for the target date under
+  `data/normalized/the_odds_api/...`
+- a prior historical starter baseline run that ends before the target date
+  under `data/normalized/starter_strikeout_baseline/...`
+
+Build one target-date sheet and refresh cumulative paper results:
+
+```bash
+uv run python -m mlb_props_stack build-daily-candidates --date 2026-04-22
+```
+
+If `--date` is omitted, the command defaults to today in the configured stack
+timezone.
+
+By default that writes:
+
+- `data/normalized/starter_strikeout_inference/date=YYYY-MM-DD/run=.../`
+  with target-date ladder probabilities scored from the latest non-leaky saved
+  baseline run
+- `data/normalized/daily_candidates/date=YYYY-MM-DD/run=.../daily_candidates.jsonl`
+  with the ranked current-slate sheet
+- `data/normalized/paper_results/date=YYYY-MM-DD/run=.../paper_results.jsonl`
+  with the latest actionable sheet per date resolved to pending or settled paper
+  outcomes
+
+`daily_candidates.jsonl` keeps:
+
+- ranked scored props for the selected slate
+- the matched line snapshot, selected side, edge, EV, and suggested stake
+- the inference and edge run IDs used to produce the sheet
+
+`paper_results.jsonl` keeps:
+
+- only actionable paper bets from the latest sheet for each date
+- same-line CLV where an exact close snapshot exists
+- pending vs settled result status with realized PnL once outcomes are available
+
+Launch the first local dashboard page with:
+
+```bash
+uv run streamlit run src/mlb_props_stack/dashboard/app.py
+```
+
+That page reads `daily_candidates` for the selected slate and the latest
+`paper_results` artifact for recent paper performance.
+
 ## CI
 
 GitHub Actions runs the repo baseline checks on pull requests to `main` and on
@@ -364,10 +421,10 @@ CI can grow from this baseline instead of starting as placeholder ceremony.
 
 - `mlb_props_stack.tracking.TrackingConfig` is the reserved place for future
   MLflow tracking configuration.
-- `mlb_props_stack.dashboard.app` is the reserved dashboard entrypoint for a
-  later Streamlit UI.
-- Neither MLflow nor Streamlit is installed in v1; the baseline only preserves
-  clean seams for those additions.
+- `mlb_props_stack.dashboard.app` now hosts the first local Streamlit page for
+  current slate review and recent paper performance.
+- MLflow is still not installed in v1; the repo keeps the tracking seam clean
+  without adding experiment infrastructure yet.
 
 ## Risk
 

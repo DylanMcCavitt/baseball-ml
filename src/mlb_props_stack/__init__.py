@@ -8,6 +8,7 @@ __all__ = [
     "ingest",
     "markets",
     "modeling",
+    "paper_tracking",
     "pricing",
     "tracking",
 ]

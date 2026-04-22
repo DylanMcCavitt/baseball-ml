@@ -10,4 +10,4 @@ def test_tracking_config_uses_reserved_mlflow_location():
 
 
 def test_dashboard_banner_marks_placeholder_module():
-    assert "future Streamlit app" in build_dashboard_banner()
+    assert "current slate candidates" in build_dashboard_banner()

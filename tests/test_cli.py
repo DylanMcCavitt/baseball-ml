@@ -9,6 +9,7 @@ from mlb_props_stack.ingest import (
     StatcastFeatureIngestResult,
 )
 from mlb_props_stack.modeling import StarterStrikeoutBaselineTrainingResult
+from mlb_props_stack.paper_tracking import DailyCandidateWorkflowResult
 
 
 def test_runtime_summary_includes_future_hooks():
@@ -219,6 +220,43 @@ def test_edge_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsys
     assert "model_version=starter-strikeout-baseline-v1" in output
     assert "actionable_candidates=3" in output
     assert "edge_candidates_path=" in output
+
+
+def test_daily_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = DailyCandidateWorkflowResult(
+        target_date=date(2026, 4, 22),
+        run_id="20260422T180000Z",
+        inference_run_id="20260422T180000Z",
+        edge_candidate_run_id="20260422T180100Z",
+        daily_candidates_path=tmp_path / "daily_candidates.jsonl",
+        paper_results_path=tmp_path / "paper_results.jsonl",
+        scored_candidate_count=9,
+        actionable_candidate_count=3,
+        settled_result_count=12,
+        pending_result_count=2,
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.build_daily_candidate_workflow",
+        lambda **_: result,
+    )
+
+    main(
+        [
+            "build-daily-candidates",
+            "--date",
+            "2026-04-22",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Daily candidate workflow complete for 2026-04-22" in output
+    assert "actionable_candidates=3" in output
+    assert "settled_paper_results=12" in output
+    assert "daily_candidates_path=" in output
+    assert "paper_results_path=" in output
 
 
 def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
