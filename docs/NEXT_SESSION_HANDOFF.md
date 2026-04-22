@@ -31,8 +31,8 @@
     - loads the latest AGE-149 model run containing that date
     - materializes contract-valid `PropProjection` objects for exact book lines
     - writes `data/normalized/edge_candidates/date=YYYY-MM-DD/run=.../edge_candidates.jsonl`
-    - preserves actionable, below-threshold, and skipped rows with explicit
-      statuses and reasons
+    - preserves actionable, below-threshold, training-split, and skipped rows
+      with explicit statuses and reasons
 - `src/mlb_props_stack/modeling.py`
   - extends saved `ladder_probabilities.jsonl` rows with:
     - `feature_row_id`

@@ -264,6 +264,7 @@ def _build_skipped_candidate_row(
     model_run_id: str,
     evaluation_status: str,
     reason: str,
+    extra_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     row = _build_candidate_base_row(
         line_row,
@@ -276,6 +277,8 @@ def _build_skipped_candidate_row(
             "reason": reason,
         }
     )
+    if extra_fields is not None:
+        row.update(extra_fields)
     return row
 
 
@@ -358,6 +361,23 @@ def build_edge_candidates_for_date(
                     model_run_id=model_run_id,
                     evaluation_status="missing_projection",
                     reason="No ladder probabilities were found for this line snapshot.",
+                )
+            )
+            continue
+
+        if str(ladder_row["split"]) == "train":
+            skipped_line_count += 1
+            candidate_rows.append(
+                _build_skipped_candidate_row(
+                    line_row,
+                    model_version=model_version,
+                    model_run_id=model_run_id,
+                    evaluation_status="train_split_projection",
+                    reason=(
+                        "The matched projection only exists in the training split and "
+                        "is not honest for historical edge evaluation."
+                    ),
+                    extra_fields={"data_split": "train"},
                 )
             )
             continue

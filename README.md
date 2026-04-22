@@ -283,7 +283,8 @@ Each row preserves:
 - the projection input refs and conservative timestamp ordering
 - raw and calibrated model probabilities for the exact posted line
 - no-vig market probabilities, EV, fair odds, and capped Kelly sizing
-- an evaluation status so below-threshold or skipped lines stay auditable
+- an evaluation status so below-threshold, skipped, or training-split rows stay
+  auditable
 
 ## CI
 

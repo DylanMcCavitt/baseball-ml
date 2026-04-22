@@ -256,6 +256,24 @@ def test_build_edge_candidates_for_date_writes_actionable_below_threshold_and_sk
                 "over_odds": -110,
                 "under_odds": -110,
             },
+            {
+                "line_snapshot_id": "line-5",
+                "official_date": "2026-04-20",
+                "captured_at": "2026-04-20T16:20:00Z",
+                "sportsbook": "draftkings",
+                "sportsbook_title": "DraftKings",
+                "event_id": "event-4",
+                "game_pk": 9004,
+                "odds_matchup_key": "2026-04-20|ATL|PHI|2026-04-20T23:55:00Z",
+                "match_status": "matched",
+                "player_id": "mlb-pitcher:700004",
+                "pitcher_mlb_id": 700004,
+                "player_name": "Train Split Arm",
+                "market": "pitcher_strikeouts",
+                "line": 5.5,
+                "over_odds": -110,
+                "under_odds": -110,
+            },
         ],
     )
 
@@ -359,6 +377,44 @@ def test_build_edge_candidates_for_date_writes_actionable_below_threshold_and_sk
                     }
                 ],
             },
+            {
+                "training_row_id": "training-row-3",
+                "official_date": "2026-04-20",
+                "game_pk": 9004,
+                "pitcher_id": 700004,
+                "pitcher_name": "Train Split Arm",
+                "split": "train",
+                "feature_row_id": "training-row-3",
+                "lineup_snapshot_id": "lineup-snapshot-3",
+                "features_as_of": "2026-04-20T15:35:00Z",
+                "projection_generated_at": "2026-04-20T15:35:00Z",
+                "actual_strikeouts": 8,
+                "naive_benchmark_mean": 5.9,
+                "model_mean": 6.5,
+                "count_distribution": {
+                    "name": "negative_binomial_global_dispersion_v1",
+                    "dispersion_alpha": 0.18,
+                },
+                "probability_calibration": {
+                    "name": "isotonic_ladder_probability_calibrator_v1",
+                    "sample_count": 48,
+                    "is_identity": False,
+                },
+                "ladder_probabilities": [
+                    {
+                        "line": 5.5,
+                        "over_probability": 0.61,
+                        "under_probability": 0.39,
+                    }
+                ],
+                "calibrated_ladder_probabilities": [
+                    {
+                        "line": 5.5,
+                        "over_probability": 0.62,
+                        "under_probability": 0.38,
+                    }
+                ],
+            },
         ],
     )
 
@@ -369,11 +425,11 @@ def test_build_edge_candidates_for_date_writes_actionable_below_threshold_and_sk
 
     assert result.model_version == "starter-strikeout-baseline-v1"
     assert result.model_run_id == "20260421T180000Z"
-    assert result.line_count == 4
+    assert result.line_count == 5
     assert result.scored_line_count == 2
     assert result.actionable_count == 1
     assert result.below_threshold_count == 1
-    assert result.skipped_line_count == 2
+    assert result.skipped_line_count == 3
     assert result.edge_candidates_path.exists()
 
     edge_rows = [
@@ -387,6 +443,7 @@ def test_build_edge_candidates_for_date_writes_actionable_below_threshold_and_sk
         "below_threshold",
         "missing_projection",
         "missing_lineup_snapshot_id",
+        "train_split_projection",
     ]
     assert edge_rows[0]["line_snapshot_id"] == "line-1"
     assert edge_rows[0]["candidate_id"] == "line-1|starter-strikeout-baseline-v1"
@@ -402,4 +459,9 @@ def test_build_edge_candidates_for_date_writes_actionable_below_threshold_and_sk
     assert (
         edge_rows[3]["reason"]
         == "The matched projection does not carry a lineup snapshot reference."
+    )
+    assert edge_rows[4]["data_split"] == "train"
+    assert (
+        edge_rows[4]["reason"]
+        == "The matched projection only exists in the training split and is not honest for historical edge evaluation."
     )
