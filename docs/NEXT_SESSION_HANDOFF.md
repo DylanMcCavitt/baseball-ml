@@ -4,337 +4,281 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Last completed issue: `AGE-204` on branch
-  `dylan/magical-ptolemy-1d5da2`
-- This slice adds a pregame **home-plate umpire** ingest to the pipeline
-  so downstream modeling can consume per-game umpire identity plus two
-  rolling 30-day strike-zone signals — `ump_called_strike_rate_30d` and
-  `ump_k_per_9_delta_vs_league_30d`. The issue suggested
-  UmpScorecards/Retrosheet scraping, but the MLB Stats API `feed/live`
-  endpoint already returns `liveData.boxscore.officials` including the
-  home-plate umpire's id and full name, and those payloads are already
-  persisted by the MLB metadata ingest. The umpire adapter mines the
-  existing raw feed/live files (falling back to a fresh HTTP fetch
-  only when the payload is missing) so the new source takes no
-  additional scraping dependency
-- Current status: umpire ingest runs standalone
-  (`uv run python -m mlb_props_stack.cli ingest-umpire --date …`),
-  inside the historical backfill orchestrator as a new `umpire`
-  source slot between `weather` and `odds-api` (runs after
-  `mlb-metadata` so `games.jsonl` + persisted feed/live exist, runs
-  before `statcast-features` so umpire snapshots join
-  `game_context_features.jsonl`), and the statcast feature ingest
-  joins the latest umpire snapshots into every emitted
-  `game_context_features.jsonl` row. `check-data-alignment` surfaces
-  umpire coverage in a new `ump_cov` column plus a raw count column
-  (`umpire_ok`). Training rows expose seven new fields
-  (`umpire_status`, `umpire_source`, `umpire_id`, `umpire_name`,
-  `umpire_captured_at`, `ump_called_strike_rate_30d`,
-  `ump_k_per_9_delta_vs_league_30d`); the two numerics are gated by
-  `OPTIONAL_FEATURE_MIN_COVERAGE` so sparse umpire history will not
-  silently regress the model
+- Last completed issue: `AGE-211` on branch
+  `dylan/blissful-zhukovsky-ae89e4`
+- This slice is a pure refactor of
+  `src/mlb_props_stack/ingest/statcast_features.py`. The previous
+  ~1,600-line file conflated raw CSV ingest, pitcher-level feature
+  derivation, lineup-level aggregation, slate-level game-context
+  derivation, and orchestration. It has been split into four focused
+  modules under `src/mlb_props_stack/ingest/` while the orchestrator
+  module keeps its name and re-exports every symbol its callers (and
+  tests) already depended on, so the public surface is unchanged and
+  existing tests pass without edits
+- Current status: `uv run pytest` is green at 178 tests (same count
+  and outcome as before the refactor), `uv run python -m
+  mlb_props_stack.cli --help` still lists the full subcommand surface
+  including `ingest-statcast-features`, and `uv run python -m
+  mlb_props_stack` continues to print the runtime configuration
+  banner. No data alignment, modeling, or CLI behavior changed
 
 ## What Was Completed In This Slice
 
-- `src/mlb_props_stack/ingest/umpire.py` (new module)
-  - `UmpireAssignmentRecord` frozen dataclass holds the raw-ish
-    home-plate umpire assignment per scheduled game; `UmpireSnapshotRecord`
-    is the normalized snapshot joined with the 30-day rolling metrics
-  - `normalize_feed_live_officials_payload` extracts the
-    `liveData.boxscore.officials` array from a feed/live payload;
-    `_extract_home_plate_umpire` tolerates casing variations and
-    returns `(None, None)` when the assignment has not been published
-  - `_latest_persisted_feed_live_path` finds the most recent
-    persisted feed/live JSON for one game so the adapter can avoid a
-    fresh HTTP call; `ingest_umpire_for_date` falls back to
-    `MLBStatsAPIClient.fetch_json` when no persisted file exists and
-    emits a `missing_umpire_source` sentinel when the fetch raises
-  - `_load_prior_umpire_game_pks_by_umpire` walks the prior 30
-    calendar days of normalized umpire runs to build
-    `umpire_id -> {date -> {game_pks}}`; `_load_prior_pitch_aggregates`
-    walks the matching Statcast `pitch_level_base.jsonl` runs to
-    tally per-date and per-game-pk pitch/called-strike/PA/strikeout
-    counts; `compute_rolling_umpire_metrics` combines the two into
-    `(ump_called_strike_rate_30d, ump_k_per_9_delta_vs_league_30d)`
-  - Post-review fix: `compute_rolling_umpire_metrics` now returns
-    `(called_strike_rate, None)` when the umpire has pitches but zero
-    recorded plate-appearance finals, rather than discarding both
-    metrics. `called_strike_rate` is pitch-level and computable
-    independent of PA; previously a degenerate PA=0 window (e.g.
-    suspended games) would zero out the strike rate too
-  - K/9 is approximated as `K_rate × 38.25` (9 innings × ~4.25 PAs
-    per inning) documented inline on `APPROXIMATE_PA_PER_NINE_INNINGS`
-    — the pitch-level base captures plate appearances via the
-    final-pitch marker, not innings directly, and the multiplier is
-    stable enough for a delta-vs-league feature
-  - `ingest_umpire_for_date` writes raw artifacts at
-    `data/raw/umpire/date=<iso>/game_pk=<pk>/captured_at=<ts>.json`
-    (extracted officials block plus metadata) and normalized snapshots
-    at `data/normalized/umpire/date=<iso>/run=<ts>/umpire_snapshots.jsonl`
-  - `load_latest_umpire_snapshots_for_date` returns a
-    `dict[int, UmpireSnapshotRecord]` keyed on `game_pk` for the
-    latest complete run, used by the statcast feature ingest
-- `src/mlb_props_stack/ingest/statcast_features.py`
-  - `GameContextFeatureRow` gains `umpire_status`, `umpire_source`,
-    `umpire_id`, `umpire_name`, `umpire_captured_at`,
-    `ump_called_strike_rate_30d`, and
-    `ump_k_per_9_delta_vs_league_30d`
-  - `_build_game_context_feature_row` now joins via an
-    `umpire_lookup: dict[int, UmpireSnapshotRecord]` passed in from
-    the top-level ingest call; games without a snapshot land with the
-    `missing_umpire_source` sentinel
+- `src/mlb_props_stack/ingest/statcast_ingest.py` (new module)
+  - Ingest foundation shared by every feature module: the Baseball
+    Savant endpoint / request headers, default fetch-attempt and
+    backoff tuning constants (`DEFAULT_MAX_FETCH_ATTEMPTS`, ...,
+    `DEFAULT_MAX_FETCH_WORKERS`), the strikeout / whiff / called-strike
+    / contact / swing classification sets, and `STRIKEOUT_EVENTS` plus
+    the description sets that `normalize_statcast_csv_text` uses
+  - Data contracts: `StatcastPullRecord` (one raw CSV pull manifest
+    entry) and `StatcastPitchRecord` (one normalized pitch-level base
+    row)
+  - HTTP client: `StatcastSearchClient` plus `_is_retriable_http_error`
+    and `_fetch_csv_texts_concurrently`. The client deliberately
+    dispatches through a small `_urlopen` shim that does a deferred
+    `from . import statcast_features` and calls
+    `statcast_features.urlopen(...)` at call time so the existing
+    `monkeypatch.setattr("mlb_props_stack.ingest.statcast_features.urlopen", ...)`
+    test hooks keep working after the move (documented inline)
+  - URL builder: `build_statcast_search_csv_url`
+  - Normalizer: `normalize_statcast_csv_text` plus helpers
+    (`_optional_text`, `_coerce_optional_int`, `_coerce_optional_float`,
+    `_pitch_record_id`, `_batting_team_abbreviation`, `_is_out_of_zone`)
+  - Shared pitch-record utilities needed by every feature module
+    because they operate on `StatcastPitchRecord`: `_sorted_rows`,
+    `_pitch_rows_for_player`, `_batter_rows`, `_plate_appearance_key`,
+    `_count_plate_appearances`, `_last_game_date`, `_pitch_type_usage`,
+    `_rows_in_recent_window`, `_rows_grouped_by_start`,
+    `_history_cutoff`, `_safe_rate`, `_round_optional`, `_mean`
+  - Team/lineup helpers shared across feature modules:
+    `_opponent_team_side`, `_opponent_team`,
+    `_select_pregame_lineup_snapshot`
+- `src/mlb_props_stack/ingest/pitcher_features.py` (new module)
+  - `PitcherDailyFeatureRow` dataclass
+  - `_build_pitcher_daily_feature_row` plus the pitcher-only helpers
+    `_pitcher_hand_split_rates`, `_pitcher_hand`, and `_expected_leash`
+    (the last is shared with `game_context`, see below)
+- `src/mlb_props_stack/ingest/lineup_aggregation.py` (new module)
+  - `LineupDailyFeatureRow` dataclass
+  - `_BatterMetricBundle`, `_batter_metric_bundle`,
+    `_batter_k_rate_vs_p_throws`, `_batting_order_weight`,
+    `_weighted_mean`, `_latest_prior_team_lineup_player_ids`, and
+    `_build_lineup_daily_feature_row`
+- `src/mlb_props_stack/ingest/game_context.py` (new module)
+  - `GameContextFeatureRow` dataclass
+  - `_build_game_context_feature_row` with the park-factor / weather /
+    umpire joins and the rest-days + expected-leash calculations. The
+    module imports `_expected_leash` from `pitcher_features` rather
+    than duplicating the helper, which establishes the only
+    intra-feature dependency (`game_context → pitcher_features`)
+- `src/mlb_props_stack/ingest/statcast_features.py` (slimmed to the
+  orchestrator)
+  - Owns only: `DEFAULT_HISTORY_DAYS`,
+    `StatcastFeatureIngestResult`, `_LoadedMLBMetadata`, the MLB
+    metadata loaders (`_latest_complete_run_dir`,
+    `_latest_pregame_valid_run_dir`, `_run_is_pregame_valid`,
+    `_load_latest_mlb_metadata_for_date`, `_load_jsonl_rows`), the
+    filesystem writer helpers (`_path_timestamp`, `_json_ready`,
+    `_write_text`, `_write_json`, `_write_jsonl`), and
+    `ingest_statcast_features_for_date`
+  - Keeps `from urllib.request import Request, urlopen` at module
+    scope so tests can patch `statcast_features.urlopen`; the
+    `StatcastSearchClient.fetch_csv` call in `statcast_ingest.py`
+    dispatches through this symbol at call time via the `_urlopen`
+    shim described above
+  - Re-exports every symbol its callers (`ingest/__init__.py`,
+    `modeling.py`, `tests/test_statcast_feature_ingest.py`,
+    `tests/test_ingest_atomic_writes.py`) previously imported from
+    this file. That includes the public data contracts
+    (`GameContextFeatureRow`, `LineupDailyFeatureRow`,
+    `PitcherDailyFeatureRow`, `StatcastFeatureIngestResult`,
+    `StatcastPitchRecord`, `StatcastPullRecord`,
+    `StatcastSearchClient`, `DEFAULT_HISTORY_DAYS`,
+    `DEFAULT_MAX_FETCH_WORKERS`, `build_statcast_search_csv_url`,
+    `ingest_statcast_features_for_date`, `normalize_statcast_csv_text`),
+    the test-referenced private helpers (`_pitcher_hand_split_rates`,
+    `_write_jsonl`), and every remaining underscore-prefixed helper
+    that lived on the original module so attribute lookups against
+    `statcast_features.<helper>` keep working
 - `src/mlb_props_stack/ingest/__init__.py`
-  - re-exports the umpire dataclasses, constants, and both entry
-    points alongside the existing ingest surface
-- `src/mlb_props_stack/cli.py`
-  - new `ingest-umpire` subcommand (`--date`, `--output-dir`)
-  - `render_umpire_ingest_summary` renders run id, snapshot counts,
-    history window, and raw + normalized output paths
-  - `backfill-historical` help copy now lists the umpire source
-- `src/mlb_props_stack/backfill.py`
-  - new `SOURCE_UMPIRE = "umpire"` placed between `SOURCE_WEATHER`
-    and `SOURCE_ODDS_API` in `ALL_SOURCES`; comments document why
-    umpire must run after MLB metadata and before statcast-features
-  - `REQUIRED_ARTIFACT_FILES` + `NORMALIZED_ROOT_BY_SOURCE` entries
-    for umpire
-  - `backfill_historical` accepts an `umpire_runner` kwarg
-    (defaulting to `ingest_umpire_for_date`) and routes it through
-    the same resume / error-isolation path as the other sources
-- `src/mlb_props_stack/modeling.py`
-  - `StarterStrikeoutTrainingRow` grows seven new fields for the
-    umpire assignment + rolling metrics
-  - `ump_called_strike_rate_30d` and
-    `ump_k_per_9_delta_vs_league_30d` join `OPTIONAL_NUMERIC_FEATURES`
-    so they are gated by `OPTIONAL_FEATURE_MIN_COVERAGE` and will
-    not be pinned into the model on sparse history
-  - training-row construction uses `.get()` so older fixtures that
-    predate the umpire schema still pass
-- `src/mlb_props_stack/data_alignment.py`
-  - `ArtifactCounts` gains `umpire_assignments` and
-    `umpire_ok_snapshots`
-  - `DateCoverageRow` gains `umpire_coverage`; it's computed as
-    `ok / games` (missing-source rows do not count toward coverage)
-  - `render_data_alignment_summary` prints two new columns
-    (`umpire_ok`, `ump_cov`)
-- `tests/test_umpire_ingest.py` (15 tests)
-  - happy path via persisted feed/live, HTTP fallback when no
-    persisted payload exists, missing-home-plate sentinel,
-    HTTP-error sentinel, leakage guard (`captured_at <= commence_time`),
-    negative `history_days` rejection, rolling-metric computation
-    from prior umpire + Statcast history, `compute_rolling_umpire_metrics`
-    degrading to `None` when no prior data is seeded,
-    `normalize_feed_live_officials_payload` happy + missing-block
-    paths, `load_latest_umpire_snapshots_for_date` returning the
-    latest complete run (or `{}` when nothing exists), the
-    `DEFAULT_UMPIRE_HISTORY_DAYS` spec guard, and a regression test
-    for the PA=0 fix that asserts called-strike rate is preserved
-    when only plate-appearance finals are missing
-- `tests/test_statcast_feature_ingest.py`
-  - new assertions that all seven umpire fields arrive on the
-    emitted `game_context_features.jsonl` rows (populated when a
-    snapshot joins, `None` when the stub falls through)
-- `tests/test_modeling.py`
-  - the training-row fixture now writes the new umpire field names
-    so the baseline training happy path still passes with the
-    updated schema
-- `tests/test_backfill.py`
-  - every `ALL_SOURCES` test now constructs a `_RunnerSpy` for
-    umpire and threads it through
-    `backfill_historical(umpire_runner=…)`; counts updated
-    (5 sources ingested instead of 4, 5 skipped instead of 4, etc.);
-    the manifest test asserts the new `umpire` entry lands alongside
-    mlb-metadata, weather, odds-api, and statcast-features; a new
-    `test_backfill_historical_passes_target_date_and_output_dir_to_umpire_runner`
-    confirms the orchestrator forwards kwargs to the umpire runner
-- `tests/test_data_alignment.py`
-  - `_counts` helper gains the two new `ArtifactCounts` fields with
-    sensible defaults; new `test_collect_artifact_counts_reads_umpire_statuses`
-    seeds a three-row `umpire_snapshots.jsonl` and asserts the
-    status counts land correctly; the render-summary test asserts
-    the `umpire_ok` and `ump_cov` headers appear
+  - Unchanged. Still imports from `.statcast_features`, which now
+    re-exports the moved symbols from the submodules, so the ingest
+    package's public surface is byte-identical
 
 ## Files Changed
 
 - `docs/NEXT_SESSION_HANDOFF.md`
-- `src/mlb_props_stack/backfill.py`
-- `src/mlb_props_stack/cli.py`
-- `src/mlb_props_stack/data_alignment.py`
-- `src/mlb_props_stack/ingest/__init__.py`
-- `src/mlb_props_stack/ingest/statcast_features.py`
-- `src/mlb_props_stack/ingest/umpire.py` (new)
-- `src/mlb_props_stack/modeling.py`
-- `tests/test_backfill.py`
-- `tests/test_data_alignment.py`
-- `tests/test_modeling.py`
-- `tests/test_statcast_feature_ingest.py`
-- `tests/test_umpire_ingest.py` (new)
+- `src/mlb_props_stack/ingest/game_context.py` (new)
+- `src/mlb_props_stack/ingest/lineup_aggregation.py` (new)
+- `src/mlb_props_stack/ingest/pitcher_features.py` (new)
+- `src/mlb_props_stack/ingest/statcast_features.py` (slimmed)
+- `src/mlb_props_stack/ingest/statcast_ingest.py` (new)
 
 ## Verification
 
-Commands run successfully before merge:
+Commands run successfully during this issue:
 
 ```bash
 uv sync --extra dev
 uv run pytest
 uv run python -m mlb_props_stack.cli --help
-uv run python -m mlb_props_stack.cli ingest-umpire --help
+uv run python -m mlb_props_stack.cli ingest-statcast-features --help
+uv run python -m mlb_props_stack
 ```
 
 Observed results:
 
-- full test suite passed: `178 passed` (up from `161` — seventeen
-  additional tests: fifteen new `test_umpire_ingest.py` cases plus a
-  new data-alignment umpire counts test and a new backfill umpire
-  kwargs test)
-- CLI help lists the `ingest-umpire` subcommand and the backfill help
-  lists umpire alongside mlb-metadata, weather, odds-api, and
-  statcast-features
+- full test suite passed: `178 passed` (same count as before the
+  refactor; no test files were modified, matching the issue
+  acceptance criteria)
+- `ingest-statcast-features` subcommand still appears in the top-level
+  help output alongside every other ingest subcommand
+- `uv run python -m mlb_props_stack` prints the same runtime
+  configuration banner it printed before the refactor
+
+Not run this slice (see Constraints):
+
+- The issue packet's `uv run python -m mlb_props_stack
+  ingest-statcast-features --date 2026-04-21` byte-identical reference
+  comparison was not executed because the local repo has no persisted
+  `data/normalized/mlb_stats_api/date=2026-04-21/` run to drive the
+  CLI, and that CLI call requires network access to Baseball Savant
+  for the Statcast CSV pulls. The 178-test suite covers the ingest
+  end-to-end against seeded metadata + CSV fixtures, including the
+  `urlopen` monkeypatch, pull ordering, parallel fetch, dedupe, park
+  factor / weather / umpire joins, and each of the three feature
+  builders, so the behavioral contract is exercised even without a
+  real slate. Anyone with a pregame slate handy should still run the
+  byte-identical comparison before merging downstream refactors
+  against the same file
 
 ## Recommended Next Issue
 
-- Backfill 2024 + 2025 slates with the new umpire source to seed
-  enough coverage for the gated numeric features
-  (`ump_called_strike_rate_30d`, `ump_k_per_9_delta_vs_league_30d`)
-  to clear `OPTIONAL_FEATURE_MIN_COVERAGE` and enter the model. Until
-  then they're held out automatically. The adapter auto-mines the
-  already-persisted feed/live payloads, so the bulk of the rebackfill
-  is just `backfill-historical --force --sources umpire` across the
-  seasons we already have MLB metadata for
-- Evaluate whether K/9 via the `× 38.25` PA approximation materially
-  differs from a proper innings-based K/9. If the Statcast
-  `events == "strikeout"` marker plus inning metadata is already in
-  `pitch_level_base.jsonl`, swap in a real innings denominator
-- Consider decomposing `ump_called_strike_rate_30d` into in-zone
-  vs. out-of-zone called-strike rates (needs `plate_x` / `plate_z` /
-  `zone` columns). "Expanded the zone" and "shrunk the zone" are
-  likely more useful signals than a single aggregate rate
-- Once enough history exists, compare a "umpire-only" model ablation
-  against the current baseline to confirm the two optional numerics
-  actually clear calibration noise before they pin into the ladder
+- Before cascading more feature families into the new submodules,
+  validate the byte-identical artifact check from the AGE-211 issue
+  packet on a real slate: capture
+  `data/normalized/statcast_search/date=<iso>/run=<ts>/` JSONL files
+  from `main` and this branch for the same `--date`, diff them
+  modulo run-id paths, and record the result. That closes the last
+  verification gap this refactor could not exercise offline
+- The previous handoff's follow-ups still stand: backfill 2024 + 2025
+  slates with the new umpire source so the gated numeric umpire
+  features clear `OPTIONAL_FEATURE_MIN_COVERAGE`, evaluate whether the
+  `× 38.25` PA approximation in `ump_k_per_9_delta_vs_league_30d`
+  materially differs from an innings-based K/9, and consider
+  decomposing `ump_called_strike_rate_30d` into in-zone vs.
+  out-of-zone rates using `plate_x`/`plate_z`/`zone` columns
+- With the new seams in place, the next feature family (park-of-pitch
+  batter splits, bullpen carryover, etc.) can land in its own module
+  under `src/mlb_props_stack/ingest/` without growing any of the four
+  that already exist. Any additional shared helpers should continue
+  to live in `statcast_ingest.py` so the feature modules stay leaf
+  consumers
 
 ## Design Callouts
 
-- Data source: MLB Stats API `feed/live` endpoint. Every scheduled
-  game already persists a feed/live JSON under
-  `data/raw/mlb_stats_api/date=<iso>/feed_live/game_pk=<pk>/captured_at=<ts>.json`
-  as part of the MLB metadata ingest. Reusing it avoids adding an
-  external scraping dependency on UmpScorecards or Retrosheet.
-  Fresh HTTP fetches only happen when the persisted file is missing
-  (e.g. the MLB metadata ingest ran before the umpire was
-  announced); those fetches are batched one-per-game sequentially
-  through the shared `MLBStatsAPIClient`, matching how every other
-  MLB-Stats-API call works in this codebase
-- K/9 approximation: the Statcast pitch-level base does not store
-  innings; it stores plate appearances via the
-  `is_plate_appearance_final_pitch` marker. K/9 is approximated as
-  `K_rate × 38.25` (9 innings × ~4.25 PAs per inning). The constant
-  is exposed as `APPROXIMATE_PA_PER_NINE_INNINGS` with an inline
-  comment so anyone extending this knows to look first for a real
-  innings denominator if one is added to the pitch-level base
-- Leakage guard: `captured_at` is clamped to
-  `min(now(), commence_time)` before emission, mirroring the weather
-  ingest contract. The `ingest_umpire_for_date` caller asserts
-  `captured_at <= commence_time` on every snapshot before writing to
-  normalized so downstream features cannot leak post-pitch data
-- Rolling-metric walker: two-pass over the prior 30 days. First pass
-  loads `umpire_id -> {date -> {game_pks}}` from prior normalized
-  umpire runs; second pass loads prior pitch_level_base per date
-  and aggregates per `game_pk`. When a prior date's Statcast ingest
-  hasn't run yet, the metric silently degrades to `None` rather than
-  half-counting. Similarly, when the umpire has no prior games in
-  the window, the metric returns `None` and the sentinel status
-  stays as `ok` (the assignment itself is still trustworthy — only
-  the history is missing)
-- Sentinel semantics: `missing_umpire_source` covers three cases —
-  feed/live payload is unreachable (HTTP error / JSON decode /
-  filesystem error on the persisted file), feed/live payload has no
-  `officialType == "Home Plate"` entry (assignment not published
-  yet), or the Home Plate entry has a partial `official` block
-  (id present but fullName missing, or vice versa). In all three
-  cases `umpire_id` / `umpire_name` are `None`, `umpire_source` is
-  `None`, and the rolling metrics are `None`. Coverage checks
-  (`ump_cov` in `check-data-alignment`) count only `ok` rows
-- Raw artifact shape: each persisted raw JSON stores `game_pk`,
-  `captured_at`, `source`, `source_feed_live_path` (the feed/live
-  file we read from, if any), the full extracted `officials` array,
-  and the resolved `umpire_id` / `umpire_name` / `umpire_status`.
-  Storing the full officials array means we can later extend to
-  first/second/third base umps without re-scraping
-- Coverage ratio: `umpire_coverage = umpire_ok_snapshots / games`,
-  not `(ok + missing) / games`. A missing-source row still gets
-  written (so coverage checks can tell the difference between
-  "umpire ingest hasn't run" and "umpire ingest ran but the
-  assignment wasn't published yet"), but it does not count toward
-  coverage. This matches the weather ingest convention
-- Adapter dispatch order: `mlb-metadata → weather → umpire → odds-api
-  → statcast-features`. Umpire must run after MLB metadata (needs
-  `games.jsonl` and persisted feed/live) and before statcast-features
-  (which joins umpire snapshots into `game_context_features.jsonl`).
-  The weather/umpire order is arbitrary — both depend only on MLB
-  metadata — but keeping the order stable means resume-aware
-  manifests stay diff-friendly
+- Four-module split matches the AGE-211 packet exactly:
+  `statcast_ingest.py` (CSV fetch + parsing + normalization +
+  foundation helpers), `pitcher_features.py` (pitcher derivation),
+  `lineup_aggregation.py` (lineup derivation), `game_context.py`
+  (game-context derivation). The original `statcast_features.py`
+  stays as the orchestrator that loads inputs and writes artifacts,
+  per the packet's "keep `statcast_features.py` as the orchestrator"
+  bullet
+- Shared helpers (e.g. `_sorted_rows`, `_safe_rate`, `_mean`) live in
+  `statcast_ingest.py` rather than a fifth `_helpers.py` module so
+  the packet's "four focused modules" acceptance is respected. They
+  operate on `StatcastPitchRecord` (defined in the same file), so
+  their home is semantically coherent
+- `_expected_leash` is defined in `pitcher_features.py` but imported
+  by `game_context.py` because leash modeling is a pitcher-centric
+  statistic and `game_context` already conceptually depends on the
+  pitcher slot. This is the only cross-feature import; the other
+  three submodules are leaf consumers of `statcast_ingest.py`
+- Monkeypatch compatibility: `tests/test_statcast_feature_ingest.py`
+  patches `mlb_props_stack.ingest.statcast_features.urlopen` at three
+  sites. The orchestrator keeps its `from urllib.request import
+  Request, urlopen` line so that attribute exists, and
+  `statcast_ingest.StatcastSearchClient.fetch_csv` calls
+  `_urlopen(...)` which does a deferred `from . import
+  statcast_features; statcast_features.urlopen(...)` lookup at call
+  time. This means the monkeypatch keeps taking effect even though
+  the HTTP client moved. The reasoning is documented inline on both
+  the shim and the orchestrator import
+- `_write_jsonl` compatibility:
+  `tests/test_ingest_atomic_writes.py` treats
+  `mlb_props_stack.ingest.statcast_features._write_jsonl` as a
+  module-level attribute and parameterizes across the three ingest
+  modules. `_write_jsonl` lives in the orchestrator (it is the
+  write-side of the orchestrator, not an ingest-layer concern), so
+  the test's lookup resolves directly; no re-export indirection is
+  needed
+- Re-export lists in `statcast_features.py` are intentionally broad.
+  Because the original file's underscore-prefixed helpers were
+  module-level attributes, any downstream code or test that did
+  `statcast_features._foo` needs `_foo` to remain on that module
+  after the move. The orchestrator therefore imports every moved
+  helper back by name so attribute lookups against the orchestrator
+  keep resolving. This is the lightest path to "existing tests pass
+  unchanged" without forcing test edits
+- `__init__.py` did not need changes. Its `from .statcast_features
+  import (...)` line still works because the orchestrator continues
+  to expose the same names, re-exported from the new submodules
+- Module sizes after the split (for reference when the next feature
+  family lands): orchestrator 610 lines (of which roughly half is
+  re-export wiring; the orchestrator body is ~360 lines),
+  `statcast_ingest.py` 555 lines, `lineup_aggregation.py` 260 lines,
+  `pitcher_features.py` 238 lines, `game_context.py` 191 lines.
+  Every feature-derivation module is well under the 47 KB / 1,600-line
+  bar the original file had crossed
 
 ## Constraints And Open Questions
 
-- No secondary umpire data source. If MLB Stats API is unreachable
-  and no feed/live payload was ever persisted for a given game, the
-  umpire assignment lands as `missing_umpire_source` with no
-  fallback. UmpScorecards or Retrosheet could backstop that, but
-  they'd require a scraping dependency and introduce diverging id
-  spaces. Currently the mitigation is to re-run `ingest-umpire`
-  after the MLB metadata ingest catches the published assignment
-- Rolling metrics are computed at emit time from the most recent
-  normalized runs. This means `ingest-umpire` must be re-run for
-  every slate date — there's no incremental update or cache. For
-  a full-season backfill the walker re-reads 30 days of
-  `pitch_level_base.jsonl` per date, which is linear in
-  `history_days × games`. If that becomes a bottleneck, precompute
-  a per-umpire rolling aggregate during the Statcast ingest
-- The K/9 PA approximation (`× 38.25`) is a known noise source. It
-  does not affect `ump_called_strike_rate_30d` (which is pitch-level)
-  but does bias `ump_k_per_9_delta_vs_league_30d` compared to a
-  proper innings-based K/9. See "Recommended Next Issue" above
+- Byte-identical artifact comparison from the issue packet was not
+  run locally (see "Verification / Not run this slice" above). If
+  reviewers want it run before merge, they should pick a slate date
+  with persisted `data/normalized/mlb_stats_api/date=<iso>/` metadata
+  and diff the `statcast_search` run outputs between `main` and this
+  branch
+- The re-export block on `statcast_features.py` lists every moved
+  helper by name. This is by design (tests/grep-accessible
+  attributes) but it means adding or renaming a helper in a
+  submodule in future issues will require touching the orchestrator's
+  import list too. Prefer doing renames as their own isolated slices
+  so the diffs stay auditable
+- The `_urlopen` lazy-dispatch shim in `statcast_ingest.py` exists
+  solely to keep the existing test monkeypatch targeting
+  `statcast_features.urlopen` functional. A future cleanup could move
+  the monkeypatch target to `statcast_ingest.urlopen` (or to an
+  injectable `urlopen=` kwarg on `StatcastSearchClient`) and drop the
+  shim, but that is out of scope for a no-behavior-change refactor
+- No `from urllib.request import urlopen` call site in production
+  code uses the local name after the move — the orchestrator's
+  `urlopen` import is load-bearing only for the monkeypatch contract.
+  The `# noqa: F401` annotation documents this explicitly
 
 ## Known Follow-Up Nits (Non-Blocking)
 
-- `ingest-umpire` only persists raw artifacts for games where a
-  feed/live payload was available. If the HTTP fallback also fails
-  or the persisted file errors out, only the sentinel snapshot is
-  written and no raw file lands on disk. This keeps the raw
-  directory free of empty placeholders, but a missing raw file means
-  a given game's `missing_umpire_source` status can only be
-  explained by reading the sentinel row's `error_message`. Adding a
-  `umpire_failures.jsonl` side-file would make gap investigations
-  easier
-- The handoff previously mentioned a potential integration test for
-  `ingest-weather` → `ingest-statcast-features` threading; the same
-  gap exists for `ingest-umpire` → `ingest-statcast-features`. The
-  two halves are unit-tested separately (statcast test seeds an
-  umpire snapshot JSONL directly), but an end-to-end CLI smoke test
-  would catch path mismatches that unit tests cannot
-- `_load_prior_umpire_game_pks_by_umpire` and
-  `_load_prior_pitch_aggregates` both walk run directories
-  independently. For a full-season backfill they could share a
-  single walk. Low-priority optimization; correctness is
-  straightforward with the current split
-- `ingest_umpire_for_date` treats `payload is None` as "no persisted
-  payload, attempt HTTP" (see the `if payload is None:` branch in
-  `umpire.py`). A persisted feed/live file containing literal `null`
-  would silently trigger the HTTP path while the raw artifact still
-  records `source_feed_live_path` pointing at the corrupted file.
-  MLB Stats API is not expected to return `null`, but tightening the
-  check to `if not isinstance(payload, dict):` with an explicit
-  sentinel would be more defensive
-- `ingest_umpire_for_date` lazily instantiates `MLBStatsAPIClient()`
-  into the caller-supplied `client` parameter slot the first time
-  an HTTP fallback is needed inside the loop. Behaviour is correct
-  (the real client is reused across subsequent games), but mutating
-  a caller's argument across iterations is mildly surprising.
-  Reading `_http_client = client` into a local up front would be
-  cleaner
-- `umpire_coverage = ok / games` (missing-source rows excluded from
-  the numerator) is set in `data_alignment.py` without an inline
-  comment explaining the asymmetry versus weather's
-  `(ok + roof_closed) / games`. Worth a one-line comment so future
-  readers don't "unify" the two and silently start counting sentinel
-  rows as covered
+- Import list in the orchestrator is long (~50 names). A future
+  hygiene pass could drop any underscore-prefixed names that turn
+  out to be unused outside the submodules once tests explicitly
+  target the submodule attribute instead. That would need coordinated
+  test edits, which AGE-211 intentionally avoided
+- `_expected_leash` cross-module import establishes `game_context
+  → pitcher_features`. If a future issue decomposes pitcher feature
+  derivation further, consider promoting `_expected_leash` to
+  `statcast_ingest.py` (it only reads `StatcastPitchRecord`) so
+  `game_context` can depend on the foundation module directly
+- The orchestrator still owns `_LoadedMLBMetadata` and the MLB
+  metadata loader helpers. These are arguably orchestration
+  responsibilities, but they could also fit into a dedicated
+  `mlb_metadata_loader.py` submodule if future work adds more
+  reading-side helpers for MLB metadata. Not worth a dedicated issue
+  by itself
+- `DEFAULT_HISTORY_DAYS` lives in the orchestrator while
+  `DEFAULT_MAX_FETCH_WORKERS` lives in `statcast_ingest.py`. They are
+  both re-exported via the orchestrator for `ingest/__init__.py`
+  compatibility. The split is intentional (`HISTORY_DAYS` is an
+  orchestrator default, `MAX_FETCH_WORKERS` is a fetch-client
+  default) but the asymmetry is worth flagging for future readers
