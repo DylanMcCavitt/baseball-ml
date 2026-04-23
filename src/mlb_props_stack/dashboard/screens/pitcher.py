@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from html import escape
 
 import pandas as pd
@@ -15,6 +16,7 @@ from ..lib.data import (
     get_pmf,
     get_recent_form,
 )
+from ..lib.navigation import rerun_streamlit, set_dashboard_query_params
 from ..lib.plots import pmf_fig, probability_comparison_fig
 
 
@@ -139,10 +141,21 @@ def render_pitcher_screen(
         return
 
     board_date = str(row["official_date"])
+    if st.button(
+        "← board",
+        key="pitcher_back_to_board",
+        type="secondary",
+    ):
+        set_dashboard_query_params(
+            st,
+            screen="board",
+            board_date=date.fromisoformat(board_date),
+        )
+        rerun_streamlit(st)
+
     st.markdown(
         "<div class='strike-screen-head'>"
         "<div>"
-        f"<div><a href='?screen=board&board_date={escape(board_date)}'>← board</a></div>"
         f"<div class='strike-screen-title'>{escape(str(row['pitcher']).upper())} "
         f"<span class='strike-dim'>/ {escape(str(row['team']))} vs {escape(str(row['opp']))} / {escape(board_date)}</span></div>"
         "</div>"

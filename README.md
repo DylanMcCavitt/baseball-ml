@@ -524,10 +524,28 @@ By default that writes:
 - ranked scored props for the selected slate
 - the matched line snapshot, selected side, edge, EV, and suggested stake
 - the inference and edge run IDs used to produce the sheet
+- the final wager-gate status that separates raw actionable edges from
+  approved wagers
+
+Print the terminal-first approved wager card from the latest saved daily sheet:
+
+```bash
+uv run python -m mlb_props_stack build-wager-card --date 2026-04-22
+```
+
+By default the card prints only rows with `wager_approved=true` and writes:
+
+- `data/normalized/wager_card/date=YYYY-MM-DD/run=.../wager_card.jsonl`
+  with the exact terminal card rows
+- `data/normalized/wager_card/date=YYYY-MM-DD/run=.../wager_card_metadata.json`
+  with the source daily-candidate run and approved/blocked counts
+
+Add `--include-rejected` to print blocked candidates in a separate diagnostic
+section without mixing them into the approved wager list.
 
 `paper_results.jsonl` keeps:
 
-- only actionable paper bets from the latest sheet for each date
+- only approved paper bets from the latest sheet for each date
 - same-line CLV where an exact close snapshot exists
 - pending vs settled result status with realized PnL once outcomes are available
 

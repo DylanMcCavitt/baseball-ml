@@ -46,6 +46,7 @@ from .paper_tracking import (
     build_daily_candidate_workflow,
 )
 from .tracking import TrackingConfig
+from .wager_card import build_wager_card, render_wager_card_summary
 
 
 def _parse_bookmaker_argument(value: str | None) -> tuple[str, ...] | None:
@@ -564,6 +565,30 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    wager_card_parser = subparsers.add_parser(
+        "build-wager-card",
+        help="Print and persist the approved wager card for a saved daily candidate sheet.",
+    )
+    wager_card_parser.add_argument(
+        "--date",
+        dest="target_date",
+        default=None,
+        help=(
+            "Official date to print in YYYY-MM-DD format. "
+            "Defaults to the latest saved daily candidate date."
+        ),
+    )
+    wager_card_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where normalized daily candidate artifacts live.",
+    )
+    wager_card_parser.add_argument(
+        "--include-rejected",
+        action="store_true",
+        help="Include blocked candidates in a separate diagnostic section and artifact rows.",
+    )
+
     edge_parser = subparsers.add_parser(
         "build-edge-candidates",
         help="Join latest odds snapshots to saved model ladders and score edges.",
@@ -742,6 +767,19 @@ def main(argv: list[str] | None = None) -> int:
             source_model_run_dir=args.source_model_run_dir,
         )
         print(render_daily_candidate_workflow_summary(result))
+        return 0
+
+    if args.command == "build-wager-card":
+        result = build_wager_card(
+            target_date=(
+                date.fromisoformat(args.target_date)
+                if args.target_date is not None
+                else None
+            ),
+            output_dir=args.output_dir,
+            include_rejected=args.include_rejected,
+        )
+        print(render_wager_card_summary(result))
         return 0
 
     if args.command == "build-edge-candidates":
