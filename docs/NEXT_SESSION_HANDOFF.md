@@ -4,13 +4,13 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Current issue branch: `feat/age-261-stage-gate-evaluator`
-- Current issue: `AGE-261` - add a stage-gate evaluator CLI for live-use
+- Current issue branch: none; `AGE-261` has been merged to `main`
+- Last completed issue: `AGE-261` - add a stage-gate evaluator CLI for live-use
   readiness
-- Status: implementation and local verification are complete; open/merge the PR
-  from this branch after review and green CI
-- Last completed mainline issue before this branch: `AGE-260` - add an approved
-  wager card CLI/report for the live slate
+- Status: implementation, local verification, PR creation, CI, PR merge, and
+  canonical local `main` sync are complete
+- Merged PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/37>
+- Merge commit on `main`: `95ceca2`
 
 ## What Changed In This Slice
 
