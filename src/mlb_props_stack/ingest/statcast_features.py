@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, date, datetime, time, timedelta
 import csv
 from io import StringIO
 import json
 from pathlib import Path
+import time as time_module
 from typing import Any, Callable
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
@@ -32,6 +35,11 @@ STATCAST_REQUEST_HEADERS = {
     ),
 }
 DEFAULT_HISTORY_DAYS = 30
+DEFAULT_MAX_FETCH_ATTEMPTS = 4
+DEFAULT_INITIAL_BACKOFF_SECONDS = 1.0
+DEFAULT_BACKOFF_MULTIPLIER = 2.0
+DEFAULT_MAX_BACKOFF_SECONDS = 30.0
+DEFAULT_MAX_FETCH_WORKERS = 4
 STRIKEOUT_EVENTS = {"strikeout", "strikeout_double_play"}
 WHIFF_DESCRIPTIONS = {
     "missed_bunt",
@@ -234,15 +242,87 @@ class _LoadedMLBMetadata:
 
 
 class StatcastSearchClient:
-    """Small stdlib-only HTTP client for Baseball Savant Statcast CSV pulls."""
+    """Small stdlib-only HTTP client for Baseball Savant Statcast CSV pulls.
 
-    def __init__(self, *, timeout_seconds: float = 60.0) -> None:
+    Retries transient failures (5xx, 429, network errors, timeouts) with
+    exponential backoff. 4xx responses other than 429 are surfaced immediately
+    so a caller sees a bad request instead of hammering the endpoint.
+    """
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 60.0,
+        max_attempts: int = DEFAULT_MAX_FETCH_ATTEMPTS,
+        initial_backoff_seconds: float = DEFAULT_INITIAL_BACKOFF_SECONDS,
+        backoff_multiplier: float = DEFAULT_BACKOFF_MULTIPLIER,
+        max_backoff_seconds: float = DEFAULT_MAX_BACKOFF_SECONDS,
+        sleep: Callable[[float], None] = time_module.sleep,
+    ) -> None:
+        if max_attempts < 1:
+            raise ValueError("max_attempts must be at least 1")
+        if initial_backoff_seconds < 0:
+            raise ValueError("initial_backoff_seconds must be non-negative")
+        if backoff_multiplier < 1:
+            raise ValueError("backoff_multiplier must be at least 1")
+        if max_backoff_seconds < 0:
+            raise ValueError("max_backoff_seconds must be non-negative")
         self.timeout_seconds = timeout_seconds
+        self.max_attempts = max_attempts
+        self.initial_backoff_seconds = initial_backoff_seconds
+        self.backoff_multiplier = backoff_multiplier
+        self.max_backoff_seconds = max_backoff_seconds
+        self._sleep = sleep
 
     def fetch_csv(self, url: str) -> str:
         request = Request(url, headers=STATCAST_REQUEST_HEADERS)
-        with urlopen(request, timeout=self.timeout_seconds) as response:
-            return response.read().decode("utf-8")
+        last_error: Exception | None = None
+        for attempt_index in range(self.max_attempts):
+            try:
+                with urlopen(request, timeout=self.timeout_seconds) as response:
+                    return response.read().decode("utf-8")
+            except HTTPError as error:
+                if not _is_retriable_http_error(error):
+                    raise
+                last_error = error
+            except (URLError, TimeoutError) as error:
+                last_error = error
+
+            if attempt_index == self.max_attempts - 1:
+                break
+            self._sleep(self._backoff_delay(attempt_index))
+
+        assert last_error is not None  # loop only exits via break or return
+        raise last_error
+
+    def _backoff_delay(self, attempt_index: int) -> float:
+        raw_delay = self.initial_backoff_seconds * (
+            self.backoff_multiplier**attempt_index
+        )
+        return min(self.max_backoff_seconds, raw_delay)
+
+
+def _is_retriable_http_error(error: HTTPError) -> bool:
+    # 429 Too Many Requests and any 5xx indicate a transient condition where
+    # backing off and retrying is appropriate. Everything else (400, 401, 403,
+    # 404, ...) reflects a permanent request problem that retries cannot fix.
+    return error.code == 429 or error.code >= 500
+
+
+def _fetch_csv_texts_concurrently(
+    *,
+    client: StatcastSearchClient,
+    source_urls: list[str],
+    max_workers: int,
+) -> list[str]:
+    """Fetch CSV payloads in parallel, preserving the input order of URLs."""
+    if not source_urls:
+        return []
+    worker_count = min(max_workers, len(source_urls))
+    if worker_count <= 1:
+        return [client.fetch_csv(url) for url in source_urls]
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        return list(executor.map(client.fetch_csv, source_urls))
 
 
 def build_statcast_search_csv_url(
@@ -1128,10 +1208,13 @@ def ingest_statcast_features_for_date(
     history_days: int = DEFAULT_HISTORY_DAYS,
     client: StatcastSearchClient | None = None,
     now: Callable[[], datetime] = utc_now,
+    max_fetch_workers: int = DEFAULT_MAX_FETCH_WORKERS,
 ) -> StatcastFeatureIngestResult:
     """Fetch Statcast pulls and build normalized feature tables for one slate date."""
     if history_days < 1:
         raise ValueError("history_days must be at least 1")
+    if max_fetch_workers < 1:
+        raise ValueError("max_fetch_workers must be at least 1")
     if client is None:
         client = StatcastSearchClient()
 
@@ -1178,6 +1261,9 @@ def ingest_statcast_features_for_date(
     ]
     pull_requests.extend(("batter", batter_id) for batter_id in sorted(batter_ids))
 
+    # Pre-compute one spec per pull serially so the `now()` test seam is
+    # consumed in deterministic order even when fetches run in parallel.
+    pull_specs: list[tuple[str, int, datetime, str]] = []
     for player_type, player_id in pull_requests:
         captured_at = now().astimezone(UTC)
         source_url = build_statcast_search_csv_url(
@@ -1186,7 +1272,17 @@ def ingest_statcast_features_for_date(
             start_date=history_start_date,
             end_date=history_end_date,
         )
-        csv_text = client.fetch_csv(source_url)
+        pull_specs.append((player_type, player_id, captured_at, source_url))
+
+    csv_texts = _fetch_csv_texts_concurrently(
+        client=client,
+        source_urls=[spec[3] for spec in pull_specs],
+        max_workers=max_fetch_workers,
+    )
+
+    for (player_type, player_id, captured_at, source_url), csv_text in zip(
+        pull_specs, csv_texts, strict=True
+    ):
         raw_path = (
             output_root
             / "raw"

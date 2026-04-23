@@ -3,49 +3,58 @@
 ## Current State
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
-- Default branch: `main` at `f271684`
-- Last completed issue: `AGE-198` on branch `dylan/adoring-hopper-e6b43f`
-  (merged via [PR #24](https://github.com/DylanMcCavitt/baseball-ml/pull/24))
-- This slice adds a per-date coverage diagnostic that reports row counts and
-  feature/outcome/odds coverage ratios across every ingest, feature, and
-  modeling artifact the scoring stack depends on
-- Current status: the diagnostic is wired into the CLI and exits non-zero when
-  coverage falls under the configured threshold, so it can gate
-  `build-walk-forward-backtest` in future automation
+- Default branch: `main`
+- Last completed issue: `AGE-199` on branch
+  `dylan/unruffled-albattani-af303f`
+- This slice hardens Statcast CSV ingestion: `StatcastSearchClient.fetch_csv`
+  now retries transient failures with bounded exponential backoff, and
+  `ingest_statcast_features_for_date` fans Statcast pulls out across a small
+  thread pool instead of serialising one HTTP request per player
+- Current status: the client retries 429/5xx/URLError/TimeoutError while
+  passing 4xx through immediately, and the ingest reliably completes all
+  pulls in pull-order-deterministic parallel fetches
 
 ## What Was Completed In This Slice
 
-- `src/mlb_props_stack/data_alignment.py`
-  - adds `ArtifactCounts`, `DateCoverageRow`, and `DataAlignmentReport`
-    dataclasses plus the pure `build_date_coverage_rows` helper
-  - counts per-date rows in `games.jsonl`, `probable_starters.jsonl`,
-    `lineup_snapshots.jsonl`, `prop_line_snapshots.jsonl` (plus distinct
-    `pitcher_mlb_id` coverage), the Statcast feature tables, and the latest
-    baseline run's `training_dataset.jsonl`,
-    `raw_vs_calibrated_probabilities.jsonl`, and `starter_outcomes.jsonl`
-  - derives `feature_coverage`, `outcome_coverage`, and `odds_coverage`
-    ratios and flags any date whose ratios fall below the threshold
-  - renders a human-readable table plus a footer of failing dates
-- `src/mlb_props_stack/cli.py`
-  - adds the `check-data-alignment --start-date --end-date --threshold`
-    subcommand
-  - changes `main()` to return an `int` so non-zero exits flow out of
-    `python -m mlb_props_stack`
-- `src/mlb_props_stack/__main__.py`
-  - propagates the CLI exit code via `sys.exit(main())`
+- `src/mlb_props_stack/ingest/statcast_features.py`
+  - adds `DEFAULT_MAX_FETCH_ATTEMPTS`, `DEFAULT_INITIAL_BACKOFF_SECONDS`,
+    `DEFAULT_BACKOFF_MULTIPLIER`, `DEFAULT_MAX_BACKOFF_SECONDS`, and
+    `DEFAULT_MAX_FETCH_WORKERS` module constants so retry/parallelism
+    defaults are explicit and tunable
+  - rewrites `StatcastSearchClient` with retry + exponential backoff around
+    `urlopen`; accepts `max_attempts`, `initial_backoff_seconds`,
+    `backoff_multiplier`, `max_backoff_seconds`, and an injectable `sleep`
+    callable; only retries 429/5xx `HTTPError` plus `URLError` / `TimeoutError`
+  - adds `_is_retriable_http_error` and `_fetch_csv_texts_concurrently`
+    helpers; ingest pre-computes pull specs serially (keeps the `now()` test
+    seam deterministic) and then dispatches CSV fetches through a bounded
+    `ThreadPoolExecutor` while writes, dedup, and record ordering remain
+    serial
+  - `ingest_statcast_features_for_date` gains `max_fetch_workers`
+    (defaulting to `DEFAULT_MAX_FETCH_WORKERS = 4`) and validates it
+- `src/mlb_props_stack/ingest/__init__.py`
+  - re-exports `DEFAULT_MAX_FETCH_WORKERS` alongside the existing ingest
+    surface
 - `README.md`
-  - adds a one-line usage example for the new subcommand
-- `tests/test_data_alignment.py`
-  - adds focused tests for the pure helper, the filesystem orchestrator,
-    the renderer, and the CLI exit-code surface on synthetic fixtures
+  - notes the retry-with-backoff and threaded fetch pool behaviour of the
+    Statcast feature ingest
+- `tests/test_statcast_feature_ingest.py`
+  - adds retry-success, retry-exhausted, 4xx-no-retry, and
+    config-validation coverage for `StatcastSearchClient`
+  - adds a `_ConcurrencyProbeClient` that blocks until at least two fetches
+    overlap to prove the thread pool actually parallelises work
+  - adds a pull-ordering assertion that confirms manifest rows stay in
+    pitcher-then-batter sorted order and captured-at timestamps stay
+    monotonic even under threaded fetches
+  - asserts that `max_fetch_workers=0` is rejected
 
 ## Files Changed
 
 - `README.md`
-- `src/mlb_props_stack/__main__.py`
-- `src/mlb_props_stack/cli.py`
-- `src/mlb_props_stack/data_alignment.py`
-- `tests/test_data_alignment.py`
+- `docs/NEXT_SESSION_HANDOFF.md`
+- `src/mlb_props_stack/ingest/__init__.py`
+- `src/mlb_props_stack/ingest/statcast_features.py`
+- `tests/test_statcast_feature_ingest.py`
 
 ## Verification
 
@@ -55,20 +64,13 @@ Commands run successfully before merge:
 uv sync --extra dev
 uv run pytest
 uv run python -m mlb_props_stack
-uv run python -m mlb_props_stack check-data-alignment \
-  --start-date 2026-04-18 \
-  --end-date 2026-04-23
 ```
 
 Observed results:
 
-- full test suite passed: `84 passed`
-- `uv run python -m mlb_props_stack`
-  - printed the runtime summary successfully
-- `uv run python -m mlb_props_stack check-data-alignment --start-date 2026-04-18 --end-date 2026-04-23`
-  - reproduced the all-skipped backtest window root cause for the current
-    repo state (missing ingest, feature, and odds artifacts for every date)
-  - exited with code `1`
+- full test suite passed: `91 passed` (up from `84` on the previous slice)
+- `uv run python -m mlb_props_stack` rendered the runtime summary as before
+- new tests cover both the retry loop and the parallel fetch pool behaviour
 
 ## Recommended Next Issue
 
@@ -81,13 +83,11 @@ Observed results:
 
 Why this should go next:
 
-- `check-data-alignment` now makes the missing-artifact root cause visible in
-  seconds, but the local checkout still does not contain the historical
-  ingest, feature, or odds snapshots required to actually train/backtest on
-  `2026-04-18` through `2026-04-23`
-- the Strike Ops dashboard replay path from the previous slice still depends
-  on saved historical odds snapshots, so the same backfill unblocks both
-  automated backtests and the dashboard replay loop
+- `check-data-alignment` still flags the missing historical ingest/feature/
+  odds artifacts for that window, and this slice only improved how the
+  ingest fetches data — it did not actually pull any new snapshots
+- the threaded fetch pool is what unblocks doing the backfill in a
+  reasonable wall-clock budget, but the backfill itself is still pending
 - once the coverage report passes for that window, the natural follow-up is
   to gate `build-walk-forward-backtest` on `check-data-alignment --threshold`
   so all-skipped windows surface as a precondition failure instead of an
@@ -95,17 +95,23 @@ Why this should go next:
 
 ## Constraints And Open Questions
 
-- `feature_coverage` uses `pitcher_daily_features / probable_starters` as its
-  denominator, and `odds_coverage` uses `unique pitcher_mlb_id with lines /
-  probable_starters`. If probable starters for a slate are zero, both ratios
-  are reported as `n/a` and the date is treated as failing so empty ingest
-  surfaces explicitly rather than silently passing
-- The report scans the latest normalized run per date for ingest artifacts
-  and the latest baseline run whose `training_dataset.jsonl` contains the
-  requested date for modeling artifacts. There is currently no explicit
-  `--model-run-dir` override; add one only if a future slice needs to pin a
-  specific baseline run for the report
-- The diagnostic is read-only — it does not mutate or clean up artifacts.
-  A separate archival / rotation path should land before running the CLI on
-  very large historical windows, because it loads each JSONL file once per
-  requested date to filter rows by `official_date`
+- `StatcastSearchClient` retries only on 429, 5xx, `URLError`, and
+  `TimeoutError`. Other `HTTPError` codes (e.g. 400, 401, 403, 404)
+  short-circuit immediately so bad requests are not amplified into retry
+  storms. If a future Baseball Savant behavioural change requires retrying
+  other status codes, revisit `_is_retriable_http_error`
+- The thread pool is CPU-light — each worker spends almost all of its time
+  blocked on I/O — so `DEFAULT_MAX_FETCH_WORKERS=4` is deliberately modest
+  to keep us well under any Baseball Savant soft rate limits. Raise
+  `max_fetch_workers` only after confirming the endpoint tolerates it, and
+  consider wiring the override through the CLI if the ingest ever needs to
+  burst harder in a specific slice
+- Pull timestamps (`captured_at`) are still generated serially in the main
+  thread before dispatch so the existing `now()` / deterministic test
+  seam keeps working. If the real-world gap between dispatch and completion
+  ever matters (e.g. to compute latency per pull), add a second completion
+  timestamp rather than threading the `now()` closure into workers
+- `modeling._fetch_starter_outcome` still calls `client.fetch_csv` one row
+  at a time. It already benefits from retry/backoff via the shared client,
+  but it has not been parallelised yet. Add a threaded fan-out there only if
+  a future training slice actually needs the throughput
