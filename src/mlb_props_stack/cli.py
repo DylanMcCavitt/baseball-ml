@@ -28,9 +28,11 @@ from .ingest import (
     MLBMetadataIngestResult,
     OddsAPIIngestResult,
     StatcastFeatureIngestResult,
+    WeatherIngestResult,
     ingest_mlb_metadata_for_date,
     ingest_odds_api_pitcher_lines_for_date,
     ingest_statcast_features_for_date,
+    ingest_weather_for_date,
 )
 from .modeling import (
     StarterStrikeoutInferenceResult,
@@ -111,6 +113,23 @@ def render_odds_api_ingest_summary(result: OddsAPIIngestResult) -> str:
         f"events_raw_path={result.events_raw_path}",
         f"event_mappings_path={result.event_mappings_path}",
         f"prop_line_snapshots_path={result.prop_line_snapshots_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_weather_ingest_summary(result: WeatherIngestResult) -> str:
+    """Return a human-readable summary for one pregame weather build."""
+    lines = [
+        f"Pregame weather ingest complete for {result.target_date.isoformat()}",
+        f"run_id={result.run_id}",
+        f"snapshots={result.snapshot_count}",
+        f"outdoor_snapshots={result.outdoor_snapshot_count}",
+        f"roof_closed_snapshots={result.roof_closed_snapshot_count}",
+        f"missing_venue_metadata={result.missing_venue_metadata_count}",
+        f"missing_source={result.missing_source_count}",
+        f"raw_snapshot_files={len(result.raw_snapshot_paths)}",
+        f"mlb_games_path={result.mlb_games_path}",
+        f"weather_snapshots_path={result.weather_snapshots_path}",
     ]
     return "\n".join(lines)
 
@@ -354,6 +373,25 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    weather_parser = subparsers.add_parser(
+        "ingest-weather",
+        help=(
+            "Fetch pregame Open-Meteo weather snapshots anchored to "
+            "commence_time - 60 minutes for one slate date."
+        ),
+    )
+    weather_parser.add_argument(
+        "--date",
+        dest="target_date",
+        required=True,
+        help="Target MLB schedule date in YYYY-MM-DD format.",
+    )
+    weather_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where raw and normalized ingest artifacts will be written.",
+    )
+
     statcast_parser = subparsers.add_parser(
         "ingest-statcast-features",
         help="Fetch targeted Statcast history and build feature tables for one date.",
@@ -379,9 +417,9 @@ def build_argument_parser() -> argparse.ArgumentParser:
     backfill_parser = subparsers.add_parser(
         "backfill-historical",
         help=(
-            "Iterate ingest-mlb-metadata, ingest-odds-api-lines (best-effort), "
-            "and ingest-statcast-features across a date window with idempotent "
-            "resume."
+            "Iterate ingest-mlb-metadata, ingest-weather, "
+            "ingest-odds-api-lines (best-effort), and ingest-statcast-features "
+            "across a date window with idempotent resume."
         ),
     )
     backfill_parser.add_argument(
@@ -405,7 +443,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=(
             "Comma-separated list of sources to backfill. "
             f"Valid values: {','.join(ALL_SOURCES)}. "
-            "Defaults to all three."
+            "Defaults to every source."
         ),
     )
     backfill_parser.add_argument(
@@ -595,6 +633,14 @@ def main(argv: list[str] | None = None) -> int:
             bookmakers=bookmakers,
         )
         print(render_odds_api_ingest_summary(result))
+        return 0
+
+    if args.command == "ingest-weather":
+        weather_result = ingest_weather_for_date(
+            target_date=date.fromisoformat(args.target_date),
+            output_dir=args.output_dir,
+        )
+        print(render_weather_ingest_summary(weather_result))
         return 0
 
     if args.command == "ingest-statcast-features":

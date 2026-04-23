@@ -890,6 +890,13 @@ def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_mis
 
     context_by_pitcher = {row["pitcher_id"]: row for row in context_rows}
     assert context_by_pitcher[680802]["weather_status"] == "missing_weather_source"
+    assert context_by_pitcher[680802]["weather_source"] is None
+    assert context_by_pitcher[680802]["weather_temperature_f"] is None
+    assert context_by_pitcher[680802]["weather_wind_speed_mph"] is None
+    assert context_by_pitcher[680802]["weather_wind_direction_deg"] is None
+    assert context_by_pitcher[680802]["weather_humidity_pct"] is None
+    assert context_by_pitcher[680802]["weather_captured_at"] is None
+    assert context_by_pitcher[680802]["roof_type"] is None
     assert context_by_pitcher[680802]["park_factor_status"] == "ok"
     assert context_by_pitcher[680802]["park_k_factor"] == 1.02
     assert context_by_pitcher[680802]["park_k_factor_vs_rhh"] == 1.02

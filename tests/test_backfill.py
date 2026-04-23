@@ -16,6 +16,7 @@ from mlb_props_stack.backfill import (
     SOURCE_MLB_METADATA,
     SOURCE_ODDS_API,
     SOURCE_STATCAST_FEATURES,
+    SOURCE_WEATHER,
     BackfillResult,
     backfill_historical,
     is_source_complete,
@@ -35,6 +36,7 @@ def _seed_complete_run(
     """Write empty placeholder files so ``is_source_complete`` returns True."""
     normalized_root = {
         SOURCE_MLB_METADATA: "mlb_stats_api",
+        SOURCE_WEATHER: "weather",
         SOURCE_ODDS_API: "the_odds_api",
         SOURCE_STATCAST_FEATURES: "statcast_search",
     }[source]
@@ -144,6 +146,7 @@ def test_is_source_complete_falls_back_to_older_run(tmp_path):
 
 def test_backfill_historical_invokes_each_runner_per_date(tmp_path):
     mlb = _RunnerSpy(name="mlb")
+    weather = _RunnerSpy(name="weather")
     odds = _RunnerSpy(name="odds")
     statcast = _RunnerSpy(name="statcast")
 
@@ -153,15 +156,17 @@ def test_backfill_historical_invokes_each_runner_per_date(tmp_path):
         output_dir=tmp_path,
         sources=ALL_SOURCES,
         mlb_metadata_runner=mlb,
+        weather_runner=weather,
         odds_api_runner=odds,
         statcast_features_runner=statcast,
         now=_fixed_now(),
     )
 
     assert mlb.invocations == [date(2026, 4, 18), date(2026, 4, 19)]
+    assert weather.invocations == [date(2026, 4, 18), date(2026, 4, 19)]
     assert odds.invocations == [date(2026, 4, 18), date(2026, 4, 19)]
     assert statcast.invocations == [date(2026, 4, 18), date(2026, 4, 19)]
-    assert result.ingested_count == 6
+    assert result.ingested_count == 8
     assert result.skipped_count == 0
     assert result.failed_count == 0
     assert result.all_succeeded
@@ -174,6 +179,7 @@ def test_backfill_historical_resume_skips_dates_with_complete_artifacts(tmp_path
         _seed_complete_run(tmp_path, source=source, target_date=target)
 
     mlb = _RunnerSpy(name="mlb")
+    weather = _RunnerSpy(name="weather")
     odds = _RunnerSpy(name="odds")
     statcast = _RunnerSpy(name="statcast")
 
@@ -183,15 +189,17 @@ def test_backfill_historical_resume_skips_dates_with_complete_artifacts(tmp_path
         output_dir=tmp_path,
         sources=ALL_SOURCES,
         mlb_metadata_runner=mlb,
+        weather_runner=weather,
         odds_api_runner=odds,
         statcast_features_runner=statcast,
         now=_fixed_now(),
     )
 
     assert mlb.invocations == []
+    assert weather.invocations == []
     assert odds.invocations == []
     assert statcast.invocations == []
-    assert result.skipped_count == 3
+    assert result.skipped_count == 4
     assert result.ingested_count == 0
     assert result.failed_count == 0
 
@@ -202,6 +210,7 @@ def test_backfill_historical_force_reingests_complete_dates(tmp_path):
         _seed_complete_run(tmp_path, source=source, target_date=target)
 
     mlb = _RunnerSpy(name="mlb")
+    weather = _RunnerSpy(name="weather")
     odds = _RunnerSpy(name="odds")
     statcast = _RunnerSpy(name="statcast")
 
@@ -212,23 +221,26 @@ def test_backfill_historical_force_reingests_complete_dates(tmp_path):
         sources=ALL_SOURCES,
         force=True,
         mlb_metadata_runner=mlb,
+        weather_runner=weather,
         odds_api_runner=odds,
         statcast_features_runner=statcast,
         now=_fixed_now(),
     )
 
     assert mlb.invocations == [target]
+    assert weather.invocations == [target]
     assert odds.invocations == [target]
     assert statcast.invocations == [target]
-    assert result.ingested_count == 3
+    assert result.ingested_count == 4
     assert result.skipped_count == 0
 
 
 def test_backfill_historical_resume_picks_up_only_missing_sources(tmp_path):
     target = date(2026, 4, 18)
     _seed_complete_run(tmp_path, source=SOURCE_MLB_METADATA, target_date=target)
-    # Odds and Statcast are missing for this date and should still be ingested.
+    # Weather, Odds, and Statcast are missing for this date and should still be ingested.
     mlb = _RunnerSpy(name="mlb")
+    weather = _RunnerSpy(name="weather")
     odds = _RunnerSpy(name="odds")
     statcast = _RunnerSpy(name="statcast")
 
@@ -238,21 +250,24 @@ def test_backfill_historical_resume_picks_up_only_missing_sources(tmp_path):
         output_dir=tmp_path,
         sources=ALL_SOURCES,
         mlb_metadata_runner=mlb,
+        weather_runner=weather,
         odds_api_runner=odds,
         statcast_features_runner=statcast,
         now=_fixed_now(),
     )
 
     assert mlb.invocations == []
+    assert weather.invocations == [target]
     assert odds.invocations == [target]
     assert statcast.invocations == [target]
-    assert result.ingested_count == 2
+    assert result.ingested_count == 3
     assert result.skipped_count == 1
 
 
 def test_backfill_historical_keeps_running_when_one_source_raises(tmp_path):
     target = date(2026, 4, 18)
     mlb = _RunnerSpy(name="mlb")
+    weather = _RunnerSpy(name="weather")
     odds = _RunnerSpy(name="odds", raise_for_dates=(target,))
     statcast = _RunnerSpy(name="statcast")
 
@@ -262,6 +277,7 @@ def test_backfill_historical_keeps_running_when_one_source_raises(tmp_path):
         output_dir=tmp_path,
         sources=ALL_SOURCES,
         mlb_metadata_runner=mlb,
+        weather_runner=weather,
         odds_api_runner=odds,
         statcast_features_runner=statcast,
         now=_fixed_now(),
@@ -272,9 +288,11 @@ def test_backfill_historical_keeps_running_when_one_source_raises(tmp_path):
         for source in result.dates[0].sources
     }
     assert statuses[SOURCE_MLB_METADATA] == "ingested"
+    assert statuses[SOURCE_WEATHER] == "ingested"
     assert statuses[SOURCE_ODDS_API] == "failed"
     assert statuses[SOURCE_STATCAST_FEATURES] == "ingested"
     assert mlb.invocations == [target]
+    assert weather.invocations == [target]
     assert odds.invocations == [target]
     # The statcast runner must run even though odds raised on the same date.
     assert statcast.invocations == [target]
@@ -285,6 +303,7 @@ def test_backfill_historical_keeps_running_when_one_source_raises(tmp_path):
 def test_backfill_historical_only_runs_selected_sources(tmp_path):
     target = date(2026, 4, 18)
     mlb = _RunnerSpy(name="mlb")
+    weather = _RunnerSpy(name="weather")
     odds = _RunnerSpy(name="odds")
     statcast = _RunnerSpy(name="statcast")
 
@@ -294,11 +313,13 @@ def test_backfill_historical_only_runs_selected_sources(tmp_path):
         output_dir=tmp_path,
         sources=(SOURCE_MLB_METADATA, SOURCE_STATCAST_FEATURES),
         mlb_metadata_runner=mlb,
+        weather_runner=weather,
         odds_api_runner=odds,
         statcast_features_runner=statcast,
         now=_fixed_now(),
     )
 
+    assert weather.invocations == []
     assert odds.invocations == []
     assert mlb.invocations == [target]
     assert statcast.invocations == [target]
@@ -309,6 +330,7 @@ def test_backfill_historical_writes_manifest_with_per_date_outcomes(tmp_path):
     target = date(2026, 4, 18)
     _seed_complete_run(tmp_path, source=SOURCE_MLB_METADATA, target_date=target)
     mlb = _RunnerSpy(name="mlb")
+    weather = _RunnerSpy(name="weather")
     odds = _RunnerSpy(name="odds", raise_for_dates=(target,))
     statcast = _RunnerSpy(name="statcast")
 
@@ -318,6 +340,7 @@ def test_backfill_historical_writes_manifest_with_per_date_outcomes(tmp_path):
         output_dir=tmp_path,
         sources=ALL_SOURCES,
         mlb_metadata_runner=mlb,
+        weather_runner=weather,
         odds_api_runner=odds,
         statcast_features_runner=statcast,
         history_days=15,
@@ -334,6 +357,7 @@ def test_backfill_historical_writes_manifest_with_per_date_outcomes(tmp_path):
     assert len(manifest["dates"]) == 1
     by_source = {entry["source"]: entry for entry in manifest["dates"][0]["sources"]}
     assert by_source[SOURCE_MLB_METADATA]["status"] == "skipped_resume"
+    assert by_source[SOURCE_WEATHER]["status"] == "ingested"
     assert by_source[SOURCE_ODDS_API]["status"] == "failed"
     assert by_source[SOURCE_ODDS_API]["error_type"] == "RuntimeError"
     assert by_source[SOURCE_STATCAST_FEATURES]["status"] == "ingested"
