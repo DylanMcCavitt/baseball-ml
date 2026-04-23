@@ -176,3 +176,23 @@ Observed results:
   `prop_line_snapshots.jsonl`, so retroactively widening the filter
   requires rerunning the ingest rather than relying on a cached fan
   out of every book The Odds API returned
+
+## Known Follow-Up Nits (Non-Blocking)
+
+Captured during AGE-206 review; none of these gate the merge but
+they're worth folding into the next slice that touches this code:
+
+- `_parse_bookmaker_argument` raises `ValueError` directly instead of
+  argparse's nicer `argparse.ArgumentTypeError`, so a malformed
+  `--bookmakers ""` surfaces as a Python traceback rather than a
+  friendly CLI message. Trivial wrap when it next gets touched
+- No test covers `tightest_book` with three or more books, so the
+  alphabetical tie-break on sportsbook key is only exercised in the
+  two-book path. Worth adding a 3-book fixture when we extend the
+  pricing tests again
+- No edge-layer test exercises `devig_mode="consensus"` with empty
+  `peer_lines` (it falls through to a single-book consensus, which
+  equals `devig_two_way`, already covered in `tests/test_pricing.py`
+  via `test_devig_consensus_two_way_single_pair_matches_devig_two_way`).
+  Adding a parallel test at the `analyze_projection` seam would keep
+  the boundary assertion where the branch lives
