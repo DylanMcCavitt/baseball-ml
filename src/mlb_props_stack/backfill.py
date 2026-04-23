@@ -31,24 +31,32 @@ from .ingest import (
     MLBMetadataIngestResult,
     OddsAPIIngestResult,
     StatcastFeatureIngestResult,
+    UmpireIngestResult,
     WeatherIngestResult,
     ingest_mlb_metadata_for_date,
     ingest_odds_api_pitcher_lines_for_date,
     ingest_statcast_features_for_date,
+    ingest_umpire_for_date,
     ingest_weather_for_date,
 )
 
 
 SOURCE_MLB_METADATA = "mlb-metadata"
 SOURCE_WEATHER = "weather"
+SOURCE_UMPIRE = "umpire"
 SOURCE_ODDS_API = "odds-api"
 SOURCE_STATCAST_FEATURES = "statcast-features"
 
-# Weather must run after MLB metadata (depends on games.jsonl) and before
-# statcast-features (which joins weather snapshots into game_context).
+# Umpire must run after MLB metadata (depends on games.jsonl and the
+# persisted feed/live payloads it writes) and before statcast-features
+# (which joins umpire snapshots into game_context). Weather is
+# independent of umpire so either order between them works; umpire
+# follows weather here to keep the per-date sequence stable for
+# resume-aware manifests.
 ALL_SOURCES: tuple[str, ...] = (
     SOURCE_MLB_METADATA,
     SOURCE_WEATHER,
+    SOURCE_UMPIRE,
     SOURCE_ODDS_API,
     SOURCE_STATCAST_FEATURES,
 )
@@ -63,6 +71,7 @@ REQUIRED_ARTIFACT_FILES: dict[str, tuple[str, ...]] = {
         "lineup_snapshots.jsonl",
     ),
     SOURCE_WEATHER: ("weather_snapshots.jsonl",),
+    SOURCE_UMPIRE: ("umpire_snapshots.jsonl",),
     SOURCE_ODDS_API: (
         "event_game_mappings.jsonl",
         "prop_line_snapshots.jsonl",
@@ -81,6 +90,7 @@ REQUIRED_ARTIFACT_FILES: dict[str, tuple[str, ...]] = {
 NORMALIZED_ROOT_BY_SOURCE: dict[str, str] = {
     SOURCE_MLB_METADATA: "mlb_stats_api",
     SOURCE_WEATHER: "weather",
+    SOURCE_UMPIRE: "umpire",
     SOURCE_ODDS_API: "the_odds_api",
     SOURCE_STATCAST_FEATURES: "statcast_search",
 }
@@ -274,6 +284,9 @@ def backfill_historical(
     weather_runner: Callable[
         ..., WeatherIngestResult
     ] = ingest_weather_for_date,
+    umpire_runner: Callable[
+        ..., UmpireIngestResult
+    ] = ingest_umpire_for_date,
     odds_api_runner: Callable[
         ..., OddsAPIIngestResult
     ] = ingest_odds_api_pitcher_lines_for_date,
@@ -311,6 +324,10 @@ def backfill_historical(
             output_dir=output_root,
         ),
         SOURCE_WEATHER: lambda target_date: weather_runner(
+            target_date=target_date,
+            output_dir=output_root,
+        ),
+        SOURCE_UMPIRE: lambda target_date: umpire_runner(
             target_date=target_date,
             output_dir=output_root,
         ),

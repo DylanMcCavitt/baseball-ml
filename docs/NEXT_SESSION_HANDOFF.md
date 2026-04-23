@@ -4,149 +4,170 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Last completed issue: `AGE-205` on branch
-  `dylan/determined-bartik-9ed6da`
-- This slice replaces the `missing_weather_source` stub on
-  `game_context_features.jsonl` with a real pregame weather snapshot
-  per game, sourced from Open-Meteo's free Archive API, anchored to
-  `commence_time - 60 minutes` at the venue's lat/lon. Closed-roof
-  stadiums emit a `roof_closed` sentinel row instead of hitting the
-  weather API, retractable-roof parks are ingested as outdoor, and
-  games whose venue is missing from the static metadata table land
-  with the existing `missing_venue_metadata` status so downstream
-  callers keep running
-- Current status: weather ingest runs standalone
-  (`uv run python -m mlb_props_stack.cli ingest-weather --date …`),
-  inside the historical backfill orchestrator (new `weather` source
-  slot between `mlb-metadata` and `odds-api`), and the statcast
-  feature ingest now joins the latest weather snapshots into every
-  emitted `game_context_features.jsonl` row. `check-data-alignment`
-  surfaces weather coverage in a new `wx_cov` column plus
-  per-status breakdowns (`weather_ok`, `weather_roof`). Training rows
-  expose four new numeric fields (`weather_temperature_f`,
-  `weather_wind_speed_mph`, `weather_humidity_pct`) and three
-  traceability fields (`weather_source`, `weather_captured_at`,
-  `roof_type`); the numerics are gated by `OPTIONAL_FEATURE_MIN_COVERAGE`
-  so sparse weather history will not silently regress the model
+- Last completed issue: `AGE-204` on branch
+  `dylan/magical-ptolemy-1d5da2`
+- This slice adds a pregame **home-plate umpire** ingest to the pipeline
+  so downstream modeling can consume per-game umpire identity plus two
+  rolling 30-day strike-zone signals — `ump_called_strike_rate_30d` and
+  `ump_k_per_9_delta_vs_league_30d`. The issue suggested
+  UmpScorecards/Retrosheet scraping, but the MLB Stats API `feed/live`
+  endpoint already returns `liveData.boxscore.officials` including the
+  home-plate umpire's id and full name, and those payloads are already
+  persisted by the MLB metadata ingest. The umpire adapter mines the
+  existing raw feed/live files (falling back to a fresh HTTP fetch
+  only when the payload is missing) so the new source takes no
+  additional scraping dependency
+- Current status: umpire ingest runs standalone
+  (`uv run python -m mlb_props_stack.cli ingest-umpire --date …`),
+  inside the historical backfill orchestrator as a new `umpire`
+  source slot between `weather` and `odds-api` (runs after
+  `mlb-metadata` so `games.jsonl` + persisted feed/live exist, runs
+  before `statcast-features` so umpire snapshots join
+  `game_context_features.jsonl`), and the statcast feature ingest
+  joins the latest umpire snapshots into every emitted
+  `game_context_features.jsonl` row. `check-data-alignment` surfaces
+  umpire coverage in a new `ump_cov` column plus a raw count column
+  (`umpire_ok`). Training rows expose seven new fields
+  (`umpire_status`, `umpire_source`, `umpire_id`, `umpire_name`,
+  `umpire_captured_at`, `ump_called_strike_rate_30d`,
+  `ump_k_per_9_delta_vs_league_30d`); the two numerics are gated by
+  `OPTIONAL_FEATURE_MIN_COVERAGE` so sparse umpire history will not
+  silently regress the model
 
 ## What Was Completed In This Slice
 
-- `src/mlb_props_stack/ingest/weather.py` (new module)
-  - `VenueMetadata` + `load_venue_metadata` + `lookup_venue_metadata`
-    read the curated CSV at `data/static/venues/venue_metadata.csv`,
-    validate `roof_type` against `{"open", "retractable", "fixed"}`,
-    and return a frozen dataclass keyed on `venue_id`
-  - `OpenMeteoClient` + `build_open_meteo_archive_url` call the
-    Archive API with UTC timestamps and fahrenheit/mph units; the
-    client is injected so tests never hit the network
-  - `normalize_open_meteo_payload` picks the hourly row whose
-    timestamp is `<= commence_time - offset_minutes` so the
-    leakage guard is enforced at the source boundary; it raises
-    `ValueError` on malformed payloads and returns `None` when no
-    pre-commence row is available
-  - `ingest_weather_for_date` walks the latest `games.jsonl`, emits
-    one snapshot per game (outdoor call, closed-roof sentinel,
-    missing-venue-metadata fallback, or missing-weather-source
-    fallback when the client raises), and writes raw + normalized
-    JSONL under `data/{raw,normalized}/weather/date=<iso>/run=<ts>/`
-  - `load_latest_weather_snapshots_for_date` returns a
-    `dict[int, WeatherSnapshotRecord]` keyed on `game_pk` for the
+- `src/mlb_props_stack/ingest/umpire.py` (new module)
+  - `UmpireAssignmentRecord` frozen dataclass holds the raw-ish
+    home-plate umpire assignment per scheduled game; `UmpireSnapshotRecord`
+    is the normalized snapshot joined with the 30-day rolling metrics
+  - `normalize_feed_live_officials_payload` extracts the
+    `liveData.boxscore.officials` array from a feed/live payload;
+    `_extract_home_plate_umpire` tolerates casing variations and
+    returns `(None, None)` when the assignment has not been published
+  - `_latest_persisted_feed_live_path` finds the most recent
+    persisted feed/live JSON for one game so the adapter can avoid a
+    fresh HTTP call; `ingest_umpire_for_date` falls back to
+    `MLBStatsAPIClient.fetch_json` when no persisted file exists and
+    emits a `missing_umpire_source` sentinel when the fetch raises
+  - `_load_prior_umpire_game_pks_by_umpire` walks the prior 30
+    calendar days of normalized umpire runs to build
+    `umpire_id -> {date -> {game_pks}}`; `_load_prior_pitch_aggregates`
+    walks the matching Statcast `pitch_level_base.jsonl` runs to
+    tally per-date and per-game-pk pitch/called-strike/PA/strikeout
+    counts; `compute_rolling_umpire_metrics` combines the two into
+    `(ump_called_strike_rate_30d, ump_k_per_9_delta_vs_league_30d)`
+  - Post-review fix: `compute_rolling_umpire_metrics` now returns
+    `(called_strike_rate, None)` when the umpire has pitches but zero
+    recorded plate-appearance finals, rather than discarding both
+    metrics. `called_strike_rate` is pitch-level and computable
+    independent of PA; previously a degenerate PA=0 window (e.g.
+    suspended games) would zero out the strike rate too
+  - K/9 is approximated as `K_rate × 38.25` (9 innings × ~4.25 PAs
+    per inning) documented inline on `APPROXIMATE_PA_PER_NINE_INNINGS`
+    — the pitch-level base captures plate appearances via the
+    final-pitch marker, not innings directly, and the multiplier is
+    stable enough for a delta-vs-league feature
+  - `ingest_umpire_for_date` writes raw artifacts at
+    `data/raw/umpire/date=<iso>/game_pk=<pk>/captured_at=<ts>.json`
+    (extracted officials block plus metadata) and normalized snapshots
+    at `data/normalized/umpire/date=<iso>/run=<ts>/umpire_snapshots.jsonl`
+  - `load_latest_umpire_snapshots_for_date` returns a
+    `dict[int, UmpireSnapshotRecord]` keyed on `game_pk` for the
     latest complete run, used by the statcast feature ingest
 - `src/mlb_props_stack/ingest/statcast_features.py`
-  - `GameContextFeatureRow` gains `weather_source`,
-    `weather_temperature_f`, `weather_wind_speed_mph`,
-    `weather_wind_direction_deg`, `weather_humidity_pct`,
-    `weather_captured_at`, and `roof_type`; the two old stub fields
-    (`weather_wind_mph`, `weather_conditions`) are gone
-  - `_build_game_context_feature_row` now joins via a
-    `weather_lookup: dict[int, WeatherSnapshotRecord]` passed in
-    from the top-level ingest call
+  - `GameContextFeatureRow` gains `umpire_status`, `umpire_source`,
+    `umpire_id`, `umpire_name`, `umpire_captured_at`,
+    `ump_called_strike_rate_30d`, and
+    `ump_k_per_9_delta_vs_league_30d`
+  - `_build_game_context_feature_row` now joins via an
+    `umpire_lookup: dict[int, UmpireSnapshotRecord]` passed in from
+    the top-level ingest call; games without a snapshot land with the
+    `missing_umpire_source` sentinel
 - `src/mlb_props_stack/ingest/__init__.py`
-  - re-exports the weather dataclasses, client, ROOF_TYPE_* /
-    WEATHER_STATUS_* constants, and both weather entry points
+  - re-exports the umpire dataclasses, constants, and both entry
+    points alongside the existing ingest surface
 - `src/mlb_props_stack/cli.py`
-  - new `ingest-weather` subcommand (`--date`, `--output-dir`)
-  - `backfill-historical` help copy now lists the weather source
+  - new `ingest-umpire` subcommand (`--date`, `--output-dir`)
+  - `render_umpire_ingest_summary` renders run id, snapshot counts,
+    history window, and raw + normalized output paths
+  - `backfill-historical` help copy now lists the umpire source
 - `src/mlb_props_stack/backfill.py`
-  - new `SOURCE_WEATHER = "weather"` placed between MLB metadata and
-    odds-api in `ALL_SOURCES` so weather runs after `games.jsonl`
-    exists (its dependency) and before statcast-features joins it
+  - new `SOURCE_UMPIRE = "umpire"` placed between `SOURCE_WEATHER`
+    and `SOURCE_ODDS_API` in `ALL_SOURCES`; comments document why
+    umpire must run after MLB metadata and before statcast-features
   - `REQUIRED_ARTIFACT_FILES` + `NORMALIZED_ROOT_BY_SOURCE` entries
-    for weather
-  - `backfill_historical` accepts a `weather_runner` kwarg
-    (defaulting to `ingest_weather_for_date`) and routes it through
+    for umpire
+  - `backfill_historical` accepts an `umpire_runner` kwarg
+    (defaulting to `ingest_umpire_for_date`) and routes it through
     the same resume / error-isolation path as the other sources
 - `src/mlb_props_stack/modeling.py`
   - `StarterStrikeoutTrainingRow` grows seven new fields for the
-    weather snapshot + roof type
-  - `weather_temperature_f`, `weather_wind_speed_mph`, and
-    `weather_humidity_pct` join `OPTIONAL_NUMERIC_FEATURES` so they
-    are gated by `OPTIONAL_FEATURE_MIN_COVERAGE` and will not be
-    pinned into the model on sparse history
-  - training-row construction uses `.get()` everywhere so tests that
-    stub the old `game_context_features.jsonl` schema keep working
+    umpire assignment + rolling metrics
+  - `ump_called_strike_rate_30d` and
+    `ump_k_per_9_delta_vs_league_30d` join `OPTIONAL_NUMERIC_FEATURES`
+    so they are gated by `OPTIONAL_FEATURE_MIN_COVERAGE` and will
+    not be pinned into the model on sparse history
+  - training-row construction uses `.get()` so older fixtures that
+    predate the umpire schema still pass
 - `src/mlb_props_stack/data_alignment.py`
-  - `ArtifactCounts` gains `weather_snapshots`, `weather_ok_snapshots`,
-    and `weather_roof_closed_snapshots`
-  - `DateCoverageRow` gains `weather_coverage`; it's computed as
-    `(ok + roof_closed) / games` so closed-roof dates do not drag
-    coverage even though they never hit the weather API
-  - `render_data_alignment_summary` prints three new columns
-    (`weather_ok`, `weather_roof`, `wx_cov`)
-- `data/static/venues/venue_metadata.csv` + `README.md`
-  - curated 30-team stadium table with `venue_id`, lat/lon, and
-    `roof_type`; README documents the Open-Meteo choice, leakage
-    guard, and roof semantics (closed -> sentinel, retractable ->
-    outdoor)
-- `tests/test_weather_ingest.py` (15 tests)
-  - happy path outdoor snapshot, fixed-roof sentinel,
-    retractable-roof treated as outdoor, missing-venue-metadata
-    fallback, missing-weather-source fallback when the client
-    raises, leakage guard never returns a row past `commence_time`,
-    negative `offset_minutes` rejected, URL builder parameters,
-    payload normalize happy + error paths, venue CSV loader
-    happy + unknown-roof rejection, and
-    `load_latest_weather_snapshots_for_date` returning the latest
-    complete run (or `{}` when nothing exists)
+  - `ArtifactCounts` gains `umpire_assignments` and
+    `umpire_ok_snapshots`
+  - `DateCoverageRow` gains `umpire_coverage`; it's computed as
+    `ok / games` (missing-source rows do not count toward coverage)
+  - `render_data_alignment_summary` prints two new columns
+    (`umpire_ok`, `ump_cov`)
+- `tests/test_umpire_ingest.py` (15 tests)
+  - happy path via persisted feed/live, HTTP fallback when no
+    persisted payload exists, missing-home-plate sentinel,
+    HTTP-error sentinel, leakage guard (`captured_at <= commence_time`),
+    negative `history_days` rejection, rolling-metric computation
+    from prior umpire + Statcast history, `compute_rolling_umpire_metrics`
+    degrading to `None` when no prior data is seeded,
+    `normalize_feed_live_officials_payload` happy + missing-block
+    paths, `load_latest_umpire_snapshots_for_date` returning the
+    latest complete run (or `{}` when nothing exists), the
+    `DEFAULT_UMPIRE_HISTORY_DAYS` spec guard, and a regression test
+    for the PA=0 fix that asserts called-strike rate is preserved
+    when only plate-appearance finals are missing
 - `tests/test_statcast_feature_ingest.py`
-  - new assertions that all seven weather fields arrive on the
+  - new assertions that all seven umpire fields arrive on the
     emitted `game_context_features.jsonl` rows (populated when a
-    weather snapshot joins, `None` when the stub falls through)
+    snapshot joins, `None` when the stub falls through)
 - `tests/test_modeling.py`
-  - the training-row fixture now writes the new field names so the
-    baseline training happy path still passes with the updated
-    schema
+  - the training-row fixture now writes the new umpire field names
+    so the baseline training happy path still passes with the
+    updated schema
 - `tests/test_backfill.py`
   - every `ALL_SOURCES` test now constructs a `_RunnerSpy` for
-    weather and threads it through
-    `backfill_historical(weather_runner=…)`; counts updated
-    (4 ingested instead of 3, 4 skipped instead of 3, etc.); the
-    manifest test asserts the new `weather` entry lands alongside
-    mlb-metadata, odds-api, and statcast-features
+    umpire and threads it through
+    `backfill_historical(umpire_runner=…)`; counts updated
+    (5 sources ingested instead of 4, 5 skipped instead of 4, etc.);
+    the manifest test asserts the new `umpire` entry lands alongside
+    mlb-metadata, weather, odds-api, and statcast-features; a new
+    `test_backfill_historical_passes_target_date_and_output_dir_to_umpire_runner`
+    confirms the orchestrator forwards kwargs to the umpire runner
 - `tests/test_data_alignment.py`
-  - `_counts` helper gains the three new `ArtifactCounts` fields
-    with sensible defaults; new `test_collect_artifact_counts_reads_weather_statuses`
-    seeds a three-row `weather_snapshots.jsonl` and asserts the
+  - `_counts` helper gains the two new `ArtifactCounts` fields with
+    sensible defaults; new `test_collect_artifact_counts_reads_umpire_statuses`
+    seeds a three-row `umpire_snapshots.jsonl` and asserts the
     status counts land correctly; the render-summary test asserts
-    the `weather_ok`, `weather_roof`, and `wx_cov` headers appear
+    the `umpire_ok` and `ump_cov` headers appear
 
 ## Files Changed
 
 - `docs/NEXT_SESSION_HANDOFF.md`
-- `data/static/venues/README.md`
-- `data/static/venues/venue_metadata.csv`
 - `src/mlb_props_stack/backfill.py`
 - `src/mlb_props_stack/cli.py`
 - `src/mlb_props_stack/data_alignment.py`
 - `src/mlb_props_stack/ingest/__init__.py`
 - `src/mlb_props_stack/ingest/statcast_features.py`
-- `src/mlb_props_stack/ingest/weather.py`
+- `src/mlb_props_stack/ingest/umpire.py` (new)
 - `src/mlb_props_stack/modeling.py`
 - `tests/test_backfill.py`
 - `tests/test_data_alignment.py`
 - `tests/test_modeling.py`
 - `tests/test_statcast_feature_ingest.py`
-- `tests/test_weather_ingest.py`
+- `tests/test_umpire_ingest.py` (new)
 
 ## Verification
 
@@ -155,115 +176,165 @@ Commands run successfully before merge:
 ```bash
 uv sync --extra dev
 uv run pytest
-uv run python -m mlb_props_stack
 uv run python -m mlb_props_stack.cli --help
+uv run python -m mlb_props_stack.cli ingest-umpire --help
 ```
 
 Observed results:
 
-- full test suite passed: `161 passed` (up from `145` on the
-  previous slice; sixteen additional tests — fifteen new
-  `test_weather_ingest.py` cases plus a new data-alignment weather
-  counts test)
-- CLI help now lists the `ingest-weather` subcommand and the
-  backfill help lists weather between `mlb-metadata` and `odds-api`
-- `uv run python -m mlb_props_stack` still renders the stack
-  defaults cleanly (nothing weather-specific in the runtime
-  summary — intentional, since weather feeds the model, not the
-  scoring config)
+- full test suite passed: `178 passed` (up from `161` — seventeen
+  additional tests: fifteen new `test_umpire_ingest.py` cases plus a
+  new data-alignment umpire counts test and a new backfill umpire
+  kwargs test)
+- CLI help lists the `ingest-umpire` subcommand and the backfill help
+  lists umpire alongside mlb-metadata, weather, odds-api, and
+  statcast-features
 
 ## Recommended Next Issue
 
-- Backfill 2024 + 2025 slates with the new weather source to seed
+- Backfill 2024 + 2025 slates with the new umpire source to seed
   enough coverage for the gated numeric features
-  (`weather_temperature_f`, `weather_wind_speed_mph`,
-  `weather_humidity_pct`) to clear `OPTIONAL_FEATURE_MIN_COVERAGE`
-  and enter the model. Until then they're held out automatically
-- Consider splitting wind into parallel / perpendicular components
-  against the batting orientation (needs stadium bearing metadata),
-  or deriving a simple wind-helps-hitters / wind-helps-pitchers
-  signal. Raw `wind_speed_mph` is likely less useful than a
-  directional feature
-- Once we have enough history, evaluate whether humidity and
-  temperature actually improve starter-strikeout calibration — the
-  literature disagrees and it is easy to add noise here
+  (`ump_called_strike_rate_30d`, `ump_k_per_9_delta_vs_league_30d`)
+  to clear `OPTIONAL_FEATURE_MIN_COVERAGE` and enter the model. Until
+  then they're held out automatically. The adapter auto-mines the
+  already-persisted feed/live payloads, so the bulk of the rebackfill
+  is just `backfill-historical --force --sources umpire` across the
+  seasons we already have MLB metadata for
+- Evaluate whether K/9 via the `× 38.25` PA approximation materially
+  differs from a proper innings-based K/9. If the Statcast
+  `events == "strikeout"` marker plus inning metadata is already in
+  `pitch_level_base.jsonl`, swap in a real innings denominator
+- Consider decomposing `ump_called_strike_rate_30d` into in-zone
+  vs. out-of-zone called-strike rates (needs `plate_x` / `plate_z` /
+  `zone` columns). "Expanded the zone" and "shrunk the zone" are
+  likely more useful signals than a single aggregate rate
+- Once enough history exists, compare a "umpire-only" model ablation
+  against the current baseline to confirm the two optional numerics
+  actually clear calibration noise before they pin into the ladder
 
 ## Design Callouts
 
-- `data/static/venues/venue_metadata.csv` is rebuilt against
-  `https://statsapi.mlb.com/api/v1/venues/{id}?hydrate=location` so
-  every row maps the exact MLB Stats API `venue_id` that schedule
-  responses emit (Angel Stadium=1, Tropicana=12, Chase=15,
-  Oracle=2395, Great American=2602, Citizens Bank=2681,
-  loanDepot=4169, Globe Life=5325, Citi=3289, Yankee=3313,
-  Target=3312, Truist=4705, Nationals=3309). A prior draft had ~15
-  rows pointing at the wrong coordinates (e.g. id=2395 labeled
-  T-Mobile Park) — every Open-Meteo call would have pulled weather
-  for the wrong city. If you edit this file, look up the id via
-  the MLB API first, do not guess from the team name
-- Legacy venue ids are preserved on purpose: id=10 (Oakland
-  Coliseum) covers 2022-2024 A's backfills before id=2529 (Sutter
-  Health Park), and id=2523 (George M. Steinbrenner Field) covers
-  the 2025 Rays while Tropicana (id=12) was offline. Removing any
-  of these rows silently regresses historical weather coverage
-- Leakage guard is layered: `_nearest_hour_index` picks the hourly
-  row closest to `commence_time - 60 min` (in either direction),
-  and `ingest_weather_for_date` asserts `captured_at <= commence_time`
-  before emission. With the default 60-minute offset, the picked
-  hour always lands within `[commence_time - 90 min, commence_time
-  - 30 min]`. The assertion is the hard safety net for pathological
-  short offsets; do not ship offset < 30 minutes without reworking
-  the nearest-hour logic
-- Retractable-roof parks (Chase, Rogers Centre, T-Mobile, American
-  Family, Daikin, loanDepot, Globe Life) always fetch outdoor
-  weather; only fixed domes (Tropicana) skip the API with a
-  `roof_closed` sentinel. MLB Stats API does not expose historical
-  roof state, so this is an accepted noise source in Toronto,
-  Arizona, Miami, Seattle, Minneapolis, Houston, Milwaukee, and
-  Texas games
-- Weather numerics (`weather_temperature_f`, `weather_wind_speed_mph`,
-  `weather_humidity_pct`) live in `OPTIONAL_NUMERIC_FEATURES` so
-  they drop out of training silently if coverage across the window
-  is below `OPTIONAL_FEATURE_MIN_COVERAGE`. Intended safety rail
-  for the first backfill; once 2024 + 2025 are seeded, confirm
-  coverage clears the threshold before assuming the features are
-  in the model
-- Open-Meteo Archive is the single weather provider. It's free and
-  no-API-key, but has no redundancy — a rate-limit or outage on a
-  given day means every affected game falls back to
-  `missing_weather_source`. The API's hourly cap is ~1000 points per
-  request, and the current client fetches one day per game per call.
-  If backfill volume becomes a problem, batch by venue across a
-  date window (one request can cover a full season of hourly data
-  for a single lat/lon)
-- Test fixtures in `tests/test_weather_ingest.py` track the real
-  MLB Stats API venue ids (Tropicana=12, Chase=15, Progressive=5)
-  even though the tests inject their own `venue_lookup`. Kept in
-  sync so the fixtures do not lie about what a real schedule row
-  looks like
+- Data source: MLB Stats API `feed/live` endpoint. Every scheduled
+  game already persists a feed/live JSON under
+  `data/raw/mlb_stats_api/date=<iso>/feed_live/game_pk=<pk>/captured_at=<ts>.json`
+  as part of the MLB metadata ingest. Reusing it avoids adding an
+  external scraping dependency on UmpScorecards or Retrosheet.
+  Fresh HTTP fetches only happen when the persisted file is missing
+  (e.g. the MLB metadata ingest ran before the umpire was
+  announced); those fetches are batched one-per-game sequentially
+  through the shared `MLBStatsAPIClient`, matching how every other
+  MLB-Stats-API call works in this codebase
+- K/9 approximation: the Statcast pitch-level base does not store
+  innings; it stores plate appearances via the
+  `is_plate_appearance_final_pitch` marker. K/9 is approximated as
+  `K_rate × 38.25` (9 innings × ~4.25 PAs per inning). The constant
+  is exposed as `APPROXIMATE_PA_PER_NINE_INNINGS` with an inline
+  comment so anyone extending this knows to look first for a real
+  innings denominator if one is added to the pitch-level base
+- Leakage guard: `captured_at` is clamped to
+  `min(now(), commence_time)` before emission, mirroring the weather
+  ingest contract. The `ingest_umpire_for_date` caller asserts
+  `captured_at <= commence_time` on every snapshot before writing to
+  normalized so downstream features cannot leak post-pitch data
+- Rolling-metric walker: two-pass over the prior 30 days. First pass
+  loads `umpire_id -> {date -> {game_pks}}` from prior normalized
+  umpire runs; second pass loads prior pitch_level_base per date
+  and aggregates per `game_pk`. When a prior date's Statcast ingest
+  hasn't run yet, the metric silently degrades to `None` rather than
+  half-counting. Similarly, when the umpire has no prior games in
+  the window, the metric returns `None` and the sentinel status
+  stays as `ok` (the assignment itself is still trustworthy — only
+  the history is missing)
+- Sentinel semantics: `missing_umpire_source` covers three cases —
+  feed/live payload is unreachable (HTTP error / JSON decode /
+  filesystem error on the persisted file), feed/live payload has no
+  `officialType == "Home Plate"` entry (assignment not published
+  yet), or the Home Plate entry has a partial `official` block
+  (id present but fullName missing, or vice versa). In all three
+  cases `umpire_id` / `umpire_name` are `None`, `umpire_source` is
+  `None`, and the rolling metrics are `None`. Coverage checks
+  (`ump_cov` in `check-data-alignment`) count only `ok` rows
+- Raw artifact shape: each persisted raw JSON stores `game_pk`,
+  `captured_at`, `source`, `source_feed_live_path` (the feed/live
+  file we read from, if any), the full extracted `officials` array,
+  and the resolved `umpire_id` / `umpire_name` / `umpire_status`.
+  Storing the full officials array means we can later extend to
+  first/second/third base umps without re-scraping
+- Coverage ratio: `umpire_coverage = umpire_ok_snapshots / games`,
+  not `(ok + missing) / games`. A missing-source row still gets
+  written (so coverage checks can tell the difference between
+  "umpire ingest hasn't run" and "umpire ingest ran but the
+  assignment wasn't published yet"), but it does not count toward
+  coverage. This matches the weather ingest convention
+- Adapter dispatch order: `mlb-metadata → weather → umpire → odds-api
+  → statcast-features`. Umpire must run after MLB metadata (needs
+  `games.jsonl` and persisted feed/live) and before statcast-features
+  (which joins umpire snapshots into `game_context_features.jsonl`).
+  The weather/umpire order is arbitrary — both depend only on MLB
+  metadata — but keeping the order stable means resume-aware
+  manifests stay diff-friendly
 
 ## Constraints And Open Questions
 
-- The venue CSV hard-codes lat/lon and roof type. If a team relocates
-  (London / Seoul / Tokyo series, spring-training regular-season
-  games, stadium rebuilds), the row must be updated by hand — there
-  is no runtime fallback that infers coordinates from `venue_name`
+- No secondary umpire data source. If MLB Stats API is unreachable
+  and no feed/live payload was ever persisted for a given game, the
+  umpire assignment lands as `missing_umpire_source` with no
+  fallback. UmpScorecards or Retrosheet could backstop that, but
+  they'd require a scraping dependency and introduce diverging id
+  spaces. Currently the mitigation is to re-run `ingest-umpire`
+  after the MLB metadata ingest catches the published assignment
+- Rolling metrics are computed at emit time from the most recent
+  normalized runs. This means `ingest-umpire` must be re-run for
+  every slate date — there's no incremental update or cache. For
+  a full-season backfill the walker re-reads 30 days of
+  `pitch_level_base.jsonl` per date, which is linear in
+  `history_days × games`. If that becomes a bottleneck, precompute
+  a per-umpire rolling aggregate during the Statcast ingest
+- The K/9 PA approximation (`× 38.25`) is a known noise source. It
+  does not affect `ump_called_strike_rate_30d` (which is pitch-level)
+  but does bias `ump_k_per_9_delta_vs_league_30d` compared to a
+  proper innings-based K/9. See "Recommended Next Issue" above
 
 ## Known Follow-Up Nits (Non-Blocking)
 
-- The venue metadata CSV is checked into `data/static/venues/`.
-  It's tiny (30 rows) but the directory layout implies a larger
-  static catalog — consider moving it to `docs/static/` or
-  `src/mlb_props_stack/static/` if we never grow past a couple of
-  tables
-- `load_latest_weather_snapshots_for_date` returns `{}` when no
-  complete run exists; the statcast feature ingest treats that as
-  "stub everything as `missing_weather_source`". If we ever want to
-  block statcast-feature ingest on weather availability we'll need
-  a stricter mode, but that is out of scope for this slice
-- There is no explicit integration test that exercises
-  `ingest-weather` -> `ingest-statcast-features` end to end; the
-  two sides are covered by unit-level fixtures and the statcast
-  ingest test seeds a weather JSONL directly. A full pipeline smoke
-  test that threads both ingests through the CLI would catch path
-  mismatches that unit tests cannot
+- `ingest-umpire` only persists raw artifacts for games where a
+  feed/live payload was available. If the HTTP fallback also fails
+  or the persisted file errors out, only the sentinel snapshot is
+  written and no raw file lands on disk. This keeps the raw
+  directory free of empty placeholders, but a missing raw file means
+  a given game's `missing_umpire_source` status can only be
+  explained by reading the sentinel row's `error_message`. Adding a
+  `umpire_failures.jsonl` side-file would make gap investigations
+  easier
+- The handoff previously mentioned a potential integration test for
+  `ingest-weather` → `ingest-statcast-features` threading; the same
+  gap exists for `ingest-umpire` → `ingest-statcast-features`. The
+  two halves are unit-tested separately (statcast test seeds an
+  umpire snapshot JSONL directly), but an end-to-end CLI smoke test
+  would catch path mismatches that unit tests cannot
+- `_load_prior_umpire_game_pks_by_umpire` and
+  `_load_prior_pitch_aggregates` both walk run directories
+  independently. For a full-season backfill they could share a
+  single walk. Low-priority optimization; correctness is
+  straightforward with the current split
+- `ingest_umpire_for_date` treats `payload is None` as "no persisted
+  payload, attempt HTTP" (see the `if payload is None:` branch in
+  `umpire.py`). A persisted feed/live file containing literal `null`
+  would silently trigger the HTTP path while the raw artifact still
+  records `source_feed_live_path` pointing at the corrupted file.
+  MLB Stats API is not expected to return `null`, but tightening the
+  check to `if not isinstance(payload, dict):` with an explicit
+  sentinel would be more defensive
+- `ingest_umpire_for_date` lazily instantiates `MLBStatsAPIClient()`
+  into the caller-supplied `client` parameter slot the first time
+  an HTTP fallback is needed inside the loop. Behaviour is correct
+  (the real client is reused across subsequent games), but mutating
+  a caller's argument across iterations is mildly surprising.
+  Reading `_http_client = client` into a local up front would be
+  cleaner
+- `umpire_coverage = ok / games` (missing-source rows excluded from
+  the numerator) is set in `data_alignment.py` without an inline
+  comment explaining the asymmetry versus weather's
+  `(ok + roof_closed) / games`. Worth a one-line comment so future
+  readers don't "unify" the two and silently start counting sentinel
+  rows as covered

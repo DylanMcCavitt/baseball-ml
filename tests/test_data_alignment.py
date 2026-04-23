@@ -34,6 +34,8 @@ def _counts(
     weather_snapshots: int = 10,
     weather_ok_snapshots: int = 9,
     weather_roof_closed_snapshots: int = 1,
+    umpire_assignments: int = 10,
+    umpire_ok_snapshots: int = 10,
     training_rows: int = 18,
     calibrated_probabilities: int = 18,
     starter_outcomes: int = 18,
@@ -51,6 +53,8 @@ def _counts(
         weather_snapshots=weather_snapshots,
         weather_ok_snapshots=weather_ok_snapshots,
         weather_roof_closed_snapshots=weather_roof_closed_snapshots,
+        umpire_assignments=umpire_assignments,
+        umpire_ok_snapshots=umpire_ok_snapshots,
         training_rows=training_rows,
         calibrated_probabilities=calibrated_probabilities,
         starter_outcomes=starter_outcomes,
@@ -292,6 +296,8 @@ def test_collect_artifact_counts_reads_latest_runs(tmp_path):
     assert counts.weather_snapshots == 0
     assert counts.weather_ok_snapshots == 0
     assert counts.weather_roof_closed_snapshots == 0
+    assert counts.umpire_assignments == 0
+    assert counts.umpire_ok_snapshots == 0
 
 
 def test_collect_artifact_counts_reads_weather_statuses(tmp_path):
@@ -317,6 +323,28 @@ def test_collect_artifact_counts_reads_weather_statuses(tmp_path):
     assert counts.weather_roof_closed_snapshots == 1
 
 
+def test_collect_artifact_counts_reads_umpire_statuses(tmp_path):
+    target_date = date(2026, 4, 18)
+    _seed_passing_fixture(tmp_path, target_date=target_date)
+    iso = target_date.isoformat()
+    umpire_run = (
+        tmp_path / "normalized" / "umpire" / f"date={iso}" / "run=20260422T180800Z"
+    )
+    _write_jsonl(
+        umpire_run / "umpire_snapshots.jsonl",
+        [
+            {"game_pk": 1, "official_date": iso, "umpire_status": "ok"},
+            {"game_pk": 2, "official_date": iso, "umpire_status": "ok"},
+            {"game_pk": 3, "official_date": iso, "umpire_status": "missing_umpire_source"},
+        ],
+    )
+
+    counts = collect_artifact_counts_for_date(tmp_path, target_date=target_date)
+
+    assert counts.umpire_assignments == 3
+    assert counts.umpire_ok_snapshots == 2
+
+
 def test_collect_artifact_counts_returns_zeros_for_missing_artifacts(tmp_path):
     counts = collect_artifact_counts_for_date(tmp_path, target_date=date(2026, 4, 19))
 
@@ -332,6 +360,8 @@ def test_collect_artifact_counts_returns_zeros_for_missing_artifacts(tmp_path):
     assert counts.weather_snapshots == 0
     assert counts.weather_ok_snapshots == 0
     assert counts.weather_roof_closed_snapshots == 0
+    assert counts.umpire_assignments == 0
+    assert counts.umpire_ok_snapshots == 0
 
 
 def test_check_data_alignment_returns_failing_report_when_gaps_present(tmp_path):
@@ -393,6 +423,8 @@ def test_render_data_alignment_summary_lists_failing_dates():
     assert "weather_ok" in summary
     assert "weather_roof" in summary
     assert "wx_cov" in summary
+    assert "umpire_ok" in summary
+    assert "ump_cov" in summary
     assert "ok" in summary
     assert "FAIL" in summary
 

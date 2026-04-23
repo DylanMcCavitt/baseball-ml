@@ -35,6 +35,8 @@ class ArtifactCounts:
     weather_snapshots: int
     weather_ok_snapshots: int
     weather_roof_closed_snapshots: int
+    umpire_assignments: int
+    umpire_ok_snapshots: int
     training_rows: int
     calibrated_probabilities: int
     starter_outcomes: int
@@ -49,6 +51,7 @@ class DateCoverageRow:
     outcome_coverage: float | None
     odds_coverage: float | None
     weather_coverage: float | None
+    umpire_coverage: float | None
     failing_artifacts: tuple[str, ...]
 
     @property
@@ -115,6 +118,7 @@ def build_date_coverage_rows(
             counts.weather_ok_snapshots + counts.weather_roof_closed_snapshots,
             counts.games,
         )
+        umpire_coverage = _ratio(counts.umpire_ok_snapshots, counts.games)
 
         failing: list[str] = []
         if _coverage_below_threshold(feature_coverage, threshold):
@@ -131,6 +135,7 @@ def build_date_coverage_rows(
                 outcome_coverage=outcome_coverage,
                 odds_coverage=odds_coverage,
                 weather_coverage=weather_coverage,
+                umpire_coverage=umpire_coverage,
                 failing_artifacts=tuple(failing),
             )
         )
@@ -300,6 +305,19 @@ def collect_artifact_counts_for_date(
             elif status == "roof_closed":
                 weather_roof_closed_snapshots += 1
 
+    umpire_run = _latest_run_dir_for_date(
+        normalized_root / "umpire",
+        target_date=target_date,
+        required_files=("umpire_snapshots.jsonl",),
+    )
+    umpire_assignments = 0
+    umpire_ok_snapshots = 0
+    if umpire_run is not None:
+        for row in _load_jsonl_rows(umpire_run / "umpire_snapshots.jsonl"):
+            umpire_assignments += 1
+            if row.get("umpire_status") == "ok":
+                umpire_ok_snapshots += 1
+
     baseline_run = _latest_baseline_run_for_date(output_root, target_date=target_date)
     if baseline_run is not None:
         training_rows = _count_jsonl_rows_for_date(
@@ -332,6 +350,8 @@ def collect_artifact_counts_for_date(
         weather_snapshots=weather_snapshots,
         weather_ok_snapshots=weather_ok_snapshots,
         weather_roof_closed_snapshots=weather_roof_closed_snapshots,
+        umpire_assignments=umpire_assignments,
+        umpire_ok_snapshots=umpire_ok_snapshots,
         training_rows=training_rows,
         calibrated_probabilities=calibrated_probabilities,
         starter_outcomes=starter_outcomes,
@@ -380,6 +400,7 @@ def render_data_alignment_summary(report: DataAlignmentReport) -> str:
         "context_feats",
         "weather_ok",
         "weather_roof",
+        "umpire_ok",
         "training",
         "calibrated",
         "outcomes",
@@ -387,6 +408,7 @@ def render_data_alignment_summary(report: DataAlignmentReport) -> str:
         "out_cov",
         "odds_cov",
         "wx_cov",
+        "ump_cov",
         "status",
     )
     table_rows: list[tuple[str, ...]] = [header]
@@ -405,6 +427,7 @@ def render_data_alignment_summary(report: DataAlignmentReport) -> str:
                 str(counts.game_context_features),
                 str(counts.weather_ok_snapshots),
                 str(counts.weather_roof_closed_snapshots),
+                str(counts.umpire_ok_snapshots),
                 str(counts.training_rows),
                 str(counts.calibrated_probabilities),
                 str(counts.starter_outcomes),
@@ -412,6 +435,7 @@ def render_data_alignment_summary(report: DataAlignmentReport) -> str:
                 _format_ratio(row.outcome_coverage),
                 _format_ratio(row.odds_coverage),
                 _format_ratio(row.weather_coverage),
+                _format_ratio(row.umpire_coverage),
                 "FAIL" if row.below_threshold else "ok",
             )
         )

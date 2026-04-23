@@ -34,6 +34,11 @@ from .park_factors import (
     load_park_k_factors,
     lookup_park_k_factor,
 )
+from .umpire import (
+    UMPIRE_STATUS_MISSING_SOURCE,
+    UmpireSnapshotRecord,
+    load_latest_umpire_snapshots_for_date,
+)
 from .weather import (
     WEATHER_STATUS_MISSING_SOURCE,
     WeatherSnapshotRecord,
@@ -228,6 +233,13 @@ class GameContextFeatureRow:
     weather_humidity_pct: float | None
     weather_captured_at: datetime | None
     roof_type: str | None
+    umpire_status: str
+    umpire_source: str | None
+    umpire_id: int | None
+    umpire_name: str | None
+    umpire_captured_at: datetime | None
+    ump_called_strike_rate_30d: float | None
+    ump_k_per_9_delta_vs_league_30d: float | None
     expected_leash_pitch_count: float | None
     expected_leash_batters_faced: float | None
 
@@ -1286,6 +1298,7 @@ def _build_game_context_feature_row(
     all_rows: list[StatcastPitchRecord],
     park_k_factor_table: dict[tuple[int, int], ParkKFactorRecord],
     weather_lookup: dict[int, WeatherSnapshotRecord],
+    umpire_lookup: dict[int, UmpireSnapshotRecord],
 ) -> GameContextFeatureRow:
     base_features_as_of = max(game.captured_at, starter.captured_at, _history_cutoff(date.fromisoformat(starter.official_date)))
     if lineup_snapshot is not None:
@@ -1338,6 +1351,24 @@ def _build_game_context_feature_row(
         weather_captured_at = None
         roof_type = None
 
+    umpire_snapshot = umpire_lookup.get(starter.game_pk)
+    if umpire_snapshot is not None:
+        umpire_status = umpire_snapshot.umpire_status
+        umpire_source = umpire_snapshot.umpire_source
+        umpire_id = umpire_snapshot.umpire_id
+        umpire_name = umpire_snapshot.umpire_name
+        umpire_captured_at = umpire_snapshot.captured_at
+        ump_called_strike_rate_30d = umpire_snapshot.ump_called_strike_rate_30d
+        ump_k_per_9_delta_vs_league_30d = umpire_snapshot.ump_k_per_9_delta_vs_league_30d
+    else:
+        umpire_status = UMPIRE_STATUS_MISSING_SOURCE
+        umpire_source = None
+        umpire_id = None
+        umpire_name = None
+        umpire_captured_at = None
+        ump_called_strike_rate_30d = None
+        ump_k_per_9_delta_vs_league_30d = None
+
     return GameContextFeatureRow(
         feature_row_id=(
             f"game-context:{starter.game_pk}:{starter.pitcher_id or 'missing'}:{starter.official_date}"
@@ -1367,6 +1398,13 @@ def _build_game_context_feature_row(
         weather_humidity_pct=weather_humidity_pct,
         weather_captured_at=weather_captured_at,
         roof_type=roof_type,
+        umpire_status=umpire_status,
+        umpire_source=umpire_source,
+        umpire_id=umpire_id,
+        umpire_name=umpire_name,
+        umpire_captured_at=umpire_captured_at,
+        ump_called_strike_rate_30d=ump_called_strike_rate_30d,
+        ump_k_per_9_delta_vs_league_30d=ump_k_per_9_delta_vs_league_30d,
         expected_leash_pitch_count=expected_leash_pitch_count,
         expected_leash_batters_faced=expected_leash_batters_faced,
     )
@@ -1491,6 +1529,10 @@ def ingest_statcast_features_for_date(
         output_dir=output_dir,
         target_date=target_date,
     )
+    umpire_lookup = load_latest_umpire_snapshots_for_date(
+        output_dir=output_dir,
+        target_date=target_date,
+    )
 
     for starter in mlb_metadata.probable_starters:
         game = games_by_pk.get(starter.game_pk)
@@ -1523,6 +1565,7 @@ def ingest_statcast_features_for_date(
                 all_rows=all_pitch_records,
                 park_k_factor_table=park_k_factor_table,
                 weather_lookup=weather_lookup,
+                umpire_lookup=umpire_lookup,
             )
         )
 
