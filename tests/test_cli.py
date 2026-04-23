@@ -290,6 +290,7 @@ def test_daily_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsy
 
     assert "Daily candidate workflow complete for 2026-04-22" in output
     assert "actionable_candidates=3" in output
+    assert "approved_wagers=3" in output
     assert "settled_paper_results=12" in output
     assert "daily_candidates_path=" in output
     assert "paper_results_path=" in output

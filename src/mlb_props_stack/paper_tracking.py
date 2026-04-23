@@ -14,6 +14,7 @@ from .edge import build_edge_candidates_for_date
 from .ingest.mlb_stats_api import utc_now
 from .modeling import generate_starter_strikeout_inference_for_date
 from .pricing import american_to_decimal, devig_two_way
+from .wager_approval import WagerApprovalSettings, annotate_wager_approval_rows
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class DailyCandidateWorkflowResult:
     actionable_candidate_count: int
     settled_result_count: int
     pending_result_count: int
+    approved_wager_count: int | None = None
 
 
 def _json_ready(value: Any) -> Any:
@@ -371,7 +373,11 @@ def _build_daily_candidate_rows(
     run_id: str,
     inference_run_id: str,
     edge_candidate_run_id: str,
+    approval_settings: WagerApprovalSettings | None = None,
+    now: datetime | None = None,
 ) -> list[dict[str, Any]]:
+    if approval_settings is None:
+        approval_settings = WagerApprovalSettings()
     scored_rows = [
         row
         for row in edge_rows
@@ -392,12 +398,30 @@ def _build_daily_candidate_rows(
                 "actionable_rank": (
                     actionable_rank if evaluation_status == "actionable" else None
                 ),
-                "bet_placed": evaluation_status == "actionable",
+                "bet_placed": False,
             }
         )
         if evaluation_status == "actionable":
             actionable_rank += 1
-    return daily_candidate_rows
+    approved_rows = annotate_wager_approval_rows(
+        daily_candidate_rows,
+        settings=approval_settings,
+        now=now,
+    )
+    approved_rank = 1
+    for row in approved_rows:
+        wager_approved = bool(row["wager_approved"])
+        row["approved_rank"] = approved_rank if wager_approved else None
+        row["bet_placed"] = wager_approved
+        if wager_approved:
+            approved_rank += 1
+    return approved_rows
+
+
+def _paper_row_is_placed(row: dict[str, Any]) -> bool:
+    if "wager_approved" in row:
+        return bool(row["wager_approved"])
+    return bool(row.get("bet_placed"))
 
 
 def _build_paper_result_rows(
@@ -417,9 +441,7 @@ def _build_paper_result_rows(
         daily_candidate_rows = _load_jsonl_rows(
             latest_daily_runs[official_date] / "daily_candidates.jsonl"
         )
-        actionable_rows = [
-            row for row in daily_candidate_rows if bool(row.get("bet_placed"))
-        ]
+        actionable_rows = [row for row in daily_candidate_rows if _paper_row_is_placed(row)]
         if official_date not in outcome_cache:
             outcome_cache[official_date] = _load_latest_outcomes_for_date(
                 output_root,
@@ -491,6 +513,10 @@ def _build_paper_result_rows(
                     "official_date": str(row["official_date"]),
                     "slate_rank": int(row["slate_rank"]),
                     "actionable_rank": row.get("actionable_rank"),
+                    "approved_rank": row.get("approved_rank"),
+                    "wager_approved": bool(row.get("wager_approved", row.get("bet_placed"))),
+                    "wager_gate_status": row.get("wager_gate_status"),
+                    "wager_blocked_reason": row.get("wager_blocked_reason"),
                     "model_version": str(row["model_version"]),
                     "model_run_id": str(row["model_run_id"]),
                     "sportsbook": str(row["sportsbook"]),
@@ -547,7 +573,7 @@ def _build_paper_result_rows(
     paper_result_rows.sort(
         key=lambda row: (
             str(row["official_date"]),
-            int(row["actionable_rank"]),
+            int(row.get("approved_rank") or row.get("actionable_rank") or 0),
             str(row["paper_result_id"]),
         )
     )
@@ -582,6 +608,7 @@ def build_daily_candidate_workflow(
         run_id=run_id,
         inference_run_id=inference_result.run_id,
         edge_candidate_run_id=edge_result.run_id,
+        now=now(),
     )
     daily_candidates_path = (
         output_root
@@ -615,7 +642,10 @@ def build_daily_candidate_workflow(
         1 for row in paper_result_rows if row.get("settlement_status") is None
     )
     actionable_candidate_count = sum(
-        1 for row in daily_candidate_rows if bool(row.get("bet_placed"))
+        1 for row in daily_candidate_rows if row.get("evaluation_status") == "actionable"
+    )
+    approved_wager_count = sum(
+        1 for row in daily_candidate_rows if bool(row.get("wager_approved"))
     )
     return DailyCandidateWorkflowResult(
         target_date=resolved_target_date,
@@ -628,4 +658,5 @@ def build_daily_candidate_workflow(
         actionable_candidate_count=actionable_candidate_count,
         settled_result_count=settled_result_count,
         pending_result_count=pending_result_count,
+        approved_wager_count=approved_wager_count,
     )

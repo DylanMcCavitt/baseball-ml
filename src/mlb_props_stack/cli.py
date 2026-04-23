@@ -258,6 +258,11 @@ def render_daily_candidate_workflow_summary(
     result: DailyCandidateWorkflowResult,
 ) -> str:
     """Return a human-readable summary for one daily candidate workflow run."""
+    approved_wager_count = (
+        result.approved_wager_count
+        if result.approved_wager_count is not None
+        else result.actionable_candidate_count
+    )
     lines = [
         f"Daily candidate workflow complete for {result.target_date.isoformat()}",
         f"run_id={result.run_id}",
@@ -265,6 +270,7 @@ def render_daily_candidate_workflow_summary(
         f"edge_candidate_run_id={result.edge_candidate_run_id}",
         f"scored_candidates={result.scored_candidate_count}",
         f"actionable_candidates={result.actionable_candidate_count}",
+        f"approved_wagers={approved_wager_count}",
         f"settled_paper_results={result.settled_result_count}",
         f"pending_paper_results={result.pending_result_count}",
         f"daily_candidates_path={result.daily_candidates_path}",

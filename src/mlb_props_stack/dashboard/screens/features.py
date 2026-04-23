@@ -70,7 +70,7 @@ def render_features_screen(
         )
         st.plotly_chart(
             feature_bars_fig(importance.to_dict("records")),
-            use_container_width=True,
+            width="stretch",
             config={"displayModeBar": False},
         )
     with columns[1]:

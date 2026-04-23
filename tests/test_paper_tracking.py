@@ -5,7 +5,11 @@ from pathlib import Path
 from types import ModuleType
 
 from mlb_props_stack.dashboard.app import render_dashboard_page
-from mlb_props_stack.paper_tracking import build_daily_candidate_workflow
+from mlb_props_stack.paper_tracking import (
+    _build_daily_candidate_rows,
+    _build_paper_result_rows,
+    build_daily_candidate_workflow,
+)
 
 
 def _write_json(path: Path, payload: dict) -> None:
@@ -356,6 +360,7 @@ def test_build_daily_candidate_workflow_writes_sheet_and_refreshes_paper_results
 
     assert result.run_id == "20260422T183000Z"
     assert result.actionable_candidate_count == 1
+    assert result.approved_wager_count == 1
     assert result.settled_result_count == 1
     assert result.pending_result_count == 1
 
@@ -380,6 +385,72 @@ def test_build_daily_candidate_workflow_writes_sheet_and_refreshes_paper_results
         / "baseline_model.json"
     )
     assert inference_model["source_model_run_id"] == "20260421T150000Z"
+
+
+def test_actionable_edge_blocked_by_final_gate_is_not_placed(tmp_path: Path):
+    edge_rows = [
+        {
+            "candidate_id": "line-high-hold|starter-strikeout-baseline-v1",
+            "official_date": "2026-04-23",
+            "line_snapshot_id": "line-high-hold",
+            "model_version": "starter-strikeout-baseline-v1",
+            "model_run_id": "20260422T180000Z",
+            "sportsbook": "draftkings",
+            "sportsbook_title": "DraftKings",
+            "event_id": "event-high-hold",
+            "game_pk": 9003,
+            "player_id": "mlb-pitcher:700003",
+            "pitcher_mlb_id": 700003,
+            "player_name": "High Hold Arm",
+            "market": "pitcher_strikeouts",
+            "line": 5.5,
+            "over_odds": -200,
+            "under_odds": -200,
+            "captured_at": "2026-04-23T18:10:00Z",
+            "evaluation_status": "actionable",
+            "selected_side": "over",
+            "selected_odds": -200,
+            "selected_model_probability": 0.68,
+            "selected_market_probability": 0.60,
+            "edge_pct": 0.08,
+            "expected_value_pct": 0.02,
+            "stake_fraction": 0.01,
+            "fair_odds": -213,
+            "reason": "over clears minimum edge threshold (8.00% >= 4.50%)",
+        }
+    ]
+
+    daily_rows = _build_daily_candidate_rows(
+        edge_rows,
+        run_id="20260423T181500Z",
+        inference_run_id="20260423T181400Z",
+        edge_candidate_run_id="20260423T181500Z",
+        now=datetime(2026, 4, 23, 18, 15, tzinfo=UTC),
+    )
+
+    assert daily_rows[0]["evaluation_status"] == "actionable"
+    assert daily_rows[0]["actionable_rank"] == 1
+    assert daily_rows[0]["approved_rank"] is None
+    assert daily_rows[0]["bet_placed"] is False
+    assert daily_rows[0]["wager_approved"] is False
+    assert daily_rows[0]["wager_blocked_reason"] == "hold above max"
+    assert daily_rows[0]["wager_gate_details"]["hold"]["passed"] is False
+
+    daily_run_dir = (
+        tmp_path
+        / "normalized"
+        / "daily_candidates"
+        / "date=2026-04-23"
+        / "run=20260423T181500Z"
+    )
+    _write_jsonl(daily_run_dir / "daily_candidates.jsonl", daily_rows)
+
+    paper_rows = _build_paper_result_rows(
+        tmp_path,
+        through_date=date(2026, 4, 23),
+        run_id="20260423T181500Z",
+    )
+    assert paper_rows == []
 
 
 def test_render_dashboard_page_uses_daily_candidates_and_paper_results(

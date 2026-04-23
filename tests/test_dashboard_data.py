@@ -4,6 +4,7 @@ from pathlib import Path
 
 from mlb_props_stack.dashboard.lib.data import (
     DashboardSettings,
+    current_slate_metrics,
     get_feature_importance,
     get_pmf,
     list_available_board_dates,
@@ -90,6 +91,65 @@ def test_board_can_replay_historical_backtest_rows(tmp_path: Path) -> None:
 
     ticker = ticker_context(board, settings=DashboardSettings())
     assert ticker["live_label"] == "HIST REPLAY"
+
+
+def test_board_daily_candidates_use_shared_final_wager_gates(tmp_path: Path) -> None:
+    run_dir = (
+        tmp_path
+        / "normalized"
+        / "daily_candidates"
+        / "date=2026-04-23"
+        / "run=20260423T181500Z"
+    )
+    _write_jsonl(
+        run_dir / "daily_candidates.jsonl",
+        [
+            {
+                "daily_candidate_id": "line-high-hold|starter-strikeout-baseline-v1",
+                "official_date": "2026-04-23",
+                "slate_rank": 1,
+                "actionable_rank": 1,
+                "approved_rank": None,
+                "bet_placed": False,
+                "wager_approved": False,
+                "wager_blocked_reason": "hold above max",
+                "evaluation_status": "actionable",
+                "player_id": "mlb-pitcher:700003",
+                "pitcher_mlb_id": 700003,
+                "player_name": "High Hold Arm",
+                "game_pk": 9003,
+                "line": 5.5,
+                "selected_side": "over",
+                "selected_odds": -200,
+                "over_odds": -200,
+                "under_odds": -200,
+                "selected_model_probability": 0.68,
+                "selected_market_probability": 0.60,
+                "edge_pct": 0.08,
+                "expected_value_pct": 0.02,
+                "model_run_id": "20260422T180000Z",
+                "model_version": "starter-strikeout-baseline-v1",
+                "sportsbook_title": "DraftKings",
+                "line_snapshot_id": "line-high-hold",
+                "captured_at": "2026-04-23T18:10:00Z",
+                "reason": "over clears minimum edge threshold (8.00% >= 4.50%)",
+            }
+        ],
+    )
+
+    board, source = load_board_dataframe(
+        tmp_path,
+        target_date=date(2026, 4, 23),
+        settings=DashboardSettings(),
+    )
+
+    assert source == "daily_candidates"
+    assert len(board) == 1
+    assert bool(board.iloc[0]["cleared"]) is False
+    assert bool(board.iloc[0]["wager_approved"]) is False
+    assert board.iloc[0]["wager_blocked_reason"] == "hold above max"
+    assert "hold above max" in board.iloc[0]["note"]
+    assert current_slate_metrics(board)["plays_cleared"] == 0
 
 
 def test_pitcher_drilldown_uses_replayed_model_run(tmp_path: Path) -> None:
@@ -179,3 +239,47 @@ def test_pitcher_drilldown_uses_replayed_model_run(tmp_path: Path) -> None:
     importance = get_feature_importance(tmp_path, run_id="20260422T180000Z")
     assert list(importance["name"]) == ["older_feature"]
     assert list(importance["last_value"]) == [1.5]
+
+
+def test_pitcher_pmf_can_resolve_daily_inference_run_id(tmp_path: Path) -> None:
+    inference_run = (
+        tmp_path
+        / "normalized"
+        / "starter_strikeout_inference"
+        / "date=2026-04-23"
+        / "run=20260423T201434Z"
+    )
+    _write_jsonl(
+        inference_run / "ladder_probabilities.jsonl",
+        [
+            {
+                "official_date": "2026-04-23",
+                "pitcher_id": 594798,
+                "model_mean": 6.8,
+                "count_distribution": {"dispersion_alpha": 0.25},
+            }
+        ],
+    )
+    baseline_run = (
+        tmp_path
+        / "normalized"
+        / "starter_strikeout_baseline"
+        / "start=2026-04-18_end=2026-04-23"
+        / "run=20260422T205727Z"
+    )
+    _write_json(
+        baseline_run / "evaluation_summary.json",
+        {"run_id": "20260422T205727Z"},
+    )
+
+    pmf_rows, ladder_row = get_pmf(
+        tmp_path,
+        official_date="2026-04-23",
+        pitcher_mlb_id=594798,
+        line=5.5,
+        model_run_id="20260423T201434Z",
+    )
+
+    assert ladder_row is not None
+    assert ladder_row["model_mean"] == 6.8
+    assert pmf_rows

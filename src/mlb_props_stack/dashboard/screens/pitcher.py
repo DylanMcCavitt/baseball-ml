@@ -179,7 +179,7 @@ def render_pitcher_screen(
         )
         st.plotly_chart(
             pmf_fig(pmf_rows=pmf_rows, line=float(row["line"])),
-            use_container_width=True,
+            width="stretch",
             config={"displayModeBar": False},
         )
         st.markdown(
@@ -200,7 +200,7 @@ def render_pitcher_screen(
                 market_probability=float(row["p_market"]),
                 edge_probability=float(row["edge"]),
             ),
-            use_container_width=True,
+            width="stretch",
             config={"displayModeBar": False},
         )
         fair_odds = fair_american_odds(float(row["p_model"])) if 0.0 < float(row["p_model"]) < 1.0 else None
