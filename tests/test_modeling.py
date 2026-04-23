@@ -176,6 +176,13 @@ def _seed_feature_run(
                 "weather_humidity_pct": None,
                 "weather_captured_at": None,
                 "roof_type": None,
+                "umpire_status": "missing_umpire_source",
+                "umpire_source": None,
+                "umpire_id": None,
+                "umpire_name": None,
+                "umpire_captured_at": None,
+                "ump_called_strike_rate_30d": None,
+                "ump_k_per_9_delta_vs_league_30d": None,
                 "expected_leash_pitch_count": row["expected_leash_pitch_count"],
                 "expected_leash_batters_faced": row["expected_leash_batters_faced"],
             }

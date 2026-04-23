@@ -897,6 +897,13 @@ def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_mis
     assert context_by_pitcher[680802]["weather_humidity_pct"] is None
     assert context_by_pitcher[680802]["weather_captured_at"] is None
     assert context_by_pitcher[680802]["roof_type"] is None
+    assert context_by_pitcher[680802]["umpire_status"] == "missing_umpire_source"
+    assert context_by_pitcher[680802]["umpire_source"] is None
+    assert context_by_pitcher[680802]["umpire_id"] is None
+    assert context_by_pitcher[680802]["umpire_name"] is None
+    assert context_by_pitcher[680802]["umpire_captured_at"] is None
+    assert context_by_pitcher[680802]["ump_called_strike_rate_30d"] is None
+    assert context_by_pitcher[680802]["ump_k_per_9_delta_vs_league_30d"] is None
     assert context_by_pitcher[680802]["park_factor_status"] == "ok"
     assert context_by_pitcher[680802]["park_k_factor"] == 1.02
     assert context_by_pitcher[680802]["park_k_factor_vs_rhh"] == 1.02

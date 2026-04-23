@@ -73,6 +73,8 @@ OPTIONAL_NUMERIC_FEATURES = (
     "weather_temperature_f",
     "weather_wind_speed_mph",
     "weather_humidity_pct",
+    "ump_called_strike_rate_30d",
+    "ump_k_per_9_delta_vs_league_30d",
 )
 CATEGORICAL_FEATURES: tuple[str, ...] = ()
 PROHIBITED_MODEL_FEATURE_FIELDS = frozenset(
@@ -147,6 +149,13 @@ class StarterStrikeoutTrainingRow:
     weather_humidity_pct: float | None
     weather_captured_at: datetime | None
     roof_type: str | None
+    umpire_status: str
+    umpire_source: str | None
+    umpire_id: int | None
+    umpire_name: str | None
+    umpire_captured_at: datetime | None
+    ump_called_strike_rate_30d: float | None
+    ump_k_per_9_delta_vs_league_30d: float | None
     pitch_sample_size: int
     plate_appearance_sample_size: int
     pitcher_k_rate: float | None
@@ -643,6 +652,21 @@ def _load_feature_rows_for_date(*, target_date: date, output_dir: Path) -> list[
                     else None
                 ),
                 roof_type=_as_optional_text(game_context_row.get("roof_type")),
+                umpire_status=str(game_context_row.get("umpire_status", "missing_umpire_source")),
+                umpire_source=_as_optional_text(game_context_row.get("umpire_source")),
+                umpire_id=_as_optional_int(game_context_row.get("umpire_id")),
+                umpire_name=_as_optional_text(game_context_row.get("umpire_name")),
+                umpire_captured_at=(
+                    parse_api_datetime(game_context_row["umpire_captured_at"])
+                    if game_context_row.get("umpire_captured_at")
+                    else None
+                ),
+                ump_called_strike_rate_30d=_as_optional_float(
+                    game_context_row.get("ump_called_strike_rate_30d")
+                ),
+                ump_k_per_9_delta_vs_league_30d=_as_optional_float(
+                    game_context_row.get("ump_k_per_9_delta_vs_league_30d")
+                ),
                 pitch_sample_size=int(pitcher_row["pitch_sample_size"]),
                 plate_appearance_sample_size=int(pitcher_row["plate_appearance_sample_size"]),
                 pitcher_k_rate=_as_optional_float(pitcher_row.get("pitcher_k_rate")),

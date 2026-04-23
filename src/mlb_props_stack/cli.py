@@ -28,10 +28,12 @@ from .ingest import (
     MLBMetadataIngestResult,
     OddsAPIIngestResult,
     StatcastFeatureIngestResult,
+    UmpireIngestResult,
     WeatherIngestResult,
     ingest_mlb_metadata_for_date,
     ingest_odds_api_pitcher_lines_for_date,
     ingest_statcast_features_for_date,
+    ingest_umpire_for_date,
     ingest_weather_for_date,
 )
 from .modeling import (
@@ -130,6 +132,23 @@ def render_weather_ingest_summary(result: WeatherIngestResult) -> str:
         f"raw_snapshot_files={len(result.raw_snapshot_paths)}",
         f"mlb_games_path={result.mlb_games_path}",
         f"weather_snapshots_path={result.weather_snapshots_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_umpire_ingest_summary(result: UmpireIngestResult) -> str:
+    """Return a human-readable summary for one pregame umpire ingest build."""
+    lines = [
+        f"Pregame umpire ingest complete for {result.target_date.isoformat()}",
+        f"run_id={result.run_id}",
+        f"snapshots={result.snapshot_count}",
+        f"ok_snapshots={result.ok_snapshot_count}",
+        f"missing_source={result.missing_source_count}",
+        f"history_start_date={result.history_start_date.isoformat()}",
+        f"history_end_date={result.history_end_date.isoformat()}",
+        f"raw_snapshot_files={len(result.raw_snapshot_paths)}",
+        f"mlb_games_path={result.mlb_games_path}",
+        f"umpire_snapshots_path={result.umpire_snapshots_path}",
     ]
     return "\n".join(lines)
 
@@ -392,6 +411,25 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Directory where raw and normalized ingest artifacts will be written.",
     )
 
+    umpire_parser = subparsers.add_parser(
+        "ingest-umpire",
+        help=(
+            "Extract the home-plate umpire per scheduled game and join "
+            "30-day rolling called-strike and K/9 features for one slate date."
+        ),
+    )
+    umpire_parser.add_argument(
+        "--date",
+        dest="target_date",
+        required=True,
+        help="Target MLB schedule date in YYYY-MM-DD format.",
+    )
+    umpire_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where raw and normalized ingest artifacts will be written.",
+    )
+
     statcast_parser = subparsers.add_parser(
         "ingest-statcast-features",
         help="Fetch targeted Statcast history and build feature tables for one date.",
@@ -417,7 +455,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     backfill_parser = subparsers.add_parser(
         "backfill-historical",
         help=(
-            "Iterate ingest-mlb-metadata, ingest-weather, "
+            "Iterate ingest-mlb-metadata, ingest-weather, ingest-umpire, "
             "ingest-odds-api-lines (best-effort), and ingest-statcast-features "
             "across a date window with idempotent resume."
         ),
@@ -641,6 +679,14 @@ def main(argv: list[str] | None = None) -> int:
             output_dir=args.output_dir,
         )
         print(render_weather_ingest_summary(weather_result))
+        return 0
+
+    if args.command == "ingest-umpire":
+        umpire_result = ingest_umpire_for_date(
+            target_date=date.fromisoformat(args.target_date),
+            output_dir=args.output_dir,
+        )
+        print(render_umpire_ingest_summary(umpire_result))
         return 0
 
     if args.command == "ingest-statcast-features":
