@@ -890,13 +890,55 @@ def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_mis
 
     context_by_pitcher = {row["pitcher_id"]: row for row in context_rows}
     assert context_by_pitcher[680802]["weather_status"] == "missing_weather_source"
-    assert context_by_pitcher[680802]["park_factor_status"] == "missing_park_factor_source"
+    assert context_by_pitcher[680802]["park_factor_status"] == "ok"
+    assert context_by_pitcher[680802]["park_k_factor"] == 1.02
+    assert context_by_pitcher[680802]["park_k_factor_vs_rhh"] == 1.02
+    assert context_by_pitcher[680802]["park_k_factor_vs_lhh"] == 1.03
     assert context_by_pitcher[680802]["expected_leash_pitch_count"] == 4.5
     assert context_by_pitcher[800048]["expected_leash_batters_faced"] == 1.0
 
     assert len(stub_client.urls) == 11
     assert "pitchers_lookup%5B%5D=680802" in stub_client.urls[0]
     assert any("batters_lookup%5B%5D=680757" in url for url in stub_client.urls)
+
+
+def test_ingest_statcast_features_preserves_missing_park_factor_source_for_unknown_venue(
+    tmp_path,
+) -> None:
+    games_path, _, _ = seed_mlb_metadata(tmp_path)
+    game_rows = [
+        json.loads(line) for line in games_path.read_text(encoding="utf-8").splitlines()
+    ]
+    for row in game_rows:
+        row["venue_id"] = 999999
+        row["venue_name"] = "Unknown Park"
+    _write_jsonl(games_path, game_rows)
+
+    stub_client = StubStatcastClient()
+    timestamps = iter(
+        datetime(2026, 4, 21, 18, 0, tzinfo=UTC) + timedelta(minutes=index)
+        for index in range(20)
+    )
+
+    result = ingest_statcast_features_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        history_days=30,
+        client=stub_client,
+        now=lambda: next(timestamps),
+    )
+
+    context_rows = [
+        json.loads(line)
+        for line in result.game_context_features_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert context_rows
+    for row in context_rows:
+        assert row["venue_id"] == 999999
+        assert row["park_factor_status"] == "missing_park_factor_source"
+        assert row["park_k_factor"] is None
+        assert row["park_k_factor_vs_rhh"] is None
+        assert row["park_k_factor_vs_lhh"] is None
 
 
 def test_ingest_statcast_features_dedupes_duplicate_pitcher_pulls(tmp_path) -> None:

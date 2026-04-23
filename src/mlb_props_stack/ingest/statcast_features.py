@@ -27,6 +27,13 @@ from .mlb_stats_api import (
     parse_api_datetime,
     utc_now,
 )
+from .park_factors import (
+    PARK_FACTOR_STATUS_MISSING_SOURCE,
+    PARK_FACTOR_STATUS_OK,
+    ParkKFactorRecord,
+    load_park_k_factors,
+    lookup_park_k_factor,
+)
 
 STATCAST_SEARCH_CSV_ENDPOINT = "https://baseballsavant.mlb.com/statcast_search/csv"
 STATCAST_REQUEST_HEADERS = {
@@ -203,7 +210,9 @@ class GameContextFeatureRow:
     day_night: str
     double_header: str
     features_as_of: datetime
-    park_factor: float | None
+    park_k_factor: float | None
+    park_k_factor_vs_rhh: float | None
+    park_k_factor_vs_lhh: float | None
     park_factor_status: str
     rest_days: int | None
     weather_status: str
@@ -1267,6 +1276,7 @@ def _build_game_context_feature_row(
     game: GameRecord,
     lineup_snapshot: LineupSnapshot | None,
     all_rows: list[StatcastPitchRecord],
+    park_k_factor_table: dict[tuple[int, int], ParkKFactorRecord],
 ) -> GameContextFeatureRow:
     base_features_as_of = max(game.captured_at, starter.captured_at, _history_cutoff(date.fromisoformat(starter.official_date)))
     if lineup_snapshot is not None:
@@ -1283,6 +1293,22 @@ def _build_game_context_feature_row(
         expected_leash_pitch_count, expected_leash_batters_faced = _expected_leash(pitcher_rows)
 
     opponent_team_abbreviation, _ = _opponent_team(game, starter.team_side)
+    park_factor_record = lookup_park_k_factor(
+        season=date.fromisoformat(starter.official_date).year,
+        venue_mlb_id=game.venue_id,
+        table=park_k_factor_table,
+    )
+    if park_factor_record is not None:
+        park_k_factor = park_factor_record.park_k_factor
+        park_k_factor_vs_rhh = park_factor_record.park_k_factor_vs_rhh
+        park_k_factor_vs_lhh = park_factor_record.park_k_factor_vs_lhh
+        park_factor_status = PARK_FACTOR_STATUS_OK
+    else:
+        park_k_factor = None
+        park_k_factor_vs_rhh = None
+        park_k_factor_vs_lhh = None
+        park_factor_status = PARK_FACTOR_STATUS_MISSING_SOURCE
+
     return GameContextFeatureRow(
         feature_row_id=(
             f"game-context:{starter.game_pk}:{starter.pitcher_id or 'missing'}:{starter.official_date}"
@@ -1299,8 +1325,10 @@ def _build_game_context_feature_row(
         day_night=game.day_night,
         double_header=game.double_header,
         features_as_of=base_features_as_of,
-        park_factor=None,
-        park_factor_status="missing_park_factor_source",
+        park_k_factor=park_k_factor,
+        park_k_factor_vs_rhh=park_k_factor_vs_rhh,
+        park_k_factor_vs_lhh=park_k_factor_vs_lhh,
+        park_factor_status=park_factor_status,
         rest_days=rest_days,
         weather_status="missing_weather_source",
         weather_source=None,
@@ -1426,6 +1454,7 @@ def ingest_statcast_features_for_date(
     pitcher_feature_rows: list[PitcherDailyFeatureRow] = []
     lineup_feature_rows: list[LineupDailyFeatureRow] = []
     game_context_rows: list[GameContextFeatureRow] = []
+    park_k_factor_table = load_park_k_factors()
 
     for starter in mlb_metadata.probable_starters:
         game = games_by_pk.get(starter.game_pk)
@@ -1456,6 +1485,7 @@ def ingest_statcast_features_for_date(
                 game=game,
                 lineup_snapshot=selected_lineups.get((starter.game_pk, _opponent_team_side(starter.team_side))),
                 all_rows=all_pitch_records,
+                park_k_factor_table=park_k_factor_table,
             )
         )
 

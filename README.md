@@ -210,8 +210,13 @@ The current feature build is intentionally explicit about missing inputs:
   feature rows
 - weather stays null with `missing_weather_source` until a timestamp-valid
   source is added
-- park factor stays null with `missing_park_factor_source` rather than being
-  silently backfilled
+- park strikeout factor is resolved via a static lookup checked into the
+  repo at `data/static/park_factors/park_k_factors.csv`; the feature build
+  joins by MLB `venue_id` and emits `park_k_factor`,
+  `park_k_factor_vs_rhh`, and `park_k_factor_vs_lhh` with
+  `park_factor_status = "ok"`, only preserving the
+  `missing_park_factor_source` status when the venue id is unknown
+  (extend the CSV rather than papering over the miss at read time)
 
 Statcast CSV pulls retry transient failures (HTTP 429/5xx, timeouts, and
 connection errors) with bounded exponential backoff and fan out across a

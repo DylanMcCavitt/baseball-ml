@@ -67,6 +67,9 @@ OPTIONAL_NUMERIC_FEATURES = (
     "projected_lineup_chase_rate",
     "projected_lineup_contact_rate",
     "lineup_continuity_ratio",
+    "park_k_factor",
+    "park_k_factor_vs_rhh",
+    "park_k_factor_vs_lhh",
 )
 CATEGORICAL_FEATURES: tuple[str, ...] = ()
 PROHIBITED_MODEL_FEATURE_FIELDS = frozenset(
@@ -130,6 +133,9 @@ class StarterStrikeoutTrainingRow:
     day_night: str
     double_header: str
     park_factor_status: str
+    park_k_factor: float | None
+    park_k_factor_vs_rhh: float | None
+    park_k_factor_vs_lhh: float | None
     weather_status: str
     pitch_sample_size: int
     plate_appearance_sample_size: int
@@ -600,6 +606,13 @@ def _load_feature_rows_for_date(*, target_date: date, output_dir: Path) -> list[
                 day_night=str(game_context_row["day_night"]),
                 double_header=str(game_context_row["double_header"]),
                 park_factor_status=str(game_context_row["park_factor_status"]),
+                park_k_factor=_as_optional_float(game_context_row.get("park_k_factor")),
+                park_k_factor_vs_rhh=_as_optional_float(
+                    game_context_row.get("park_k_factor_vs_rhh")
+                ),
+                park_k_factor_vs_lhh=_as_optional_float(
+                    game_context_row.get("park_k_factor_vs_lhh")
+                ),
                 weather_status=str(game_context_row["weather_status"]),
                 pitch_sample_size=int(pitcher_row["pitch_sample_size"]),
                 plate_appearance_sample_size=int(pitcher_row["plate_appearance_sample_size"]),

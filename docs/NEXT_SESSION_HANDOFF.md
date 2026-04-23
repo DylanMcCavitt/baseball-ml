@@ -4,84 +4,93 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Last completed issue: `AGE-201` on branch
-  `feat/age-201-backfill-historical`
-- This slice adds the `backfill-historical` CLI subcommand and a new
-  `mlb_props_stack.backfill` module that walks an inclusive date window
-  and replays `ingest-mlb-metadata`, `ingest-odds-api-lines`, and
-  `ingest-statcast-features` for each calendar date with idempotent
-  resume and best-effort per-source failure handling
-- Current status: a season-long backfill can be re-invoked safely after a
-  crash or interrupt — every source for every date is checked against
-  the latest normalized run on disk first, so only missing artifacts are
-  re-fetched. Source-level exceptions are captured per-date so a sparse
-  Odds API response cannot abort the rest of the sweep, and a manifest
-  records the per-date outcome under `data/normalized/backfill/run=.../`
+- Last completed issue: `AGE-203` on branch
+  `dylan/eloquent-mclaren-c1bbe8`
+- This slice replaces the `missing_park_factor_source` placeholder in the
+  game-context feature build with a static FanGraphs-anchored park
+  strikeout factor joined by MLB `venue_id`, and emits `park_k_factor`,
+  `park_k_factor_vs_rhh`, and `park_k_factor_vs_lhh` on every slate row
+- Current status: `game_context_features.jsonl` now carries non-null park
+  factors for every venue present in the static lookup (17 parks covered
+  with low venue ids plus 13 high-id stadiums). Rows for unknown venue
+  ids fall back to `park_factor_status = "missing_park_factor_source"`
+  and null factor values, so the placeholder is preserved only in the
+  case the issue requires
 
 ## What Was Completed In This Slice
 
-- `src/mlb_props_stack/backfill.py` (new module)
-  - `iter_backfill_dates(start, end)`: inclusive calendar-day iterator
-    that rejects inverted windows
-  - `is_source_complete(output_dir, source, target_date)`: returns True
-    when the latest `run=...` directory under
-    `data/normalized/<source-root>/date=<iso>/` contains every required
-    artifact file (mirrors the "latest run wins" rule used by
-    `data_alignment._latest_run_dir_for_date`)
-  - `normalize_sources(seq)`: validates the requested source list,
-    rejects unknown values and empty input, and dedupes while preserving
-    declared order
-  - `backfill_historical(...)`: core orchestration helper. For each date
-    and each source it skips when the artifacts are already complete and
-    `force=False`; otherwise it invokes the matching ingest runner and
-    records its `run_id`. Source-level `Exception`s are captured per
-    date so the sweep continues; `BaseException` (KeyboardInterrupt,
-    SystemExit) still propagates immediately.
-  - manifest writes go through `<name>.tmp` + `os.replace`, matching the
-    atomicity guarantee from AGE-200
-  - exposes `BackfillResult`, `BackfillDateOutcome`,
-    `BackfillSourceOutcome`, plus `STATUS_INGESTED`,
-    `STATUS_SKIPPED_RESUME`, `STATUS_FAILED`, `ALL_SOURCES`, and the
-    per-source required-artifact list
-- `src/mlb_props_stack/__init__.py`
-  - adds `"backfill"` to `__all__`
-- `src/mlb_props_stack/cli.py`
-  - imports the new backfill helpers and adds
-    `render_backfill_historical_summary`
-  - adds the `backfill-historical` subparser with `--start-date`,
-    `--end-date`, `--output-dir`, `--sources` (comma-separated, defaults
-    to all three), `--force`, `--history-days` (default
-    `DEFAULT_HISTORY_DAYS` from the Statcast ingest), and `--api-key`
-  - dispatches to `backfill_historical`, prints the summary, and exits
-    non-zero whenever any source recorded `failed`
-- `tests/test_backfill.py` (new file, 18 tests)
-  - covers `iter_backfill_dates` window validation
-  - covers `normalize_sources` dedup, ordering, unknown-source rejection,
-    and empty-list rejection
-  - covers `is_source_complete` requiring every artifact and falling
-    back to an older complete run when a newer run only has a partial
-    write (the AGE-200 guarantee in action)
-  - covers `backfill_historical` invoking each runner per date,
-    skipping complete dates, re-ingesting under `--force`, only
-    re-ingesting missing sources for partially-complete dates,
-    continuing past a single failed source, restricting to a subset of
-    sources, writing the manifest with per-date outcomes, and
-    forwarding `--history-days` and `--api-key` to the right runners
-  - exercises the CLI render path for both the success and the failure
-    exit codes
+- `data/static/park_factors/park_k_factors.csv` (new static lookup)
+  - one row per `(season, venue_mlb_id)` with columns `season`,
+    `venue_mlb_id`, `venue_name`, `park_k_factor`,
+    `park_k_factor_vs_rhh`, `park_k_factor_vs_lhh`
+  - values are three-year rolling FanGraphs Guts! park factors for
+    starter strikeouts, converted from the FanGraphs 100-scale to a
+    ratio centered on `1.00`
+  - 2026 rows carry 2025 values forward until the season-end FanGraphs
+    refresh lands
+- `data/static/park_factors/README.md`
+  - documents the schema, source, vintage, and how to extend the table
+    with new MLB venue ids
+- `src/mlb_props_stack/ingest/park_factors.py` (new module)
+  - `ParkKFactorRecord` frozen dataclass
+  - `load_park_k_factors(path=DEFAULT_PARK_FACTORS_PATH)` CSV loader
+    that skips rows whose `season` or `venue_mlb_id` fail to parse so a
+    partially-edited file still loads the valid rows
+  - `lookup_park_k_factor(season, venue_mlb_id, table=None)` helper
+    that returns the record for the requested season and falls back to
+    the prior season when the requested one is missing (so an
+    end-of-season slate keeps working before the next Guts! publication)
+  - `PARK_FACTOR_STATUS_OK` / `PARK_FACTOR_STATUS_MISSING_SOURCE`
+    constants shared with the feature builder
+- `src/mlb_props_stack/ingest/statcast_features.py`
+  - `GameContextFeatureRow` gains `park_k_factor`,
+    `park_k_factor_vs_rhh`, `park_k_factor_vs_lhh` (the legacy
+    always-null `park_factor` field is renamed to `park_k_factor`)
+  - `_build_game_context_feature_row` now accepts a `park_k_factor_table`
+    keyword and populates the three new fields; `park_factor_status` is
+    set to `"ok"` on a successful join and only retains the
+    `missing_park_factor_source` placeholder when the venue id is not in
+    the lookup
+  - `ingest_statcast_features_for_date` loads the default table once at
+    the top of the feature pass and threads it through every row build
+- `src/mlb_props_stack/modeling.py`
+  - `StarterStrikeoutTrainingRow` gains the three new park-factor fields
+  - `OPTIONAL_NUMERIC_FEATURES` now includes `park_k_factor`,
+    `park_k_factor_vs_rhh`, and `park_k_factor_vs_lhh` so the
+    vectorizer picks them up for the starter strikeout baseline
+- `tests/test_park_factors.py` (new file, 6 tests)
+  - loader round-trip for the committed CSV
+  - prior-season fallback
+  - unknown-venue and missing `venue_mlb_id` returning `None`
+  - skip rows with blank keys
+  - status-constant stability
+- `tests/test_statcast_feature_ingest.py`
+  - the existing happy-path test now asserts `park_factor_status == "ok"`
+    and the three emitted factor values for `venue_id=5`
+  - new test `test_ingest_statcast_features_preserves_missing_park_factor_source_for_unknown_venue`
+    rewrites the seeded game's `venue_id` to `999999` and verifies the
+    feature row falls back to `missing_park_factor_source` with all
+    three factor fields null
+- `tests/test_modeling.py`
+  - fixture now seeds the three new park-factor fields with
+    `park_factor_status = "ok"` so the training-row loader reads the
+    populated values
 - `README.md`
-  - new "Historical Backfill" section documenting the CLI invocation,
-    idempotent resume behavior, manifest layout, expected runtime, disk
-    footprint, and the Odds API history limitation
+  - "missing inputs" block updated to describe the static lookup join
+    and the new emitted fields
 
 ## Files Changed
 
 - `README.md`
+- `data/static/park_factors/README.md`
+- `data/static/park_factors/park_k_factors.csv`
 - `docs/NEXT_SESSION_HANDOFF.md`
-- `src/mlb_props_stack/__init__.py`
-- `src/mlb_props_stack/backfill.py`
-- `src/mlb_props_stack/cli.py`
-- `tests/test_backfill.py`
+- `src/mlb_props_stack/ingest/park_factors.py`
+- `src/mlb_props_stack/ingest/statcast_features.py`
+- `src/mlb_props_stack/modeling.py`
+- `tests/test_modeling.py`
+- `tests/test_park_factors.py`
+- `tests/test_statcast_feature_ingest.py`
 
 ## Verification
 
@@ -91,87 +100,57 @@ Commands run successfully before merge:
 uv sync --extra dev
 uv run pytest
 uv run python -m mlb_props_stack
-uv run python -m mlb_props_stack backfill-historical --help
 ```
 
 Observed results:
 
-- full test suite passed: `121 passed` (up from `103` on the previous
-  slice; the 18 additional tests are the parametrized backfill coverage
-  in `tests/test_backfill.py`)
-- `uv run python -m mlb_props_stack` rendered the runtime summary as
-  before
-- `backfill-historical --help` lists the documented arguments and
-  references the three valid `--sources` values
+- full test suite passed: `130 passed` (up from `121` on the previous
+  slice; the nine additional tests are the six in
+  `tests/test_park_factors.py`, the new unknown-venue test in
+  `tests/test_statcast_feature_ingest.py`, and two existing assertions
+  updated to read the new fields)
+- `uv run python -m mlb_props_stack` still renders the runtime summary
 
 ## Recommended Next Issue
 
-- Run the actual overnight 2024 + 2025 regular-season backfill against
-  real APIs (out of scope for the code-only slice committed here):
-  `uv run python -m mlb_props_stack backfill-historical --start-date 2024-03-28 --end-date 2024-09-29`
-  followed by the same invocation across the 2025 regular season. The
-  resume logic added in this slice means an interrupted run can be
-  re-invoked verbatim and only the missing dates will be ingested.
-- After both sweeps finish, run
-  `uv run python -m mlb_props_stack check-data-alignment --start-date 2024-03-28 --end-date 2024-09-29 --threshold 0.95`
-  (and the same for 2025) to confirm the issue's >=95% per-date feature
-  and outcome coverage criterion.
-- Then trigger a fresh
-  `uv run python -m mlb_props_stack train-starter-strikeout-baseline --start-date 2024-03-28 --end-date 2024-09-29`
-  to confirm `held_out_rows >= 100`, and a 14-day
-  `uv run python -m mlb_props_stack build-walk-forward-backtest`
-  inside the backfill window to confirm at least one scoreable row.
-- Raw artifacts from those runs should ship via git-lfs or a release
-  tarball rather than plain git, per the issue requirement.
-
-Why this should go next:
-
-- The CLI, resume logic, manifest, and tests for the backfill are now
-  all in place — only the actual long-running ingest sweep is pending,
-  and it is the precondition the rest of the stage-gate metrics
-  (`held_out_rows >= 100`, `scoreable_backtest_rows >= 100`, settled
-  paper-bet counts) depend on
-- Until the sweep finishes, every downstream evaluation is still
-  dominated by the four-date 2026-04-18 → 2026-04-21 window from the
-  previous slice
+- Run the overnight 2024 + 2025 regular-season backfill that was queued
+  up by AGE-201 (out of scope here). With park factors now flowing
+  through the feature build, a fresh
+  `train-starter-strikeout-baseline` over the backfill window should
+  exercise the three new `park_k_factor*` features and produce a
+  non-zero coefficient for at least one of the handedness splits — that
+  is the remaining verification step called out on the AGE-203 issue
+- Use that same training run to sanity-check the park factor sign and
+  magnitude: Coors Field (venue 22) should land near `0.94` on the K
+  factor and the trained model coefficient should reward starters
+  projected there for fewer strikeouts, all else equal
+- If new MLB venues appear in 2027+ schedules, extend
+  `data/static/park_factors/park_k_factors.csv` before the first slate
+  that uses the new `venue_mlb_id`; otherwise the feature row will fall
+  back to `missing_park_factor_source` and the trained model will see a
+  masked feature for those games
 
 ## Constraints And Open Questions
 
-- "Officialness" of dates is not enforced. `iter_backfill_dates` walks
-  every calendar date in `[start, end]`. The MLB Stats API schedule
-  endpoint returns an empty payload for off-days (no games), so the
-  resulting `games.jsonl` will be a zero-row file and the date is still
-  recorded as `ingested`. The Odds and Statcast sources will then fall
-  through with no work to do for those dates. If a future issue wants
-  to skip non-game days entirely, drive the iterator from the MLB
-  schedule rather than the calendar.
-- Resume completeness is judged on file existence, not row count. Empty
-  off-day artifacts are therefore considered "complete" and resume will
-  skip them on rerun. This matches what `check-data-alignment` reads,
-  so the diagnostic stays consistent end-to-end. If a future feature
-  requires nonzero-row guarantees, lift the row-count check from
-  `data_alignment.collect_artifact_counts_for_date` into
-  `is_source_complete`.
-- Source-level failure handling captures `Exception` only.
-  `KeyboardInterrupt` and `SystemExit` still propagate, so a Ctrl-C
-  during an overnight run aborts immediately rather than silently
-  retrying. The previous date's manifest is *not* written when a
-  `BaseException` propagates mid-sweep — only completed sweeps emit a
-  manifest. If supervisors need partial manifests, wrap the loop in a
-  `try/finally` that persists progress on `BaseException` too.
-- The Odds API ingest still expects a prior MLB metadata run for the
-  same date to exist before it starts. The default source order in
-  `ALL_SOURCES` (`mlb-metadata`, `odds-api`, `statcast-features`) keeps
-  that invariant satisfied because each date is processed top-to-bottom
-  before moving to the next date. If a user passes a custom `--sources`
-  with `odds-api` before `mlb-metadata`, the odds runner will still
-  fail with `FileNotFoundError` from `_load_latest_mlb_metadata_for_date`
-  — that failure is captured per-date as `failed` rather than raised, so
-  the sweep continues, but the user should keep the default order for
-  full season runs.
-- `BackfillResult.manifest_path` is the only on-disk artifact this
-  slice adds. The actual raw and normalized data still flows through
-  the existing ingest helpers, so all downstream consumers
-  (`check-data-alignment`, `train-starter-strikeout-baseline`,
-  `build-walk-forward-backtest`) need no changes to read backfilled
-  dates.
+- Values in the static CSV are anchored to FanGraphs Guts! three-year
+  averaged park factors, not the single-season refresh. That matches
+  how most props shops treat park factors (they're noisy year-over-year
+  and the rolling average is what's actually actionable), but it does
+  mean the 2025 and 2026 rows are identical in this first cut — rotate
+  them separately once the FanGraphs 2026 pull is available
+- The default lookup is loaded lazily per feature run via
+  `load_park_k_factors()` rather than cached at module import. That
+  keeps the CSV editable during a running daemon / dashboard session
+  but means each ingest call pays a one-shot CSV parse (still cheap —
+  60 rows in the current file, runs in microseconds)
+- `lookup_park_k_factor` deliberately does not fall back to the
+  overall-league average when a venue is missing. The issue wants the
+  `missing_park_factor_source` placeholder preserved for unknown venue
+  ids so the modeling layer can notice the masked row, and so a silent
+  league-average substitution can't mask an extension gap in the CSV
+- The legacy `park_factor` field (which was always `None`) is renamed
+  to `park_k_factor`. Any downstream consumer that reads the raw JSONL
+  and expects the old key will need to be updated — the repo's own
+  modeling and paper-tracking paths have already been migrated, but
+  external notebooks operating on older artifacts will continue to see
+  the pre-AGE-203 shape

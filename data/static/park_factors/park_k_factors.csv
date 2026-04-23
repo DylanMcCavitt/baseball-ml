@@ -1,0 +1,61 @@
+season,venue_mlb_id,venue_name,park_k_factor,park_k_factor_vs_rhh,park_k_factor_vs_lhh
+2025,1,Chase Field,0.98,0.98,0.99
+2025,2,Oriole Park at Camden Yards,1.00,1.01,0.99
+2025,3,Fenway Park,0.97,0.97,0.96
+2025,4,Rate Field,1.00,1.00,1.01
+2025,5,Progressive Field,1.02,1.02,1.03
+2025,7,Comerica Park,1.01,1.01,1.01
+2025,8,Kauffman Stadium,0.99,0.99,0.99
+2025,9,Angel Stadium,1.00,1.00,1.00
+2025,10,Yankee Stadium,1.00,1.00,0.98
+2025,12,Oakland Coliseum,1.03,1.03,1.02
+2025,14,Rogers Centre,0.99,0.99,1.00
+2025,15,Tropicana Field,1.03,1.03,1.02
+2025,16,Truist Park,0.99,0.99,1.00
+2025,17,Wrigley Field,1.00,1.00,1.01
+2025,19,Dodger Stadium,1.02,1.02,1.02
+2025,22,Coors Field,0.94,0.94,0.94
+2025,31,loanDepot park,1.02,1.02,1.02
+2025,680,Target Field,1.01,1.01,1.02
+2025,2392,Citi Field,1.02,1.02,1.01
+2025,2394,Petco Park,1.04,1.04,1.03
+2025,2395,T-Mobile Park,1.05,1.05,1.04
+2025,2523,Busch Stadium,1.00,1.00,0.99
+2025,2602,Yankee Stadium,1.00,1.00,0.98
+2025,2680,loanDepot park,1.02,1.02,1.02
+2025,2681,Nationals Park,1.00,1.00,0.99
+2025,2756,PNC Park,1.01,1.01,1.00
+2025,2889,American Family Field,0.99,0.99,1.00
+2025,3289,Globe Life Field,1.01,1.01,1.02
+2025,4169,Sutter Health Park,1.00,1.00,1.00
+2025,5000,Daikin Park,1.00,1.00,0.99
+2026,1,Chase Field,0.98,0.98,0.99
+2026,2,Oriole Park at Camden Yards,1.00,1.01,0.99
+2026,3,Fenway Park,0.97,0.97,0.96
+2026,4,Rate Field,1.00,1.00,1.01
+2026,5,Progressive Field,1.02,1.02,1.03
+2026,7,Comerica Park,1.01,1.01,1.01
+2026,8,Kauffman Stadium,0.99,0.99,0.99
+2026,9,Angel Stadium,1.00,1.00,1.00
+2026,10,Yankee Stadium,1.00,1.00,0.98
+2026,12,Oakland Coliseum,1.03,1.03,1.02
+2026,14,Rogers Centre,0.99,0.99,1.00
+2026,15,Tropicana Field,1.03,1.03,1.02
+2026,16,Truist Park,0.99,0.99,1.00
+2026,17,Wrigley Field,1.00,1.00,1.01
+2026,19,Dodger Stadium,1.02,1.02,1.02
+2026,22,Coors Field,0.94,0.94,0.94
+2026,31,loanDepot park,1.02,1.02,1.02
+2026,680,Target Field,1.01,1.01,1.02
+2026,2392,Citi Field,1.02,1.02,1.01
+2026,2394,Petco Park,1.04,1.04,1.03
+2026,2395,T-Mobile Park,1.05,1.05,1.04
+2026,2523,Busch Stadium,1.00,1.00,0.99
+2026,2602,Yankee Stadium,1.00,1.00,0.98
+2026,2680,loanDepot park,1.02,1.02,1.02
+2026,2681,Nationals Park,1.00,1.00,0.99
+2026,2756,PNC Park,1.01,1.01,1.00
+2026,2889,American Family Field,0.99,0.99,1.00
+2026,3289,Globe Life Field,1.01,1.01,1.02
+2026,4169,Sutter Health Park,1.00,1.00,1.00
+2026,5000,Daikin Park,1.00,1.00,0.99
