@@ -12,6 +12,11 @@ from .backtest import (
     build_walk_forward_backtest,
 )
 from .config import StackConfig
+from .data_alignment import (
+    DEFAULT_COVERAGE_THRESHOLD,
+    check_data_alignment,
+    render_data_alignment_summary,
+)
 from .edge import EdgeCandidateBuildResult, build_edge_candidates_for_date
 from .ingest import (
     DEFAULT_HISTORY_DAYS,
@@ -416,10 +421,42 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=StackConfig().backtest_cutoff_minutes_before_first_pitch,
         help="Latest allowed odds snapshot timestamp before scheduled first pitch.",
     )
+
+    data_alignment_parser = subparsers.add_parser(
+        "check-data-alignment",
+        help=(
+            "Report per-date row counts and coverage ratios for every ingest, "
+            "feature, and modeling artifact across a date range."
+        ),
+    )
+    data_alignment_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to evaluate in YYYY-MM-DD format.",
+    )
+    data_alignment_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to evaluate in YYYY-MM-DD format.",
+    )
+    data_alignment_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where normalized ingest, feature, and model artifacts live.",
+    )
+    data_alignment_parser.add_argument(
+        "--threshold",
+        type=float,
+        default=DEFAULT_COVERAGE_THRESHOLD,
+        help=(
+            "Minimum feature, outcome, and odds coverage ratio "
+            "(0.0-1.0) required for a date to pass."
+        ),
+    )
     return parser
 
 
-def main(argv: list[str] | None = None) -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = build_argument_parser()
     args = parser.parse_args(argv)
 
@@ -429,7 +466,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=args.output_dir,
         )
         print(render_ingest_summary(result))
-        return
+        return 0
 
     if args.command == "ingest-odds-api-lines":
         result = ingest_odds_api_pitcher_lines_for_date(
@@ -438,7 +475,7 @@ def main(argv: list[str] | None = None) -> None:
             api_key=args.api_key,
         )
         print(render_odds_api_ingest_summary(result))
-        return
+        return 0
 
     if args.command == "ingest-statcast-features":
         result = ingest_statcast_features_for_date(
@@ -447,7 +484,7 @@ def main(argv: list[str] | None = None) -> None:
             history_days=args.history_days,
         )
         print(render_statcast_feature_ingest_summary(result))
-        return
+        return 0
 
     if args.command == "train-starter-strikeout-baseline":
         result = train_starter_strikeout_baseline(
@@ -456,7 +493,7 @@ def main(argv: list[str] | None = None) -> None:
             output_dir=args.output_dir,
         )
         print(render_starter_strikeout_training_summary(result))
-        return
+        return 0
 
     if args.command == "build-daily-candidates":
         result = build_daily_candidate_workflow(
@@ -469,7 +506,7 @@ def main(argv: list[str] | None = None) -> None:
             source_model_run_dir=args.source_model_run_dir,
         )
         print(render_daily_candidate_workflow_summary(result))
-        return
+        return 0
 
     if args.command == "build-edge-candidates":
         result = build_edge_candidates_for_date(
@@ -478,7 +515,7 @@ def main(argv: list[str] | None = None) -> None:
             model_run_dir=args.model_run_dir,
         )
         print(render_edge_candidate_summary(result))
-        return
+        return 0
 
     if args.command == "build-walk-forward-backtest":
         result = build_walk_forward_backtest(
@@ -489,9 +526,20 @@ def main(argv: list[str] | None = None) -> None:
             cutoff_minutes_before_first_pitch=args.cutoff_minutes_before_first_pitch,
         )
         print(render_walk_forward_backtest_summary(result))
-        return
+        return 0
+
+    if args.command == "check-data-alignment":
+        report = check_data_alignment(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            threshold=args.threshold,
+        )
+        print(render_data_alignment_summary(report))
+        return 0 if report.passed else 1
 
     print(render_runtime_summary())
+    return 0
 
 
 if __name__ == "__main__":
