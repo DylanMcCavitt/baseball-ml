@@ -4,18 +4,17 @@ from __future__ import annotations
 
 from datetime import date
 from html import escape
-from urllib.parse import quote
 
 import pandas as pd
 
 from ..lib.data import DashboardSettings, current_slate_metrics, format_pct
+from ..lib.navigation import rerun_streamlit, set_dashboard_query_params
 from ..lib.theme import kpi_strip_html
 
 
 def _board_table_html(
     board: pd.DataFrame,
     *,
-    board_date: date,
     selected_pitcher_id: str | None,
 ) -> str:
     rows: list[str] = []
@@ -25,10 +24,6 @@ def _board_table_html(
             row_class.append("muted")
         if selected_pitcher_id and str(row["pitcher_id"]) == selected_pitcher_id:
             row_class.append("sel")
-        pitcher_url = (
-            f"?screen=pitcher&board_date={quote(board_date.isoformat())}"
-            f"&pitcher_id={quote(str(row['pitcher_id']))}"
-        )
         side_class = "over" if str(row["side"]) == "over" else "under"
         confidence_width = max(0.0, min(100.0, float(row["conf"]) * 100.0))
         odds = row["american"]
@@ -38,10 +33,7 @@ def _board_table_html(
         rows.append(
             "<tr class='{}'>".format(" ".join(row_class))
             + f"<td><span class='strike-dot {'ok' if bool(row['cleared']) else 'bad'}'></span></td>"
-            + "<td><a href='{}'><strong>{}</strong></a></td>".format(
-                escape(pitcher_url),
-                escape(str(row["pitcher"])),
-            )
+            + f"<td><strong>{escape(str(row['pitcher']))}</strong></td>"
             + "<td>{} vs {} <span class='strike-pill'>{}HP</span></td>".format(
                 escape(str(row["team"])),
                 escape(str(row["opp"])),
@@ -200,10 +192,39 @@ def render_board_screen(
         )
         return
 
+    detail_rows = filtered.drop_duplicates("pitcher_id")
+    pitcher_options = [str(row["pitcher_id"]) for _, row in detail_rows.iterrows()]
+    pitcher_labels = {
+        str(row["pitcher_id"]): (
+            f"{row['pitcher']} · {str(row['side']).upper()} {float(row['line']):.1f} "
+            f"· {row['note']}"
+        )
+        for _, row in detail_rows.iterrows()
+    }
+    detail_columns = st.columns([3, 1])
+    selected_pitcher = detail_columns[0].selectbox(
+        "Pitcher detail",
+        pitcher_options,
+        format_func=lambda pitcher_id: pitcher_labels[pitcher_id],
+        key="board_pitcher_detail_select",
+    )
+    if detail_columns[1].button(
+        "Open pitcher",
+        key="board_open_pitcher_detail",
+        type="secondary",
+        use_container_width=True,
+    ):
+        set_dashboard_query_params(
+            st,
+            screen="pitcher",
+            board_date=board_date,
+            pitcher_id=selected_pitcher,
+        )
+        rerun_streamlit(st)
+
     st.markdown(
         _board_table_html(
             filtered,
-            board_date=board_date or date.today(),
             selected_pitcher_id=selected_pitcher_id,
         ),
         unsafe_allow_html=True,

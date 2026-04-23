@@ -80,6 +80,7 @@ Run the actual changed command, not just the module entrypoint:
 - `build-edge-candidates`
 - `build-walk-forward-backtest`
 - `build-daily-candidates`
+- `build-wager-card`
 
 Review requirement:
 
@@ -105,11 +106,14 @@ For training and calibration work, open:
 For odds, edge, or daily candidate work, inspect:
 
 - CLI summary counts such as `matched_events`, `unmatched_events`,
-  `scored_candidates`, `actionable_candidates`, and `approved_wagers`
+  `scored_candidates`, `actionable_candidates`, `approved_wagers`, and
+  `blocked_candidates`
 - `event_game_mappings.jsonl`
 - `prop_line_snapshots.jsonl`
 - `edge_candidates.jsonl`
 - `daily_candidates.jsonl`
+- `wager_card.jsonl`
+- `wager_card_metadata.json`
 - `paper_results.jsonl`
 
 For daily candidate approval changes, count `wager_approved=true` and
@@ -117,7 +121,8 @@ For daily candidate approval changes, count `wager_approved=true` and
 lands in `paper_results.jsonl` for that date. Rows can remain
 `evaluation_status=actionable` while still being blocked by final wager gates
 such as hold, confidence, model age, same-pitcher correlation, or daily
-exposure.
+exposure. For wager-card changes, confirm `build-wager-card --date ...` reports
+the same approved count as the dashboard board's `plays cleared` metric.
 
 If a workflow is expected to produce scored rows but writes only skipped or
 empty outputs, call that out explicitly in the PR and handoff.
