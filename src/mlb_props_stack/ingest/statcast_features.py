@@ -136,7 +136,11 @@ class PitcherDailyFeatureRow:
     plate_appearance_sample_size: int
     pitcher_hand: str | None
     pitcher_k_rate: float | None
+    pitcher_k_rate_vs_rhh: float | None
+    pitcher_k_rate_vs_lhh: float | None
     swinging_strike_rate: float | None
+    pitcher_whiff_rate_vs_rhh: float | None
+    pitcher_whiff_rate_vs_lhh: float | None
     csw_rate: float | None
     pitch_type_usage: dict[str, float]
     average_release_speed: float | None
@@ -173,6 +177,8 @@ class LineupDailyFeatureRow:
     pitcher_hand: str | None
     projected_lineup_k_rate: float | None
     projected_lineup_k_rate_vs_pitcher_hand: float | None
+    lineup_k_rate_vs_rhp: float | None
+    lineup_k_rate_vs_lhp: float | None
     projected_lineup_chase_rate: float | None
     projected_lineup_contact_rate: float | None
     lineup_continuity_count: int | None
@@ -889,6 +895,30 @@ def _pitcher_hand(rows: list[StatcastPitchRecord]) -> str | None:
     return None
 
 
+def _pitcher_hand_split_rates(
+    *,
+    pitcher_rows: list[StatcastPitchRecord],
+    stand: str,
+) -> tuple[float | None, float | None]:
+    """Return (k_rate, whiff_rate) for rows where the batter hits from ``stand``.
+
+    ``k_rate`` is measured over plate-appearance-final pitches and ``whiff_rate``
+    is measured over every pitch, matching the unsplit equivalents so the new
+    columns slot cleanly next to ``pitcher_k_rate`` and ``swinging_strike_rate``.
+    """
+    hand_rows = [row for row in pitcher_rows if row.stand == stand]
+    final_pitch_rows = [row for row in hand_rows if row.is_plate_appearance_final_pitch]
+    k_rate = _safe_rate(
+        sum(1 for row in final_pitch_rows if row.is_strikeout_event),
+        len(final_pitch_rows),
+    )
+    whiff_rate = _safe_rate(
+        sum(1 for row in hand_rows if row.is_whiff),
+        len(hand_rows),
+    )
+    return k_rate, whiff_rate
+
+
 def _build_pitcher_daily_feature_row(
     *,
     starter: ProbableStarterRecord,
@@ -918,7 +948,11 @@ def _build_pitcher_daily_feature_row(
             plate_appearance_sample_size=0,
             pitcher_hand=None,
             pitcher_k_rate=None,
+            pitcher_k_rate_vs_rhh=None,
+            pitcher_k_rate_vs_lhh=None,
             swinging_strike_rate=None,
+            pitcher_whiff_rate_vs_rhh=None,
+            pitcher_whiff_rate_vs_lhh=None,
             csw_rate=None,
             pitch_type_usage={},
             average_release_speed=None,
@@ -952,6 +986,13 @@ def _build_pitcher_daily_feature_row(
     if last_game_date is not None:
         rest_days = (date.fromisoformat(starter.official_date) - last_game_date).days
 
+    k_rate_vs_rhh, whiff_rate_vs_rhh = _pitcher_hand_split_rates(
+        pitcher_rows=pitcher_rows, stand="R"
+    )
+    k_rate_vs_lhh, whiff_rate_vs_lhh = _pitcher_hand_split_rates(
+        pitcher_rows=pitcher_rows, stand="L"
+    )
+
     return PitcherDailyFeatureRow(
         feature_row_id=f"pitcher-feature:{starter.game_pk}:{starter.pitcher_id}:{starter.official_date}",
         official_date=starter.official_date,
@@ -972,10 +1013,14 @@ def _build_pitcher_daily_feature_row(
             sum(1 for row in final_pitch_rows if row.is_strikeout_event),
             len(final_pitch_rows),
         ),
+        pitcher_k_rate_vs_rhh=k_rate_vs_rhh,
+        pitcher_k_rate_vs_lhh=k_rate_vs_lhh,
         swinging_strike_rate=_safe_rate(
             sum(1 for row in pitcher_rows if row.is_whiff),
             len(pitcher_rows),
         ),
+        pitcher_whiff_rate_vs_rhh=whiff_rate_vs_rhh,
+        pitcher_whiff_rate_vs_lhh=whiff_rate_vs_lhh,
         csw_rate=_safe_rate(
             sum(1 for row in pitcher_rows if row.is_whiff or row.is_called_strike),
             len(pitcher_rows),
@@ -1001,25 +1046,43 @@ def _build_pitcher_daily_feature_row(
     )
 
 
+@dataclass(frozen=True)
+class _BatterMetricBundle:
+    k_rate: float | None
+    k_rate_vs_pitcher_hand: float | None
+    k_rate_vs_rhp: float | None
+    k_rate_vs_lhp: float | None
+    chase_rate: float | None
+    contact_rate: float | None
+
+
+def _batter_k_rate_vs_p_throws(
+    final_pitch_rows: list[StatcastPitchRecord], *, p_throws: str
+) -> float | None:
+    hand_rows = [row for row in final_pitch_rows if row.p_throws == p_throws]
+    return _safe_rate(
+        sum(1 for row in hand_rows if row.is_strikeout_event),
+        len(hand_rows),
+    )
+
+
 def _batter_metric_bundle(
     *,
     batter_rows: list[StatcastPitchRecord],
     pitcher_hand: str | None,
-) -> tuple[float | None, float | None, float | None, float | None]:
+) -> _BatterMetricBundle:
     final_pitch_rows = [row for row in batter_rows if row.is_plate_appearance_final_pitch]
     k_rate = _safe_rate(
         sum(1 for row in final_pitch_rows if row.is_strikeout_event),
         len(final_pitch_rows),
     )
-    hand_rows = [
-        row
-        for row in final_pitch_rows
-        if pitcher_hand is not None and row.p_throws == pitcher_hand
-    ]
-    k_rate_vs_pitcher_hand = _safe_rate(
-        sum(1 for row in hand_rows if row.is_strikeout_event),
-        len(hand_rows),
-    )
+    k_rate_vs_pitcher_hand: float | None = None
+    if pitcher_hand is not None:
+        k_rate_vs_pitcher_hand = _batter_k_rate_vs_p_throws(
+            final_pitch_rows, p_throws=pitcher_hand
+        )
+    k_rate_vs_rhp = _batter_k_rate_vs_p_throws(final_pitch_rows, p_throws="R")
+    k_rate_vs_lhp = _batter_k_rate_vs_p_throws(final_pitch_rows, p_throws="L")
     out_of_zone_rows = [row for row in batter_rows if row.is_out_of_zone is True]
     swing_rows = [row for row in batter_rows if row.is_swing]
     chase_rate = _safe_rate(
@@ -1030,7 +1093,36 @@ def _batter_metric_bundle(
         sum(1 for row in swing_rows if row.is_contact),
         len(swing_rows),
     )
-    return k_rate, k_rate_vs_pitcher_hand, chase_rate, contact_rate
+    return _BatterMetricBundle(
+        k_rate=k_rate,
+        k_rate_vs_pitcher_hand=k_rate_vs_pitcher_hand,
+        k_rate_vs_rhp=k_rate_vs_rhp,
+        k_rate_vs_lhp=k_rate_vs_lhp,
+        chase_rate=chase_rate,
+        contact_rate=contact_rate,
+    )
+
+
+def _batting_order_weight(*, slot_index: int, lineup_size: int) -> float:
+    """Linearly decreasing weight that models the PA distribution of a lineup.
+
+    Slot 1 gets the largest weight and slot N the smallest, reflecting the fact
+    that the top of the order turns over more plate appearances than the bottom.
+    Weights are unnormalized; the caller should divide by the sum of consumed
+    weights so missing-history batters do not distort the average.
+    """
+    return float(lineup_size - slot_index)
+
+
+def _weighted_mean(values: list[tuple[float, float]]) -> float | None:
+    """Weighted mean of ``(value, weight)`` pairs. Returns ``None`` when empty."""
+    if not values:
+        return None
+    total_weight = sum(weight for _, weight in values)
+    if total_weight <= 0:
+        return None
+    weighted_sum = sum(value * weight for value, weight in values)
+    return _round_optional(weighted_sum / total_weight)
 
 
 def _latest_prior_team_lineup_player_ids(
@@ -1086,25 +1178,35 @@ def _build_lineup_daily_feature_row(
     k_rates_vs_hand: list[float] = []
     chase_rates: list[float] = []
     contact_rates: list[float] = []
+    weighted_k_rates_vs_rhp: list[tuple[float, float]] = []
+    weighted_k_rates_vs_lhp: list[tuple[float, float]] = []
     available_batter_feature_count = 0
+    lineup_size = len(lineup_player_ids)
 
-    for batter_id in lineup_player_ids:
+    for slot_index, batter_id in enumerate(lineup_player_ids):
         batter_rows = _sorted_rows(_batter_rows(all_rows, batter_id=batter_id))
         if not batter_rows:
             continue
         available_batter_feature_count += 1
-        k_rate, k_rate_vs_pitcher_hand, chase_rate, contact_rate = _batter_metric_bundle(
+        bundle = _batter_metric_bundle(
             batter_rows=batter_rows,
             pitcher_hand=pitcher_hand,
         )
-        if k_rate is not None:
-            k_rates.append(k_rate)
-        if k_rate_vs_pitcher_hand is not None:
-            k_rates_vs_hand.append(k_rate_vs_pitcher_hand)
-        if chase_rate is not None:
-            chase_rates.append(chase_rate)
-        if contact_rate is not None:
-            contact_rates.append(contact_rate)
+        if bundle.k_rate is not None:
+            k_rates.append(bundle.k_rate)
+        if bundle.k_rate_vs_pitcher_hand is not None:
+            k_rates_vs_hand.append(bundle.k_rate_vs_pitcher_hand)
+        if bundle.chase_rate is not None:
+            chase_rates.append(bundle.chase_rate)
+        if bundle.contact_rate is not None:
+            contact_rates.append(bundle.contact_rate)
+        slot_weight = _batting_order_weight(
+            slot_index=slot_index, lineup_size=lineup_size
+        )
+        if bundle.k_rate_vs_rhp is not None:
+            weighted_k_rates_vs_rhp.append((bundle.k_rate_vs_rhp, slot_weight))
+        if bundle.k_rate_vs_lhp is not None:
+            weighted_k_rates_vs_lhp.append((bundle.k_rate_vs_lhp, slot_weight))
 
     prior_lineup_ids = _latest_prior_team_lineup_player_ids(
         team_abbreviation=opponent_team_abbreviation,
@@ -1139,6 +1241,8 @@ def _build_lineup_daily_feature_row(
         pitcher_hand=pitcher_hand,
         projected_lineup_k_rate=_mean(k_rates),
         projected_lineup_k_rate_vs_pitcher_hand=_mean(k_rates_vs_hand),
+        lineup_k_rate_vs_rhp=_weighted_mean(weighted_k_rates_vs_rhp),
+        lineup_k_rate_vs_lhp=_weighted_mean(weighted_k_rates_vs_lhp),
         projected_lineup_chase_rate=_mean(chase_rates),
         projected_lineup_contact_rate=_mean(contact_rates),
         lineup_continuity_count=continuity_count,

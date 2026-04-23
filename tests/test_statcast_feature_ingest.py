@@ -16,7 +16,11 @@ from mlb_props_stack.ingest import (
     build_statcast_search_csv_url,
     ingest_statcast_features_for_date,
 )
-from mlb_props_stack.ingest.statcast_features import StatcastSearchClient
+from mlb_props_stack.ingest.statcast_features import (
+    StatcastPitchRecord,
+    StatcastSearchClient,
+    _pitcher_hand_split_rates,
+)
 
 
 STATCAST_HEADERS = [
@@ -844,7 +848,11 @@ def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_mis
     assert ryan["pitch_sample_size"] == 9
     assert ryan["plate_appearance_sample_size"] == 3
     assert ryan["pitcher_k_rate"] == 0.666667
+    assert ryan["pitcher_k_rate_vs_lhh"] == 1.0
+    assert ryan["pitcher_k_rate_vs_rhh"] == 0.0
     assert ryan["swinging_strike_rate"] == 0.333333
+    assert ryan["pitcher_whiff_rate_vs_lhh"] == 0.5
+    assert ryan["pitcher_whiff_rate_vs_rhh"] == 0.0
     assert ryan["csw_rate"] == 0.555556
     assert ryan["pitch_type_usage"] == {"CH": 0.333333, "FF": 0.666667}
     assert ryan["rest_days"] == 6
@@ -852,6 +860,10 @@ def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_mis
     assert ryan["last_start_pitch_count"] == 6
     assert parker["pitcher_hand"] == "L"
     assert parker["rest_days"] == 5
+    assert parker["pitcher_k_rate_vs_lhh"] == 1.0
+    assert parker["pitcher_k_rate_vs_rhh"] == 0.0
+    assert parker["pitcher_whiff_rate_vs_lhh"] == 1.0
+    assert parker["pitcher_whiff_rate_vs_rhh"] == 0.0
 
     lineup_by_pitcher = {row["pitcher_id"]: row for row in lineup_rows}
     ryan_lineup = lineup_by_pitcher[680802]
@@ -862,6 +874,10 @@ def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_mis
     assert ryan_lineup["available_batter_feature_count"] == 2
     assert ryan_lineup["projected_lineup_k_rate"] == 0.5
     assert ryan_lineup["projected_lineup_k_rate_vs_pitcher_hand"] == 0.5
+    # Slot 0 (680757) weight=9 with k_rate_vs_rhp=1.0; slot 1 (800050) weight=8
+    # with k_rate_vs_rhp=0.0 → weighted mean = 9/17 = 0.529412.
+    assert ryan_lineup["lineup_k_rate_vs_rhp"] == 0.529412
+    assert ryan_lineup["lineup_k_rate_vs_lhp"] is None
     assert ryan_lineup["projected_lineup_chase_rate"] == 0.75
     assert ryan_lineup["projected_lineup_contact_rate"] == 0.625
     assert ryan_lineup["lineup_continuity_count"] == 2
@@ -869,6 +885,8 @@ def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_mis
     assert parker_lineup["lineup_status"] == "missing_pregame_lineup"
     assert parker_lineup["lineup_snapshot_id"] is None
     assert parker_lineup["lineup_size"] == 0
+    assert parker_lineup["lineup_k_rate_vs_rhp"] is None
+    assert parker_lineup["lineup_k_rate_vs_lhp"] is None
 
     context_by_pitcher = {row["pitcher_id"]: row for row in context_rows}
     assert context_by_pitcher[680802]["weather_status"] == "missing_weather_source"
@@ -1117,6 +1135,123 @@ def test_ingest_statcast_features_preserves_pull_ordering_under_threaded_fetch(
     assert manifest_player_order == expected_order
     captured_at_values = [row["captured_at"] for row in manifest_rows]
     assert captured_at_values == sorted(captured_at_values)
+
+
+def _synthetic_pitch_record(
+    *,
+    pitch_number: int,
+    stand: str,
+    is_whiff: bool,
+    is_plate_appearance_final_pitch: bool,
+    is_strikeout_event: bool,
+) -> StatcastPitchRecord:
+    return StatcastPitchRecord(
+        pitch_record_id=f"pitch:1:1:{pitch_number}:1000:{2000 if stand == 'R' else 2001}",
+        source_pull_id="test-pull",
+        source_row_number=pitch_number + 1,
+        game_date="2026-04-20",
+        game_pk=1,
+        at_bat_number=1 if stand == "R" else 2,
+        pitch_number=pitch_number,
+        pitcher_id=1000,
+        batter_id=2000 if stand == "R" else 2001,
+        pitch_type="FF",
+        pitch_name="4-Seam Fastball",
+        release_speed=95.0,
+        release_spin_rate=2300.0,
+        release_extension=6.5,
+        plate_x=0.0,
+        plate_z=2.5,
+        zone=5,
+        description="swinging_strike" if is_whiff else "called_strike",
+        events="strikeout" if is_strikeout_event else ("foul" if is_plate_appearance_final_pitch else None),
+        stand=stand,
+        p_throws="R",
+        balls=0,
+        strikes=2,
+        outs_when_up=0,
+        home_team_abbreviation="CLE",
+        away_team_abbreviation="HOU",
+        batting_team_abbreviation="HOU",
+        fielding_team_abbreviation="CLE",
+        is_plate_appearance_final_pitch=is_plate_appearance_final_pitch,
+        is_strikeout_event=is_strikeout_event,
+        is_whiff=is_whiff,
+        is_called_strike=not is_whiff,
+        is_swing=is_whiff,
+        is_contact=False,
+        is_out_of_zone=False,
+        is_chase_swing=False,
+    )
+
+
+def test_pitcher_hand_split_rates_computes_separate_rates_per_batter_stand() -> None:
+    rows = [
+        # vs L: 4 pitches across 2 PAs, 2 whiffs, 2 Ks
+        _synthetic_pitch_record(
+            pitch_number=1, stand="L", is_whiff=True,
+            is_plate_appearance_final_pitch=False, is_strikeout_event=False,
+        ),
+        _synthetic_pitch_record(
+            pitch_number=2, stand="L", is_whiff=True,
+            is_plate_appearance_final_pitch=True, is_strikeout_event=True,
+        ),
+        _synthetic_pitch_record(
+            pitch_number=3, stand="L", is_whiff=False,
+            is_plate_appearance_final_pitch=False, is_strikeout_event=False,
+        ),
+        _synthetic_pitch_record(
+            pitch_number=4, stand="L", is_whiff=False,
+            is_plate_appearance_final_pitch=True, is_strikeout_event=True,
+        ),
+        # vs R: 4 pitches across 2 PAs, 1 whiff, 0 Ks
+        _synthetic_pitch_record(
+            pitch_number=5, stand="R", is_whiff=False,
+            is_plate_appearance_final_pitch=False, is_strikeout_event=False,
+        ),
+        _synthetic_pitch_record(
+            pitch_number=6, stand="R", is_whiff=False,
+            is_plate_appearance_final_pitch=True, is_strikeout_event=False,
+        ),
+        _synthetic_pitch_record(
+            pitch_number=7, stand="R", is_whiff=True,
+            is_plate_appearance_final_pitch=False, is_strikeout_event=False,
+        ),
+        _synthetic_pitch_record(
+            pitch_number=8, stand="R", is_whiff=False,
+            is_plate_appearance_final_pitch=True, is_strikeout_event=False,
+        ),
+    ]
+
+    lhh_k_rate, lhh_whiff_rate = _pitcher_hand_split_rates(pitcher_rows=rows, stand="L")
+    rhh_k_rate, rhh_whiff_rate = _pitcher_hand_split_rates(pitcher_rows=rows, stand="R")
+
+    assert lhh_k_rate == 1.0  # 2/2 final pitches were strikeouts
+    assert lhh_whiff_rate == 0.5  # 2/4 pitches were whiffs
+    assert rhh_k_rate == 0.0  # 0/2 final pitches were strikeouts
+    assert rhh_whiff_rate == 0.25  # 1/4 pitches were whiffs
+
+
+def test_pitcher_hand_split_rates_returns_none_when_no_rows_match_stand() -> None:
+    rows = [
+        # Pitcher has only faced LHH in the window; vs RHH is a missing split.
+        _synthetic_pitch_record(
+            pitch_number=1, stand="L", is_whiff=True,
+            is_plate_appearance_final_pitch=False, is_strikeout_event=False,
+        ),
+        _synthetic_pitch_record(
+            pitch_number=2, stand="L", is_whiff=True,
+            is_plate_appearance_final_pitch=True, is_strikeout_event=True,
+        ),
+    ]
+
+    rhh_k_rate, rhh_whiff_rate = _pitcher_hand_split_rates(pitcher_rows=rows, stand="R")
+    lhh_k_rate, lhh_whiff_rate = _pitcher_hand_split_rates(pitcher_rows=rows, stand="L")
+
+    assert rhh_k_rate is None
+    assert rhh_whiff_rate is None
+    assert lhh_k_rate == 1.0
+    assert lhh_whiff_rate == 1.0
 
 
 def test_ingest_statcast_features_rejects_invalid_max_fetch_workers(tmp_path) -> None:
