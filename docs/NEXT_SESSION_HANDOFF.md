@@ -56,6 +56,12 @@
     tally per-date and per-game-pk pitch/called-strike/PA/strikeout
     counts; `compute_rolling_umpire_metrics` combines the two into
     `(ump_called_strike_rate_30d, ump_k_per_9_delta_vs_league_30d)`
+  - Post-review fix: `compute_rolling_umpire_metrics` now returns
+    `(called_strike_rate, None)` when the umpire has pitches but zero
+    recorded plate-appearance finals, rather than discarding both
+    metrics. `called_strike_rate` is pitch-level and computable
+    independent of PA; previously a degenerate PA=0 window (e.g.
+    suspended games) would zero out the strike rate too
   - K/9 is approximated as `K_rate × 38.25` (9 innings × ~4.25 PAs
     per inning) documented inline on `APPROXIMATE_PA_PER_NINE_INNINGS`
     — the pitch-level base captures plate appearances via the
@@ -110,7 +116,7 @@
     `ok / games` (missing-source rows do not count toward coverage)
   - `render_data_alignment_summary` prints two new columns
     (`umpire_ok`, `ump_cov`)
-- `tests/test_umpire_ingest.py` (14 tests)
+- `tests/test_umpire_ingest.py` (15 tests)
   - happy path via persisted feed/live, HTTP fallback when no
     persisted payload exists, missing-home-plate sentinel,
     HTTP-error sentinel, leakage guard (`captured_at <= commence_time`),
@@ -119,8 +125,10 @@
     degrading to `None` when no prior data is seeded,
     `normalize_feed_live_officials_payload` happy + missing-block
     paths, `load_latest_umpire_snapshots_for_date` returning the
-    latest complete run (or `{}` when nothing exists), and the
-    `DEFAULT_UMPIRE_HISTORY_DAYS` spec guard
+    latest complete run (or `{}` when nothing exists), the
+    `DEFAULT_UMPIRE_HISTORY_DAYS` spec guard, and a regression test
+    for the PA=0 fix that asserts called-strike rate is preserved
+    when only plate-appearance finals are missing
 - `tests/test_statcast_feature_ingest.py`
   - new assertions that all seven umpire fields arrive on the
     emitted `game_context_features.jsonl` rows (populated when a
@@ -174,8 +182,8 @@ uv run python -m mlb_props_stack.cli ingest-umpire --help
 
 Observed results:
 
-- full test suite passed: `177 passed` (up from `161` — sixteen
-  additional tests: fourteen new `test_umpire_ingest.py` cases plus a
+- full test suite passed: `178 passed` (up from `161` — seventeen
+  additional tests: fifteen new `test_umpire_ingest.py` cases plus a
   new data-alignment umpire counts test and a new backfill umpire
   kwargs test)
 - CLI help lists the `ingest-umpire` subcommand and the backfill help
@@ -309,3 +317,24 @@ Observed results:
   independently. For a full-season backfill they could share a
   single walk. Low-priority optimization; correctness is
   straightforward with the current split
+- `ingest_umpire_for_date` treats `payload is None` as "no persisted
+  payload, attempt HTTP" (see the `if payload is None:` branch in
+  `umpire.py`). A persisted feed/live file containing literal `null`
+  would silently trigger the HTTP path while the raw artifact still
+  records `source_feed_live_path` pointing at the corrupted file.
+  MLB Stats API is not expected to return `null`, but tightening the
+  check to `if not isinstance(payload, dict):` with an explicit
+  sentinel would be more defensive
+- `ingest_umpire_for_date` lazily instantiates `MLBStatsAPIClient()`
+  into the caller-supplied `client` parameter slot the first time
+  an HTTP fallback is needed inside the loop. Behaviour is correct
+  (the real client is reused across subsequent games), but mutating
+  a caller's argument across iterations is mildly surprising.
+  Reading `_http_client = client` into a local up front would be
+  cleaner
+- `umpire_coverage = ok / games` (missing-source rows excluded from
+  the numerator) is set in `data_alignment.py` without an inline
+  comment explaining the asymmetry versus weather's
+  `(ok + roof_closed) / games`. Worth a one-line comment so future
+  readers don't "unify" the two and silently start counting sentinel
+  rows as covered
