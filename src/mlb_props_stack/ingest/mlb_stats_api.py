@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, is_dataclass
 from datetime import UTC, date, datetime
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode
@@ -195,10 +196,16 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _write_jsonl(path: Path, records: list[Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(_json_ready(record), sort_keys=True))
-            handle.write("\n")
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            for record in records:
+                handle.write(json.dumps(_json_ready(record), sort_keys=True))
+                handle.write("\n")
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def _team_name(team_block: dict[str, Any]) -> str:

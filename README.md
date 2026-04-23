@@ -218,6 +218,13 @@ connection errors) with bounded exponential backoff and fan out across a
 small thread pool (default four workers) so a full slate fetches in parallel
 while still writing raw and normalized artifacts in deterministic pull order.
 
+Normalized JSONL artifacts from the MLB metadata, Odds API, and Statcast
+feature ingests are written atomically: each `_write_jsonl` call streams to a
+sibling `.tmp` file in the same run directory and then `os.replace`s it over
+the target path. Readers therefore only ever observe a fully written JSONL or
+the prior version, and a crash mid-write leaves the previous artifact intact
+rather than producing a truncated normalized file.
+
 ## Starter Strikeout Baseline Training
 
 `AGE-147` adds the first reproducible training loop for expected starter
