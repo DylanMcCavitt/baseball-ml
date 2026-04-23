@@ -6,12 +6,19 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
-from .config import StackConfig
+from .config import (
+    DEVIG_MODE_CONSENSUS,
+    DEVIG_MODE_PER_BOOK,
+    DEVIG_MODE_TIGHTEST_BOOK,
+    StackConfig,
+)
 from .markets import EdgeDecision, PropLine, PropProjection, ProjectionInputRef
 from .pricing import (
+    book_hold,
     capped_fractional_kelly,
+    devig_consensus_two_way,
     devig_two_way,
     expected_value,
     fair_american_odds,
@@ -104,12 +111,63 @@ def _find_latest_model_run_for_date(output_root: Path, *, target_date: date) -> 
     )
 
 
+def _compute_market_probabilities(
+    line: PropLine,
+    *,
+    peer_lines: Sequence[PropLine],
+    devig_mode: str,
+) -> tuple[float, float, list[str]]:
+    """Return (market_over, market_under, consensus_books) for the devig mode.
+
+    ``peer_lines`` are other book snapshots for the same (event, player,
+    market, line). They are ignored in ``per_book`` mode so legacy callers
+    that pass no peers still see the prior behavior.
+    """
+    if devig_mode == DEVIG_MODE_PER_BOOK:
+        market_over, market_under = devig_two_way(line.over_odds, line.under_odds)
+        return market_over, market_under, [line.sportsbook]
+
+    books_by_key: dict[str, PropLine] = {line.sportsbook: line}
+    for peer in peer_lines:
+        books_by_key.setdefault(peer.sportsbook, peer)
+    ordered_books = sorted(books_by_key.values(), key=lambda book: book.sportsbook)
+
+    if devig_mode == DEVIG_MODE_TIGHTEST_BOOK:
+        tightest = min(
+            ordered_books,
+            key=lambda book: (
+                book_hold(book.over_odds, book.under_odds),
+                book.sportsbook,
+            ),
+        )
+        market_over, market_under = devig_two_way(
+            tightest.over_odds, tightest.under_odds
+        )
+        return market_over, market_under, [tightest.sportsbook]
+
+    if devig_mode == DEVIG_MODE_CONSENSUS:
+        market_over, market_under = devig_consensus_two_way(
+            [(book.over_odds, book.under_odds) for book in ordered_books]
+        )
+        return market_over, market_under, [book.sportsbook for book in ordered_books]
+
+    raise ValueError(f"unknown devig_mode: {devig_mode!r}")
+
+
 def analyze_projection(
     line: PropLine,
     projection: PropProjection,
     config: Optional[StackConfig] = None,
+    *,
+    peer_lines: Sequence[PropLine] = (),
 ) -> dict[str, Any]:
-    """Return full pricing details for a model-vs-market comparison."""
+    """Return full pricing details for a model-vs-market comparison.
+
+    ``peer_lines`` are other book snapshots for the same (event, player,
+    market, line). They are only consulted when ``config.devig_mode`` is
+    ``tightest_book`` or ``consensus`` so existing single-book callers keep
+    working without passing peers.
+    """
     if config is None:
         config = StackConfig()
     if line.selection_key != projection.selection_key:
@@ -121,7 +179,11 @@ def analyze_projection(
     if projection.generated_at > line.captured_at:
         raise ValueError("projection.generated_at must be on or before line.captured_at")
 
-    market_over, market_under = devig_two_way(line.over_odds, line.under_odds)
+    market_over, market_under, consensus_books = _compute_market_probabilities(
+        line,
+        peer_lines=peer_lines,
+        devig_mode=config.devig_mode,
+    )
     over_edge = projection.over_probability - market_over
     under_edge = projection.under_probability - market_under
 
@@ -174,6 +236,8 @@ def analyze_projection(
         "fair_odds": fair_odds,
         "market_over_probability": market_over,
         "market_under_probability": market_under,
+        "market_consensus_books": list(consensus_books),
+        "devig_mode": config.devig_mode,
         "selected_model_probability": selected_model_probability,
         "selected_market_probability": selected_market_probability,
         "selected_odds": selected_odds,
@@ -282,11 +346,24 @@ def _build_skipped_candidate_row(
     return row
 
 
+def _multi_book_line_group_key(
+    row: dict[str, Any],
+) -> tuple[str, str, str, str, float]:
+    return (
+        str(row["official_date"]),
+        str(row["event_id"]),
+        str(row["player_id"]),
+        str(row["market"]),
+        round(float(row["line"]), 6),
+    )
+
+
 def build_edge_candidates_for_date(
     *,
     target_date: date,
     output_dir: Path | str = "data",
     model_run_dir: Path | str | None = None,
+    config: Optional[StackConfig] = None,
 ) -> EdgeCandidateBuildResult:
     """Build replayable edge-candidate rows for one official date."""
     output_root = Path(output_dir)
@@ -306,7 +383,20 @@ def build_edge_candidates_for_date(
     ladder_rows = _load_jsonl_rows(ladder_probabilities_path)
     model_version = str(model_artifact["model_version"])
     model_run_id = _path_run_id(resolved_model_run_dir)
-    config = StackConfig()
+    if config is None:
+        config = StackConfig()
+
+    peer_lookup: dict[
+        tuple[str, str, str, str, float], list[PropLine]
+    ] = {}
+    for peer_row in line_rows:
+        try:
+            peer_line = _prop_line_from_snapshot_row(peer_row)
+        except (KeyError, TypeError, ValueError):
+            continue
+        peer_lookup.setdefault(_multi_book_line_group_key(peer_row), []).append(
+            peer_line
+        )
 
     ladder_lookup: dict[tuple[str, int, int], dict[str, Any]] = {}
     for ladder_row in ladder_rows:
@@ -435,7 +525,19 @@ def build_edge_candidates_for_date(
                 ),
                 generated_at=_parse_datetime(str(ladder_row["projection_generated_at"])),
             )
-            analysis = analyze_projection(prop_line, projection, config=config)
+            peer_lines = [
+                peer
+                for peer in peer_lookup.get(
+                    _multi_book_line_group_key(line_row), []
+                )
+                if peer.line_snapshot_id != prop_line.line_snapshot_id
+            ]
+            analysis = analyze_projection(
+                prop_line,
+                projection,
+                config=config,
+                peer_lines=peer_lines,
+            )
         except (TypeError, ValueError) as error:
             skipped_line_count += 1
             candidate_rows.append(
@@ -494,6 +596,8 @@ def build_edge_candidates_for_date(
                 float(analysis["market_under_probability"]),
                 6,
             ),
+            "market_consensus_books": list(analysis["market_consensus_books"]),
+            "devig_mode": str(analysis["devig_mode"]),
             "selected_side": str(analysis["side"]),
             "selected_model_probability": round(
                 float(analysis["selected_model_probability"]),

@@ -4,6 +4,12 @@ from pathlib import Path
 
 import pytest
 
+from mlb_props_stack.config import (
+    DEVIG_MODE_CONSENSUS,
+    DEVIG_MODE_PER_BOOK,
+    DEVIG_MODE_TIGHTEST_BOOK,
+    StackConfig,
+)
 from mlb_props_stack.edge import (
     analyze_projection,
     build_edge_candidates_for_date,
@@ -31,19 +37,22 @@ def make_line(
     player_id: str = "pitcher-1",
     line: float = 5.5,
     captured_at: datetime | None = None,
+    sportsbook: str = "draftkings",
+    over_odds: int = -110,
+    under_odds: int = -110,
 ) -> PropLine:
     if captured_at is None:
         captured_at = datetime(2026, 4, 20, 12, 0, 0)
     return PropLine(
         line_snapshot_id=line_snapshot_id,
-        sportsbook="draftkings",
+        sportsbook=sportsbook,
         event_id="game-1",
         player_id=player_id,
         player_name="Ace Starter",
         market="pitcher_strikeouts",
         line=line,
-        over_odds=-110,
-        under_odds=-110,
+        over_odds=over_odds,
+        under_odds=under_odds,
         captured_at=captured_at,
     )
 
@@ -91,6 +100,74 @@ def test_analyze_projection_returns_capped_stake_and_market_probabilities():
     assert analysis["clears_min_edge"] is True
     assert analysis["stake_fraction"] == 0.02
     assert analysis["uncapped_stake_fraction"] > analysis["stake_fraction"]
+    assert analysis["devig_mode"] == DEVIG_MODE_PER_BOOK
+    assert analysis["market_consensus_books"] == ["draftkings"]
+
+
+def test_analyze_projection_per_book_mode_ignores_peer_lines():
+    line = make_line()
+    peer = make_line(
+        line_snapshot_id="line-snapshot-peer",
+        sportsbook="pinnacle",
+        over_odds=150,
+        under_odds=-180,
+    )
+    projection = make_projection()
+
+    analysis = analyze_projection(line, projection, peer_lines=[peer])
+
+    # per_book uses only the primary line's odds even when peers are provided.
+    assert round(analysis["market_over_probability"], 6) == 0.5
+    assert analysis["market_consensus_books"] == ["draftkings"]
+
+
+def test_analyze_projection_tightest_book_mode_selects_lowest_hold_book():
+    # Primary book (draftkings) holds ~4.76%; peer (pinnacle) holds ~2.35%.
+    line = make_line()
+    peer = make_line(
+        line_snapshot_id="line-snapshot-peer",
+        sportsbook="pinnacle",
+        over_odds=-105,
+        under_odds=-105,
+    )
+    projection = make_projection()
+    config = StackConfig(devig_mode=DEVIG_MODE_TIGHTEST_BOOK)
+
+    analysis = analyze_projection(line, projection, config=config, peer_lines=[peer])
+
+    assert analysis["market_consensus_books"] == ["pinnacle"]
+    assert analysis["devig_mode"] == DEVIG_MODE_TIGHTEST_BOOK
+    # Tightest book -105/-105 still devigs to 0.5/0.5, but the reported book is pinnacle.
+    assert round(analysis["market_over_probability"], 6) == 0.5
+
+
+def test_analyze_projection_consensus_mode_averages_across_books():
+    # Two books with different implied probabilities; consensus should land between.
+    line = make_line(over_odds=-130, under_odds=110)
+    peer = make_line(
+        line_snapshot_id="line-snapshot-peer",
+        sportsbook="pinnacle",
+        over_odds=100,
+        under_odds=-120,
+    )
+    projection = make_projection()
+    config = StackConfig(devig_mode=DEVIG_MODE_CONSENSUS)
+
+    analysis = analyze_projection(line, projection, config=config, peer_lines=[peer])
+
+    assert analysis["devig_mode"] == DEVIG_MODE_CONSENSUS
+    # Both books are recorded, sorted alphabetically.
+    assert analysis["market_consensus_books"] == ["draftkings", "pinnacle"]
+    # Consensus sits strictly between the per-book devigs.
+    per_book_line = analyze_projection(line, projection)
+    per_book_peer = analyze_projection(peer, projection)
+    low = min(per_book_line["market_over_probability"], per_book_peer["market_over_probability"])
+    high = max(per_book_line["market_over_probability"], per_book_peer["market_over_probability"])
+    assert low < analysis["market_over_probability"] < high
+    assert round(
+        analysis["market_over_probability"] + analysis["market_under_probability"],
+        6,
+    ) == 1.0
 
 
 def test_projection_must_clear_threshold_to_return_decision():
@@ -464,4 +541,176 @@ def test_build_edge_candidates_for_date_writes_actionable_below_threshold_and_sk
     assert (
         edge_rows[4]["reason"]
         == "The matched projection only exists in the training split and is not honest for historical edge evaluation."
+    )
+    # Actionable rows carry the devig provenance fields introduced for multi-book support.
+    assert edge_rows[0]["market_consensus_books"] == ["draftkings"]
+    assert edge_rows[0]["devig_mode"] == DEVIG_MODE_PER_BOOK
+
+
+def _write_two_book_fixture(tmp_path: Path) -> None:
+    """Write a minimal two-book fixture for devig-mode comparison tests."""
+    odds_run_dir = (
+        tmp_path
+        / "normalized"
+        / "the_odds_api"
+        / "date=2026-04-20"
+        / "run=20260420T170000Z"
+    )
+    _write_jsonl(
+        odds_run_dir / "prop_line_snapshots.jsonl",
+        [
+            {
+                "line_snapshot_id": "line-draftkings",
+                "official_date": "2026-04-20",
+                "captured_at": "2026-04-20T16:00:00Z",
+                "sportsbook": "draftkings",
+                "sportsbook_title": "DraftKings",
+                "event_id": "event-1",
+                "game_pk": 9001,
+                "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T23:10:00Z",
+                "match_status": "matched",
+                "player_id": "mlb-pitcher:700001",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Actionable Arm",
+                "market": "pitcher_strikeouts",
+                "line": 5.5,
+                "over_odds": -130,
+                "under_odds": 110,
+            },
+            {
+                "line_snapshot_id": "line-pinnacle",
+                "official_date": "2026-04-20",
+                "captured_at": "2026-04-20T16:00:00Z",
+                "sportsbook": "pinnacle",
+                "sportsbook_title": "Pinnacle",
+                "event_id": "event-1",
+                "game_pk": 9001,
+                "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T23:10:00Z",
+                "match_status": "matched",
+                "player_id": "mlb-pitcher:700001",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Actionable Arm",
+                "market": "pitcher_strikeouts",
+                "line": 5.5,
+                "over_odds": 100,
+                "under_odds": -120,
+            },
+        ],
+    )
+
+    model_run_dir = (
+        tmp_path
+        / "normalized"
+        / "starter_strikeout_baseline"
+        / "start=2026-04-16_end=2026-04-20"
+        / "run=20260421T180000Z"
+    )
+    _write_json(
+        model_run_dir / "baseline_model.json",
+        {"model_version": "starter-strikeout-baseline-v1"},
+    )
+    _write_jsonl(
+        model_run_dir / "ladder_probabilities.jsonl",
+        [
+            {
+                "training_row_id": "training-row-1",
+                "official_date": "2026-04-20",
+                "game_pk": 9001,
+                "pitcher_id": 700001,
+                "pitcher_name": "Actionable Arm",
+                "split": "test",
+                "feature_row_id": "training-row-1",
+                "lineup_snapshot_id": "lineup-snapshot-1",
+                "features_as_of": "2026-04-20T15:45:00Z",
+                "projection_generated_at": "2026-04-20T15:45:00Z",
+                "actual_strikeouts": 7,
+                "naive_benchmark_mean": 5.4,
+                "model_mean": 6.2,
+                "count_distribution": {
+                    "name": "negative_binomial_global_dispersion_v1",
+                    "dispersion_alpha": 0.21,
+                },
+                "probability_calibration": {
+                    "name": "isotonic_ladder_probability_calibrator_v1",
+                    "sample_count": 48,
+                    "is_identity": False,
+                },
+                "ladder_probabilities": [
+                    {
+                        "line": 5.5,
+                        "over_probability": 0.58,
+                        "under_probability": 0.42,
+                    }
+                ],
+                "calibrated_ladder_probabilities": [
+                    {
+                        "line": 5.5,
+                        "over_probability": 0.58,
+                        "under_probability": 0.42,
+                    }
+                ],
+            },
+        ],
+    )
+
+
+def test_build_edge_candidates_for_date_changes_market_devig_under_consensus_mode(
+    tmp_path,
+) -> None:
+    _write_two_book_fixture(tmp_path)
+
+    per_book_result = build_edge_candidates_for_date(
+        target_date=date(2026, 4, 20),
+        output_dir=tmp_path,
+        config=StackConfig(devig_mode=DEVIG_MODE_PER_BOOK),
+    )
+    # Read before the second build: run_id is second-granularity, so a rapid
+    # re-run at the same path would overwrite the per_book artifact.
+    per_book_rows = [
+        json.loads(line)
+        for line in per_book_result.edge_candidates_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+    consensus_result = build_edge_candidates_for_date(
+        target_date=date(2026, 4, 20),
+        output_dir=tmp_path,
+        config=StackConfig(devig_mode=DEVIG_MODE_CONSENSUS),
+    )
+    consensus_rows = [
+        json.loads(line)
+        for line in consensus_result.edge_candidates_path.read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if line.strip()
+    ]
+
+    per_book_by_book = {row["sportsbook"]: row for row in per_book_rows}
+    consensus_by_book = {row["sportsbook"]: row for row in consensus_rows}
+
+    # per_book: each row devigs its own book, so the two books disagree on market price.
+    assert (
+        per_book_by_book["draftkings"]["market_over_probability"]
+        != per_book_by_book["pinnacle"]["market_over_probability"]
+    )
+    assert per_book_by_book["draftkings"]["market_consensus_books"] == ["draftkings"]
+    assert per_book_by_book["pinnacle"]["market_consensus_books"] == ["pinnacle"]
+    assert per_book_by_book["draftkings"]["devig_mode"] == DEVIG_MODE_PER_BOOK
+
+    # consensus: both rows share the same market price and name both books.
+    assert (
+        consensus_by_book["draftkings"]["market_over_probability"]
+        == consensus_by_book["pinnacle"]["market_over_probability"]
+    )
+    assert consensus_by_book["draftkings"]["market_consensus_books"] == [
+        "draftkings",
+        "pinnacle",
+    ]
+    assert consensus_by_book["draftkings"]["devig_mode"] == DEVIG_MODE_CONSENSUS
+
+    # The devig mode actually shifts edge_pct, which is the ranking signal.
+    assert (
+        per_book_by_book["draftkings"]["edge_pct"]
+        != consensus_by_book["draftkings"]["edge_pct"]
     )

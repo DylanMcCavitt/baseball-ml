@@ -43,7 +43,8 @@ That is a math-and-process problem first, and a betting problem second.
 - `src/mlb_props_stack/tracking.py`
   Reserved MLflow-compatible tracking config for later experiment logging.
 - `src/mlb_props_stack/pricing.py`
-  Odds conversion, expected value, devig, and Kelly sizing.
+  Odds conversion, expected value, per-book and consensus devig, book
+  hold, and Kelly sizing.
 - `src/mlb_props_stack/markets.py`
   Core data models for props, projections, and decisions.
 - `src/mlb_props_stack/ingest/mlb_stats_api.py`
@@ -166,6 +167,22 @@ Each normalized `prop_line_snapshots` row preserves:
 - the mapped MLB `gamePk` when the `odds_matchup_key` join succeeds
 - the exact two-way line and `market_last_update`
 - the ingest `captured_at` timestamp for replayable line history
+
+Multiple books that quote the same pitcher-line pair land as separate rows
+(one row per `(sportsbook, captured_at)`) so the edge builder can devig
+them independently. To narrow ingest to a specific sharp subset:
+
+```bash
+ODDS_API_KEY=YOUR_KEY uv run python -m mlb_props_stack \
+  ingest-odds-api-lines --date 2026-04-21 --bookmakers pinnacle,circa
+```
+
+`StackConfig.devig_mode` selects how those rows are priced downstream
+(`per_book` is the default, `tightest_book` picks the lowest-hold book at
+each line, and `consensus` averages the no-vig probabilities across every
+book). The resolved books land on each scored candidate row in
+`market_consensus_books` so a historical replay can always audit which
+books drove the devig.
 
 Operational note:
 

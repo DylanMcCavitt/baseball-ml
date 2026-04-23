@@ -77,9 +77,15 @@ def test_odds_api_ingest_cli_renders_output_summary(monkeypatch, tmp_path, capsy
         skipped_prop_count=2,
     )
 
+    captured_kwargs: dict[str, object] = {}
+
+    def _fake_ingest(**kwargs: object) -> OddsAPIIngestResult:
+        captured_kwargs.update(kwargs)
+        return result
+
     monkeypatch.setattr(
         "mlb_props_stack.cli.ingest_odds_api_pitcher_lines_for_date",
-        lambda *, target_date, output_dir, api_key: result,
+        _fake_ingest,
     )
 
     main(
@@ -89,6 +95,8 @@ def test_odds_api_ingest_cli_renders_output_summary(monkeypatch, tmp_path, capsy
             "2026-04-21",
             "--output-dir",
             str(tmp_path),
+            "--bookmakers",
+            "pinnacle,circa",
         ]
     )
     output = capsys.readouterr().out
@@ -97,6 +105,7 @@ def test_odds_api_ingest_cli_renders_output_summary(monkeypatch, tmp_path, capsy
     assert "candidate_events=15" in output
     assert "skipped_unmatched_events=1" in output
     assert "prop_line_snapshots=28" in output
+    assert captured_kwargs["bookmakers"] == ("pinnacle", "circa")
 
 
 def test_statcast_feature_ingest_cli_renders_output_summary(monkeypatch, tmp_path, capsys):

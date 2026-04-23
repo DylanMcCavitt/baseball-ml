@@ -1,6 +1,6 @@
 """Odds conversion and sizing utilities."""
 
-from typing import Tuple
+from typing import Sequence, Tuple
 
 
 def american_to_decimal(odds: int) -> float:
@@ -33,6 +33,37 @@ def devig_two_way(over_odds: int, under_odds: int) -> Tuple[float, float]:
     raw_under = american_to_implied_probability(under_odds)
     total = raw_over + raw_under
     return raw_over / total, raw_under / total
+
+
+def book_hold(over_odds: int, under_odds: int) -> float:
+    """Return the book's hold: summed raw implied probabilities minus 1.0."""
+    raw_over = american_to_implied_probability(over_odds)
+    raw_under = american_to_implied_probability(under_odds)
+    return raw_over + raw_under - 1.0
+
+
+def devig_consensus_two_way(
+    book_odds: Sequence[Tuple[int, int]],
+) -> Tuple[float, float]:
+    """Return consensus no-vig probabilities across N two-way book pairs.
+
+    Each ``(over_odds, under_odds)`` pair is devigged independently, then the
+    devigged probabilities are averaged across books. Passing a single pair
+    produces the same result as :func:`devig_two_way`, which keeps callers
+    that collapse a one-book lookup into the consensus helper safe.
+    """
+    if not book_odds:
+        raise ValueError("book_odds must contain at least one (over, under) pair")
+    over_probabilities: list[float] = []
+    under_probabilities: list[float] = []
+    for over_odds, under_odds in book_odds:
+        over_probability, under_probability = devig_two_way(over_odds, under_odds)
+        over_probabilities.append(over_probability)
+        under_probabilities.append(under_probability)
+    over_mean = sum(over_probabilities) / len(over_probabilities)
+    under_mean = sum(under_probabilities) / len(under_probabilities)
+    total = over_mean + under_mean
+    return over_mean / total, under_mean / total
 
 
 def expected_value(probability: float, odds: int) -> float:

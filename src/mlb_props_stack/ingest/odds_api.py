@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 import json
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 import unicodedata
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -450,8 +450,15 @@ def normalize_event_odds_payload(
     captured_at: datetime,
     mapping: OddsEventGameMappingRecord,
     probable_starter_lookup: dict[tuple[int, str], ProbableStarterRecord],
+    bookmakers: frozenset[str] | None = None,
 ) -> tuple[list[PropLineSnapshotRecord], int]:
-    """Normalize one event-odds payload into paired prop-line snapshots."""
+    """Normalize one event-odds payload into paired prop-line snapshots.
+
+    When ``bookmakers`` is provided, only books whose ``key`` appears in the
+    set are emitted. Books outside the filter are silently dropped (they are
+    not counted as skipped prop groups) so callers can narrow to a sharp
+    subset without inflating the skip metrics.
+    """
     snapshots: list[PropLineSnapshotRecord] = []
     skipped_groups = 0
 
@@ -461,6 +468,8 @@ def normalize_event_odds_payload(
         sportsbook = bookmaker.get("key")
         sportsbook_title = bookmaker.get("title")
         if not isinstance(sportsbook, str) or not isinstance(sportsbook_title, str):
+            continue
+        if bookmakers is not None and sportsbook not in bookmakers:
             continue
 
         bookmaker_last_update_raw = bookmaker.get("last_update")
@@ -574,12 +583,29 @@ def ingest_odds_api_pitcher_lines_for_date(
     output_dir: Path | str = "data",
     api_key: str | None = None,
     regions: str = DEFAULT_REGIONS,
+    bookmakers: Iterable[str] | None = None,
     client: OddsAPIClient | None = None,
     now: Callable[[], datetime] = utc_now,
 ) -> OddsAPIIngestResult:
-    """Fetch, persist, and normalize Odds API pitcher strikeout lines."""
+    """Fetch, persist, and normalize Odds API pitcher strikeout lines.
+
+    Passing ``bookmakers`` narrows the persisted snapshots to a specific set
+    of sportsbook keys (for example, ``("pinnacle", "circa")`` for a sharp
+    consensus). ``None`` keeps the previous behavior of recording every book
+    returned for the configured regions.
+    """
     if client is None:
         client = OddsAPIClient(api_key=api_key)
+    bookmaker_filter: frozenset[str] | None = (
+        frozenset(key.strip() for key in bookmakers if key and key.strip())
+        if bookmakers is not None
+        else None
+    )
+    if bookmaker_filter is not None and not bookmaker_filter:
+        raise ValueError(
+            "bookmakers must contain at least one non-empty sportsbook key "
+            "when provided."
+        )
 
     mlb_metadata = _load_latest_mlb_metadata_for_date(
         target_date=target_date,
@@ -648,6 +674,7 @@ def ingest_odds_api_pitcher_lines_for_date(
             captured_at=odds_captured_at,
             mapping=mapping,
             probable_starter_lookup=probable_starter_lookup,
+            bookmakers=bookmaker_filter,
         )
         skipped_prop_count += skipped_groups
         if mapping.match_status != "matched":
