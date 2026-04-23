@@ -306,10 +306,11 @@ AGE-153 adds the first target-date inference and paper-tracking layer:
   to write `daily_candidates.jsonl` and refresh `paper_results.jsonl`
 - `daily_candidates.jsonl`
   stores ranked scored props for the slate, including actionable and
-  below-threshold rows
+  below-threshold rows, plus the final wager-gate decision that separates raw
+  actionable edges from approved wagers
 - `paper_results.jsonl`
-  stores only the actionable paper bets from the latest sheet per date, with
-  same-line CLV where available and pending vs settled result status
+  stores only the final approved paper bets from the latest sheet per date,
+  with same-line CLV where available and pending vs settled result status
 
 AGE-154 adds the first explicit experiment-tracking layer:
 

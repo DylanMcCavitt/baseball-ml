@@ -97,7 +97,7 @@ def render_backtest_screen(
             )
             st.plotly_chart(
                 pnl_fig(series.to_dict("records")),
-                use_container_width=True,
+                width="stretch",
                 config={"displayModeBar": False},
             )
             st.markdown(
@@ -118,7 +118,7 @@ def render_backtest_screen(
             )
             st.plotly_chart(
                 calibration_fig(calibration.to_dict("records")),
-                use_container_width=True,
+                width="stretch",
                 config={"displayModeBar": False},
             )
 
@@ -131,7 +131,7 @@ def render_backtest_screen(
             )
             st.plotly_chart(
                 scatter_fig(scatter_rows),
-                use_container_width=True,
+                width="stretch",
                 config={"displayModeBar": False},
             )
         with bottom_columns[1]:
@@ -141,6 +141,6 @@ def render_backtest_screen(
             )
             st.plotly_chart(
                 roi_fig(series[["date", "rolling_30d_roi"]].rename(columns={"rolling_30d_roi": "roi"}).to_dict("records")),
-                use_container_width=True,
+                width="stretch",
                 config={"displayModeBar": False},
             )

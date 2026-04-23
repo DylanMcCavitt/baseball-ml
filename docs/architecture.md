@@ -274,10 +274,11 @@ AGE-153 adds the first target-date operating loop on top of those same seams:
   baseline run whose end date is still before the requested slate
 - `data/normalized/daily_candidates/date=YYYY-MM-DD/run=.../daily_candidates.jsonl`
   stores the ranked current sheet, including actionable and below-threshold
-  scored props for that slate
+  scored props for that slate, plus the final shared wager-gate decision used
+  by both paper tracking and the dashboard board
 - `data/normalized/paper_results/date=YYYY-MM-DD/run=.../paper_results.jsonl`
-  stores only actionable paper bets from the latest daily sheet per date, with
-  pending vs settled status and same-line CLV where the exact close exists
+  stores only final approved paper bets from the latest daily sheet per date,
+  with pending vs settled status and same-line CLV where the exact close exists
 
 The Streamlit dashboard now reads those AGE-153 artifacts directly:
 

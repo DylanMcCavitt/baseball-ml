@@ -23,24 +23,20 @@ from mlb_props_stack.pricing import (
     fractional_kelly,
 )
 from mlb_props_stack.tracking import TrackingConfig
+from mlb_props_stack.wager_approval import (
+    WagerApprovalSettings,
+    annotate_wager_approval_rows,
+)
 
 from .mlflow_io import registered_versions_by_run_id, search_runs
 
 
 @dataclass(frozen=True)
-class DashboardSettings:
+class DashboardSettings(WagerApprovalSettings):
     """Persisted dashboard controls that affect server-side row evaluation."""
 
-    edge_min: float = 0.03
-    confidence_min: float = 0.55
     devig_method: str = "shin"
-    max_hold: float = 0.055
-    kelly_fraction: float = 0.25
-    max_stake_units: float = 2.0
-    max_daily_exposure_units: float = 15.0
-    bankroll_units: float = 200.0
     calibration_method: str = "isotonic"
-    retrain_window_days: int = 120
     seed: int = 42
     decision_cutoff_minutes: int = 90
     refresh_cadence_minutes: int = 5
@@ -216,6 +212,33 @@ def _model_run_lookup(output_root: Path) -> dict[str, Path]:
     return lookup
 
 
+def _ladder_run_lookup(output_root: Path) -> dict[str, Path]:
+    lookup: dict[str, Path] = {}
+    roots = [
+        output_root / "normalized" / "starter_strikeout_inference",
+        output_root / "normalized" / "starter_strikeout_baseline",
+    ]
+    for root in roots:
+        for run_dir in _latest_run_dirs(root, "ladder_probabilities.jsonl"):
+            lookup[_run_id_from_dir(run_dir)] = run_dir
+    return lookup
+
+
+def _latest_ladder_run_dirs(output_root: Path) -> list[Path]:
+    roots = [
+        output_root / "normalized" / "starter_strikeout_inference",
+        output_root / "normalized" / "starter_strikeout_baseline",
+    ]
+    return sorted(
+        (
+            run_dir
+            for root in roots
+            for run_dir in _latest_run_dirs(root, "ladder_probabilities.jsonl")
+        ),
+        key=_run_id_from_dir,
+    )
+
+
 def latest_model_run_dir(
     output_root: Path,
     *,
@@ -366,13 +389,6 @@ def _short_reason(reason: str | None) -> str:
     if "missing" in lowered:
         return str(reason).replace("_", " ")
     return str(reason)
-
-
-def _model_run_age_days(model_run_id: str | None) -> float | None:
-    trained_at = _parse_run_id(model_run_id)
-    if trained_at is None:
-        return None
-    return max(0.0, (datetime.now(tz=UTC) - trained_at).total_seconds() / 86400.0)
 
 
 def _normalize_board_dataframe(
@@ -541,76 +557,22 @@ def _normalize_board_dataframe(
             }
         )
 
-    dataframe = pd.DataFrame(normalized_rows)
+    approved_rows = annotate_wager_approval_rows(
+        normalized_rows,
+        settings=settings,
+    )
+    for row in approved_rows:
+        row_notes = list(row["notes"])
+        for gate_note in row["wager_gate_notes"]:
+            if gate_note not in row_notes:
+                row_notes.append(gate_note)
+        row["notes"] = row_notes
+        row["note"] = " · ".join(row_notes)
+        row["cleared"] = bool(row["wager_approved"])
+
+    dataframe = pd.DataFrame(approved_rows)
     if dataframe.empty:
         return dataframe
-
-    dataframe["cleared_edge_gate"] = dataframe["edge"].fillna(0.0) >= settings.edge_min
-    dataframe["cleared_vig_gate"] = dataframe["raw_hold"].fillna(0.0) <= settings.max_hold
-    dataframe["cleared_stake_gate"] = dataframe["kelly_units"].fillna(0.0) <= settings.max_stake_units
-    dataframe["cleared_conf_gate"] = dataframe["conf"].fillna(0.0) >= settings.confidence_min
-    dataframe["cleared_status_gate"] = dataframe["pitcher_status"].isin(["probable", "confirmed"])
-    dataframe["model_age_days"] = dataframe["model_run_id"].map(_model_run_age_days)
-    dataframe["cleared_model_age_gate"] = dataframe["model_age_days"].fillna(0.0) <= settings.retrain_window_days
-    dataframe["cleared_correlation_gate"] = True
-    for _, group in dataframe.sort_values(["edge", "line"], ascending=[False, True]).groupby(
-        ["official_date", "pitcher_id"],
-        dropna=False,
-        sort=False,
-    ):
-        if len(group.index) > 1:
-            dataframe.loc[group.index[1:], "cleared_correlation_gate"] = False
-    dataframe["cleared_exposure_gate"] = True
-    cumulative_units = 0.0
-    for index, row in dataframe.sort_values(["edge", "kelly_units"], ascending=[False, False]).iterrows():
-        prechecks = (
-            bool(row["cleared_edge_gate"])
-            and bool(row["cleared_vig_gate"])
-            and bool(row["cleared_stake_gate"])
-            and bool(row["cleared_conf_gate"])
-            and bool(row["cleared_status_gate"])
-            and bool(row["cleared_model_age_gate"])
-            and bool(row["cleared_correlation_gate"])
-        )
-        if not prechecks:
-            continue
-        next_total = cumulative_units + float(row["kelly_units"])
-        if next_total > settings.max_daily_exposure_units:
-            dataframe.loc[index, "cleared_exposure_gate"] = False
-            continue
-        cumulative_units = next_total
-    dataframe["cleared"] = (
-        dataframe["cleared_edge_gate"]
-        & dataframe["cleared_vig_gate"]
-        & dataframe["cleared_stake_gate"]
-        & dataframe["cleared_conf_gate"]
-        & dataframe["cleared_status_gate"]
-        & dataframe["cleared_model_age_gate"]
-        & dataframe["cleared_correlation_gate"]
-        & dataframe["cleared_exposure_gate"]
-    )
-    dashboard_notes: list[list[str]] = []
-    for _, row in dataframe.iterrows():
-        row_notes = list(row["notes"])
-        if not bool(row["cleared_edge_gate"]):
-            row_notes.append("below edge threshold")
-        if not bool(row["cleared_conf_gate"]):
-            row_notes.append("below confidence floor")
-        if not bool(row["cleared_vig_gate"]):
-            row_notes.append("hold above max")
-        if not bool(row["cleared_stake_gate"]):
-            row_notes.append("stake above cap")
-        if not bool(row["cleared_correlation_gate"]):
-            row_notes.append("correlated same-slate play")
-        if not bool(row["cleared_exposure_gate"]):
-            row_notes.append("daily exposure exhausted")
-        if not bool(row["cleared_model_age_gate"]):
-            row_notes.append("model outside retrain window")
-        if not bool(row["cleared_status_gate"]):
-            row_notes.append("pitcher status unresolved")
-        dashboard_notes.append(row_notes)
-    dataframe["notes"] = dashboard_notes
-    dataframe["note"] = [" · ".join(notes) for notes in dashboard_notes]
     dataframe = dataframe.sort_values(
         ["cleared", "edge", "pitcher"],
         ascending=[False, False, True],
@@ -740,7 +702,10 @@ def latest_pitcher_row(board: pd.DataFrame, *, pitcher_id: str | None) -> pd.Ser
 
 
 def _load_ladder_rows(output_root: Path, run_dir: Path) -> list[dict[str, Any]]:
-    return _load_jsonl(str(run_dir / "ladder_probabilities.jsonl"))
+    path = run_dir / "ladder_probabilities.jsonl"
+    if not path.exists():
+        return []
+    return _load_jsonl(str(path))
 
 
 def _find_pitcher_ladder_row(
@@ -754,17 +719,10 @@ def _find_pitcher_ladder_row(
         return None, None
     run_dirs: list[Path]
     if model_run_id is not None:
-        resolved_run_dir = latest_model_run_dir(output_root, run_id=model_run_id)
+        resolved_run_dir = _ladder_run_lookup(output_root).get(model_run_id)
         run_dirs = [resolved_run_dir] if resolved_run_dir is not None else []
     else:
-        run_dirs = list(
-            reversed(
-                _latest_run_dirs(
-                    output_root / "normalized" / "starter_strikeout_baseline",
-                    "ladder_probabilities.jsonl",
-                )
-            )
-        )
+        run_dirs = list(reversed(_latest_ladder_run_dirs(output_root)))
     for run_dir in run_dirs:
         for row in _load_ladder_rows(output_root, run_dir):
             if (

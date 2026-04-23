@@ -105,12 +105,19 @@ For training and calibration work, open:
 For odds, edge, or daily candidate work, inspect:
 
 - CLI summary counts such as `matched_events`, `unmatched_events`,
-  `scored_candidates`, and `actionable_candidates`
+  `scored_candidates`, `actionable_candidates`, and `approved_wagers`
 - `event_game_mappings.jsonl`
 - `prop_line_snapshots.jsonl`
 - `edge_candidates.jsonl`
 - `daily_candidates.jsonl`
 - `paper_results.jsonl`
+
+For daily candidate approval changes, count `wager_approved=true` and
+`bet_placed=true` in `daily_candidates.jsonl`, then confirm the same count
+lands in `paper_results.jsonl` for that date. Rows can remain
+`evaluation_status=actionable` while still being blocked by final wager gates
+such as hold, confidence, model age, same-pitcher correlation, or daily
+exposure.
 
 If a workflow is expected to produce scored rows but writes only skipped or
 empty outputs, call that out explicitly in the PR and handoff.
