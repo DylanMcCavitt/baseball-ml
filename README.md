@@ -468,6 +468,29 @@ For model refinement on historical data, the intended loop is:
 That avoids re-calling The Odds API every iteration once the historical odds
 artifacts already exist locally.
 
+## Data Alignment Diagnostic
+
+`AGE-198` adds a fast per-date coverage report across ingest, feature, and
+modeling artifacts so the root cause of all-skipped backtest windows is obvious
+before anyone spelunks into individual JSONL files.
+
+Check coverage for a historical window:
+
+```bash
+uv run python -m mlb_props_stack check-data-alignment \
+  --start-date 2026-04-18 \
+  --end-date 2026-04-23
+```
+
+The command exits non-zero when any date falls below the `--threshold`
+coverage ratio (default `0.5`), so it can gate `build-walk-forward-backtest`
+in future automation. It reports per-date row counts for `games.jsonl`,
+`probable_starters.jsonl`, `lineup_snapshots.jsonl`, `prop_line_snapshots.jsonl`,
+the Statcast feature tables, and the latest baseline run's
+`training_dataset.jsonl`, `raw_vs_calibrated_probabilities.jsonl`, and
+`starter_outcomes.jsonl`, plus the derived `feature_coverage`,
+`outcome_coverage`, and `odds_coverage` ratios.
+
 ## CI
 
 GitHub Actions runs the repo baseline checks on pull requests to `main` and on
