@@ -4,93 +4,113 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Last completed issue: `AGE-203` on branch
-  `dylan/eloquent-mclaren-c1bbe8`
-- This slice replaces the `missing_park_factor_source` placeholder in the
-  game-context feature build with a static FanGraphs-anchored park
-  strikeout factor joined by MLB `venue_id`, and emits `park_k_factor`,
-  `park_k_factor_vs_rhh`, and `park_k_factor_vs_lhh` on every slate row
-- Current status: `game_context_features.jsonl` now carries non-null park
-  factors for every venue present in the static lookup (17 parks covered
-  with low venue ids plus 13 high-id stadiums). Rows for unknown venue
-  ids fall back to `park_factor_status = "missing_park_factor_source"`
-  and null factor values, so the placeholder is preserved only in the
-  case the issue requires
+- Last completed issue: `AGE-206` on branch
+  `dylan/distracted-dewdney-da4807`
+- This slice adds multi-book pitcher strikeout line ingest and a
+  configurable devig mode so the stack can fuse sportsbook quotes
+  instead of pricing every row against a single book. Books can now be
+  narrowed from the CLI (`--bookmakers pinnacle,circa`) and the edge
+  builder can devig per book, against the tightest-hold book, or across
+  a consensus of all books at the same line
+- Current status: existing single-book artifacts still score identically
+  under the default `per_book` mode. Feeding the new fixture two books
+  at the same line produces different market probabilities and edge
+  rankings under `consensus`, and records which books drove each devig
+  via a new `market_consensus_books` field on every scored edge row
 
 ## What Was Completed In This Slice
 
-- `data/static/park_factors/park_k_factors.csv` (new static lookup)
-  - one row per `(season, venue_mlb_id)` with columns `season`,
-    `venue_mlb_id`, `venue_name`, `park_k_factor`,
-    `park_k_factor_vs_rhh`, `park_k_factor_vs_lhh`
-  - values are three-year rolling FanGraphs Guts! park factors for
-    starter strikeouts, converted from the FanGraphs 100-scale to a
-    ratio centered on `1.00`
-  - 2026 rows carry 2025 values forward until the season-end FanGraphs
-    refresh lands
-- `data/static/park_factors/README.md`
-  - documents the schema, source, vintage, and how to extend the table
-    with new MLB venue ids
-- `src/mlb_props_stack/ingest/park_factors.py` (new module)
-  - `ParkKFactorRecord` frozen dataclass
-  - `load_park_k_factors(path=DEFAULT_PARK_FACTORS_PATH)` CSV loader
-    that skips rows whose `season` or `venue_mlb_id` fail to parse so a
-    partially-edited file still loads the valid rows
-  - `lookup_park_k_factor(season, venue_mlb_id, table=None)` helper
-    that returns the record for the requested season and falls back to
-    the prior season when the requested one is missing (so an
-    end-of-season slate keeps working before the next Guts! publication)
-  - `PARK_FACTOR_STATUS_OK` / `PARK_FACTOR_STATUS_MISSING_SOURCE`
-    constants shared with the feature builder
-- `src/mlb_props_stack/ingest/statcast_features.py`
-  - `GameContextFeatureRow` gains `park_k_factor`,
-    `park_k_factor_vs_rhh`, `park_k_factor_vs_lhh` (the legacy
-    always-null `park_factor` field is renamed to `park_k_factor`)
-  - `_build_game_context_feature_row` now accepts a `park_k_factor_table`
-    keyword and populates the three new fields; `park_factor_status` is
-    set to `"ok"` on a successful join and only retains the
-    `missing_park_factor_source` placeholder when the venue id is not in
-    the lookup
-  - `ingest_statcast_features_for_date` loads the default table once at
-    the top of the feature pass and threads it through every row build
-- `src/mlb_props_stack/modeling.py`
-  - `StarterStrikeoutTrainingRow` gains the three new park-factor fields
-  - `OPTIONAL_NUMERIC_FEATURES` now includes `park_k_factor`,
-    `park_k_factor_vs_rhh`, and `park_k_factor_vs_lhh` so the
-    vectorizer picks them up for the starter strikeout baseline
-- `tests/test_park_factors.py` (new file, 6 tests)
-  - loader round-trip for the committed CSV
-  - prior-season fallback
-  - unknown-venue and missing `venue_mlb_id` returning `None`
-  - skip rows with blank keys
-  - status-constant stability
-- `tests/test_statcast_feature_ingest.py`
-  - the existing happy-path test now asserts `park_factor_status == "ok"`
-    and the three emitted factor values for `venue_id=5`
-  - new test `test_ingest_statcast_features_preserves_missing_park_factor_source_for_unknown_venue`
-    rewrites the seeded game's `venue_id` to `999999` and verifies the
-    feature row falls back to `missing_park_factor_source` with all
-    three factor fields null
-- `tests/test_modeling.py`
-  - fixture now seeds the three new park-factor fields with
-    `park_factor_status = "ok"` so the training-row loader reads the
-    populated values
-- `README.md`
-  - "missing inputs" block updated to describe the static lookup join
-    and the new emitted fields
+- `src/mlb_props_stack/config.py`
+  - `StackConfig` gains a `devig_mode` field (default `per_book`)
+  - new module-level constants `DEVIG_MODE_PER_BOOK`,
+    `DEVIG_MODE_TIGHTEST_BOOK`, `DEVIG_MODE_CONSENSUS` and a tuple
+    `DEVIG_MODES` used for validation
+  - `__post_init__` rejects any string outside the supported set
+- `src/mlb_props_stack/pricing.py`
+  - new `book_hold(over_odds, under_odds)` helper returning the
+    summed raw implied probabilities minus 1.0 (zero-hold for
+    +100/+100, ~0.0476 for -110/-110)
+  - new `devig_consensus_two_way(book_odds)` helper that devigs each
+    `(over, under)` pair independently and returns the consensus
+    no-vig probabilities, renormalized so `over + under == 1.0`
+    (raises `ValueError` on empty input)
+- `src/mlb_props_stack/ingest/odds_api.py`
+  - `normalize_event_odds_payload` accepts an optional
+    `bookmakers: frozenset[str]` filter and silently drops books
+    outside the set without inflating `skipped_prop_groups`
+  - `ingest_odds_api_pitcher_lines_for_date` accepts
+    `bookmakers: Iterable[str] | None`, coerces it to a frozen set,
+    and threads the filter through to the normalizer; passing an
+    empty / all-blank iterable raises `ValueError`
+- `src/mlb_props_stack/edge.py`
+  - new helper `_compute_market_probabilities(line, *, peer_lines,
+    devig_mode)` that returns `(market_over, market_under,
+    consensus_books)` for each supported mode
+    - `per_book`: devig only the primary book; peers ignored so
+      existing single-book callers keep their current behavior
+    - `tightest_book`: pick the book with the lowest hold across the
+      primary + peer lines, devig that book, and record its key
+    - `consensus`: devig each book independently, average the no-vig
+      probabilities, renormalize, and record every contributing book
+      sorted alphabetically
+  - `analyze_projection` accepts a `peer_lines` keyword and now
+    returns `market_consensus_books` and `devig_mode` on every
+    analysis dict
+  - `build_edge_candidates_for_date` accepts an optional
+    `config: StackConfig`, builds a peer lookup keyed on
+    `(official_date, event_id, player_id, market, line)` (ignoring
+    sportsbook), and records the resolved `market_consensus_books` and
+    `devig_mode` on every scored candidate row
+- `src/mlb_props_stack/cli.py`
+  - `ingest-odds-api-lines` gains a `--bookmakers pinnacle,circa`
+    flag parsed via `_parse_bookmaker_argument`
+  - `render_runtime_summary()` now prints `devig_mode=<value>` so the
+    default stack config is visible at a glance
+- `tests/test_pricing.py`
+  - five new tests: `book_hold` for -110/-110 vs +100/+100,
+    consensus-single-pair equivalence, consensus averaging across
+    books with opposite leans, tied-book collapse, and empty-input
+    rejection
+- `tests/test_odds_api_ingest.py`
+  - new two-book fixture `_two_book_event_odds_payload`
+  - new tests: multi-book persistence (DraftKings + Pinnacle both
+    landing in `prop_line_snapshots.jsonl` at one row per book) and
+    the `bookmakers=("pinnacle",)` filter reducing the output to
+    exactly the requested books without inflating skip counts
+  - empty-iterable filter is rejected with a clear message
+- `tests/test_edge.py`
+  - existing happy-path test now asserts the new
+    `market_consensus_books` and `devig_mode` fields land on actionable
+    rows
+  - new `analyze_projection` tests: per_book ignores peers,
+    tightest_book picks the lower-hold book, consensus lands strictly
+    between the per-book devigs and sums to 1.0
+  - new `build_edge_candidates_for_date` test with two books at the
+    same line verifying the two rows disagree on
+    `market_over_probability` under `per_book` but agree (and name
+    both books) under `consensus`, and that `edge_pct` actually shifts
+    between the two modes
+- `tests/test_contracts.py`
+  - default `StackConfig().devig_mode == "per_book"` guard plus
+    accept-all-supported-modes and reject-unknown-mode tests
+- `tests/test_cli.py`
+  - the odds ingest CLI test now exercises
+    `--bookmakers pinnacle,circa` and asserts the parsed tuple is
+    forwarded into `ingest_odds_api_pitcher_lines_for_date`
 
 ## Files Changed
 
-- `README.md`
-- `data/static/park_factors/README.md`
-- `data/static/park_factors/park_k_factors.csv`
 - `docs/NEXT_SESSION_HANDOFF.md`
-- `src/mlb_props_stack/ingest/park_factors.py`
-- `src/mlb_props_stack/ingest/statcast_features.py`
-- `src/mlb_props_stack/modeling.py`
-- `tests/test_modeling.py`
-- `tests/test_park_factors.py`
-- `tests/test_statcast_feature_ingest.py`
+- `src/mlb_props_stack/cli.py`
+- `src/mlb_props_stack/config.py`
+- `src/mlb_props_stack/edge.py`
+- `src/mlb_props_stack/ingest/odds_api.py`
+- `src/mlb_props_stack/pricing.py`
+- `tests/test_cli.py`
+- `tests/test_contracts.py`
+- `tests/test_edge.py`
+- `tests/test_odds_api_ingest.py`
+- `tests/test_pricing.py`
 
 ## Verification
 
@@ -104,53 +124,75 @@ uv run python -m mlb_props_stack
 
 Observed results:
 
-- full test suite passed: `130 passed` (up from `121` on the previous
-  slice; the nine additional tests are the six in
-  `tests/test_park_factors.py`, the new unknown-venue test in
-  `tests/test_statcast_feature_ingest.py`, and two existing assertions
-  updated to read the new fields)
-- `uv run python -m mlb_props_stack` still renders the runtime summary
+- full test suite passed: `145 passed` (up from `130` on the previous
+  slice; the fifteen additional tests cover the five new pricing
+  helpers, three new odds-ingest scenarios, four new edge
+  devig-mode scenarios, and three new `StackConfig.devig_mode`
+  validation guards)
+- `uv run python -m mlb_props_stack` now renders `devig_mode=per_book`
+  in the runtime summary alongside the existing market + Kelly
+  defaults
 
 ## Recommended Next Issue
 
-- Run the overnight 2024 + 2025 regular-season backfill that was queued
-  up by AGE-201 (out of scope here). With park factors now flowing
-  through the feature build, a fresh
-  `train-starter-strikeout-baseline` over the backfill window should
-  exercise the three new `park_k_factor*` features and produce a
-  non-zero coefficient for at least one of the handedness splits — that
-  is the remaining verification step called out on the AGE-203 issue
-- Use that same training run to sanity-check the park factor sign and
-  magnitude: Coors Field (venue 22) should land near `0.94` on the K
-  factor and the trained model coefficient should reward starters
-  projected there for fewer strikeouts, all else equal
-- If new MLB venues appear in 2027+ schedules, extend
-  `data/static/park_factors/park_k_factors.csv` before the first slate
-  that uses the new `venue_mlb_id`; otherwise the feature row will fall
-  back to `missing_park_factor_source` and the trained model will see a
-  masked feature for those games
+- Wire the existing paper-tracking and backtest paths into the new
+  devig modes. `paper_tracking.py` and `backtest.py` still call
+  `devig_two_way` / `analyze_projection` without passing peer lines,
+  which is correct under the default `per_book` mode but leaves
+  `tightest_book` / `consensus` invisible to historical replays.
+  Next slice should either (a) add a CLI flag to pick the mode end to
+  end, or (b) route the pregame workflow through
+  `_compute_market_probabilities` with peer lookup so the dashboard
+  and paper results share the consensus-aware prices
+- Once the backtest honors `devig_mode`, rerun the overnight 2024 +
+  2025 backfill with `--bookmakers pinnacle,circa` to start building a
+  sharp-consensus history, then compare ROI and CLV under `per_book`,
+  `tightest_book`, and `consensus` on the same slate to confirm the
+  ranking differences observed in the unit tests hold up on real data
 
 ## Constraints And Open Questions
 
-- Values in the static CSV are anchored to FanGraphs Guts! three-year
-  averaged park factors, not the single-season refresh. That matches
-  how most props shops treat park factors (they're noisy year-over-year
-  and the rolling average is what's actually actionable), but it does
-  mean the 2025 and 2026 rows are identical in this first cut — rotate
-  them separately once the FanGraphs 2026 pull is available
-- The default lookup is loaded lazily per feature run via
-  `load_park_k_factors()` rather than cached at module import. That
-  keeps the CSV editable during a running daemon / dashboard session
-  but means each ingest call pays a one-shot CSV parse (still cheap —
-  60 rows in the current file, runs in microseconds)
-- `lookup_park_k_factor` deliberately does not fall back to the
-  overall-league average when a venue is missing. The issue wants the
-  `missing_park_factor_source` placeholder preserved for unknown venue
-  ids so the modeling layer can notice the masked row, and so a silent
-  league-average substitution can't mask an extension gap in the CSV
-- The legacy `park_factor` field (which was always `None`) is renamed
-  to `park_k_factor`. Any downstream consumer that reads the raw JSONL
-  and expects the old key will need to be updated — the repo's own
-  modeling and paper-tracking paths have already been migrated, but
-  external notebooks operating on older artifacts will continue to see
-  the pre-AGE-203 shape
+- `devig_consensus_two_way` uses a straight arithmetic mean of the
+  per-book devigged probabilities. That is the simplest consensus
+  aggregator and matches the behavior the issue asked for, but a
+  future iteration might want to weight books by liquidity, recency,
+  or hold — leave the helper's signature open so a future `weights=`
+  kwarg can slot in without breaking callers
+- `tightest_book` resolves ties by picking the alphabetically-lowest
+  sportsbook key. That's deterministic and matches how the ordered
+  book list is constructed, but if two books end up genuinely
+  equivalent we might prefer the primary line's book to avoid
+  reassigning the devig on a tie — worth revisiting once real
+  multi-book data lands
+- `peer_lines` is matched on `(official_date, event_id, player_id,
+  market, line)` without `sportsbook`, which is what enables peers to
+  cross-pollinate. If two books quote slightly different lines (e.g.
+  5.5 vs 6.0 for the same pitcher), they are treated as different
+  contracts and will not share a consensus — intentional for the
+  first cut but a candidate for a future "closest ladder rung"
+  matcher
+- The ingest `--bookmakers` filter is a hard drop, not a preference
+  order. Books outside the filter simply vanish from
+  `prop_line_snapshots.jsonl`, so retroactively widening the filter
+  requires rerunning the ingest rather than relying on a cached fan
+  out of every book The Odds API returned
+
+## Known Follow-Up Nits (Non-Blocking)
+
+Captured during AGE-206 review; none of these gate the merge but
+they're worth folding into the next slice that touches this code:
+
+- `_parse_bookmaker_argument` raises `ValueError` directly instead of
+  argparse's nicer `argparse.ArgumentTypeError`, so a malformed
+  `--bookmakers ""` surfaces as a Python traceback rather than a
+  friendly CLI message. Trivial wrap when it next gets touched
+- No test covers `tightest_book` with three or more books, so the
+  alphabetical tie-break on sportsbook key is only exercised in the
+  two-book path. Worth adding a 3-book fixture when we extend the
+  pricing tests again
+- No edge-layer test exercises `devig_mode="consensus"` with empty
+  `peer_lines` (it falls through to a single-book consensus, which
+  equals `devig_two_way`, already covered in `tests/test_pricing.py`
+  via `test_devig_consensus_two_way_single_pair_matches_devig_two_way`).
+  Adding a parallel test at the `analyze_projection` seam would keep
+  the boundary assertion where the branch lives

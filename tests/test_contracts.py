@@ -3,6 +3,12 @@ from datetime import datetime
 import pytest
 
 from mlb_props_stack.backtest import BacktestPolicy
+from mlb_props_stack.config import (
+    DEVIG_MODE_CONSENSUS,
+    DEVIG_MODE_PER_BOOK,
+    DEVIG_MODE_TIGHTEST_BOOK,
+    StackConfig,
+)
 from mlb_props_stack.markets import (
     EdgeDecision,
     PropLine,
@@ -133,3 +139,17 @@ def test_backtest_policy_defaults_keep_join_refs_and_rejections_enabled():
 
     assert policy.require_projection_input_refs is True
     assert policy.preserve_rejected_props is True
+
+
+def test_stack_config_default_devig_mode_is_per_book():
+    assert StackConfig().devig_mode == DEVIG_MODE_PER_BOOK
+
+
+def test_stack_config_accepts_supported_devig_modes():
+    for mode in (DEVIG_MODE_PER_BOOK, DEVIG_MODE_TIGHTEST_BOOK, DEVIG_MODE_CONSENSUS):
+        assert StackConfig(devig_mode=mode).devig_mode == mode
+
+
+def test_stack_config_rejects_unknown_devig_mode():
+    with pytest.raises(ValueError, match="devig_mode must be one of"):
+        StackConfig(devig_mode="median")

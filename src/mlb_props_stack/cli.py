@@ -44,6 +44,18 @@ from .paper_tracking import (
 from .tracking import TrackingConfig
 
 
+def _parse_bookmaker_argument(value: str | None) -> tuple[str, ...] | None:
+    """Parse ``--bookmakers pinnacle,circa`` into a filter tuple."""
+    if value is None:
+        return None
+    keys = tuple(key.strip() for key in value.split(",") if key.strip())
+    if not keys:
+        raise ValueError(
+            "--bookmakers must list at least one non-empty sportsbook key."
+        )
+    return keys
+
+
 def render_runtime_summary() -> str:
     """Return a human-readable snapshot of the local runtime baseline."""
     config = StackConfig()
@@ -53,6 +65,7 @@ def render_runtime_summary() -> str:
         f"market={config.market}",
         f"min_edge_pct={config.min_edge_pct:.2%}",
         f"kelly_fraction={config.kelly_fraction:.2f}",
+        f"devig_mode={config.devig_mode}",
         f"tracking_uri={tracking.tracking_uri}",
         f"training_experiment_name={tracking.training_experiment_name}",
         f"backtest_experiment_name={tracking.backtest_experiment_name}",
@@ -331,6 +344,15 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional Odds API key override. Defaults to ODDS_API_KEY.",
     )
+    odds_parser.add_argument(
+        "--bookmakers",
+        default=None,
+        help=(
+            "Optional comma-separated list of sportsbook keys to persist "
+            "(for example 'pinnacle,circa'). Defaults to every book returned "
+            "for the configured regions."
+        ),
+    )
 
     statcast_parser = subparsers.add_parser(
         "ingest-statcast-features",
@@ -565,10 +587,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "ingest-odds-api-lines":
+        bookmakers = _parse_bookmaker_argument(args.bookmakers)
         result = ingest_odds_api_pitcher_lines_for_date(
             target_date=date.fromisoformat(args.target_date),
             output_dir=args.output_dir,
             api_key=args.api_key,
+            bookmakers=bookmakers,
         )
         print(render_odds_api_ingest_summary(result))
         return 0

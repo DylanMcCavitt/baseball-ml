@@ -4,6 +4,8 @@ import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 
+import pytest
+
 from mlb_props_stack.ingest import (
     GameRecord,
     OddsAPIIngestResult,
@@ -460,6 +462,165 @@ def test_normalize_events_and_props_handle_unmatched_games_with_synthetic_player
     assert snapshots[0].player_id == "odds-player:ryan-weiss"
     assert snapshots[0].pitcher_mlb_id is None
     assert snapshots[0].match_status == "unmatched"
+
+
+def _two_book_event_odds_payload() -> dict:
+    """Return an event-odds payload with two bookmakers offering the same line."""
+    return {
+        "id": "odds-event-1",
+        "sport_key": "baseball_mlb",
+        "sport_title": "MLB",
+        "commence_time": "2026-04-21T22:10:00Z",
+        "home_team": "Cleveland Guardians",
+        "away_team": "Houston Astros",
+        "bookmakers": [
+            {
+                "key": "draftkings",
+                "title": "DraftKings",
+                "last_update": "2026-04-21T17:54:21Z",
+                "markets": [
+                    {
+                        "key": "pitcher_strikeouts",
+                        "last_update": "2026-04-21T17:54:42Z",
+                        "outcomes": [
+                            {
+                                "name": "Over",
+                                "description": "Parker Messick",
+                                "price": -110,
+                                "point": 4.5,
+                            },
+                            {
+                                "name": "Under",
+                                "description": "Parker Messick",
+                                "price": -110,
+                                "point": 4.5,
+                            },
+                        ],
+                    }
+                ],
+            },
+            {
+                "key": "pinnacle",
+                "title": "Pinnacle",
+                "last_update": "2026-04-21T17:55:00Z",
+                "markets": [
+                    {
+                        "key": "pitcher_strikeouts",
+                        "last_update": "2026-04-21T17:55:15Z",
+                        "outcomes": [
+                            {
+                                "name": "Over",
+                                "description": "Parker Messick",
+                                "price": -105,
+                                "point": 4.5,
+                            },
+                            {
+                                "name": "Under",
+                                "description": "Parker Messick",
+                                "price": -105,
+                                "point": 4.5,
+                            },
+                        ],
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def test_ingest_persists_one_row_per_book_when_multiple_books_quote_the_same_line(
+    tmp_path,
+) -> None:
+    seed_mlb_metadata(tmp_path)
+
+    class TwoBookStubOddsClient:
+        def __init__(self) -> None:
+            self.api_key = "stub-key"
+            self.urls: list[str] = []
+
+        def fetch_json(self, url: str):
+            self.urls.append(url)
+            if "/events/" in url and "/odds?" in url:
+                return _two_book_event_odds_payload()
+            return sample_events_payload()
+
+    result = ingest_odds_api_pitcher_lines_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        client=TwoBookStubOddsClient(),
+        now=iter(
+            [
+                datetime(2026, 4, 21, 18, 0, tzinfo=UTC),
+                datetime(2026, 4, 21, 18, 1, tzinfo=UTC),
+                datetime(2026, 4, 21, 18, 2, tzinfo=UTC),
+            ]
+        ).__next__,
+    )
+
+    snapshots = [
+        json.loads(line)
+        for line in result.prop_line_snapshots_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert result.prop_line_count == 2
+    assert {snapshot["sportsbook"] for snapshot in snapshots} == {"draftkings", "pinnacle"}
+    assert all(snapshot["line"] == 4.5 for snapshot in snapshots)
+    assert all(snapshot["player_id"] == "mlb-pitcher:800048" for snapshot in snapshots)
+
+
+def test_ingest_bookmakers_filter_drops_non_matching_books(tmp_path) -> None:
+    seed_mlb_metadata(tmp_path)
+
+    class TwoBookStubOddsClient:
+        def __init__(self) -> None:
+            self.api_key = "stub-key"
+            self.urls: list[str] = []
+
+        def fetch_json(self, url: str):
+            self.urls.append(url)
+            if "/events/" in url and "/odds?" in url:
+                return _two_book_event_odds_payload()
+            return sample_events_payload()
+
+    result = ingest_odds_api_pitcher_lines_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        client=TwoBookStubOddsClient(),
+        bookmakers=("pinnacle",),
+        now=iter(
+            [
+                datetime(2026, 4, 21, 18, 0, tzinfo=UTC),
+                datetime(2026, 4, 21, 18, 1, tzinfo=UTC),
+                datetime(2026, 4, 21, 18, 2, tzinfo=UTC),
+            ]
+        ).__next__,
+    )
+
+    snapshots = [
+        json.loads(line)
+        for line in result.prop_line_snapshots_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert result.prop_line_count == 1
+    assert {snapshot["sportsbook"] for snapshot in snapshots} == {"pinnacle"}
+    assert result.skipped_prop_count == 0
+
+
+def test_ingest_bookmakers_filter_rejects_empty_sequence(tmp_path) -> None:
+    seed_mlb_metadata(tmp_path)
+
+    with pytest.raises(ValueError, match="at least one non-empty sportsbook key"):
+        ingest_odds_api_pitcher_lines_for_date(
+            target_date=date(2026, 4, 21),
+            output_dir=tmp_path,
+            client=StubOddsClient(),
+            bookmakers=("",),
+            now=iter(
+                [
+                    datetime(2026, 4, 21, 18, 0, tzinfo=UTC),
+                ]
+            ).__next__,
+        )
 
 
 def test_normalize_events_payload_tolerates_small_commence_time_drift() -> None:
