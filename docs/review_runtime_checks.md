@@ -81,6 +81,7 @@ Run the actual changed command, not just the module entrypoint:
 - `build-walk-forward-backtest`
 - `build-daily-candidates`
 - `build-wager-card`
+- `evaluate-stage-gates`
 
 Review requirement:
 
@@ -123,6 +124,11 @@ lands in `paper_results.jsonl` for that date. Rows can remain
 such as hold, confidence, model age, same-pitcher correlation, or daily
 exposure. For wager-card changes, confirm `build-wager-card --date ...` reports
 the same approved count as the dashboard board's `plays cleared` metric.
+
+For readiness changes, run `evaluate-stage-gates`, inspect
+`stage_gate_report.json`, and confirm the printed status matches the saved
+report. The default command is informational; use `--fail-on-research-only`
+only when the calling workflow should fail on a research-only status.
 
 If a workflow is expected to produce scored rows but writes only skipped or
 empty outputs, call that out explicitly in the PR and handoff.
