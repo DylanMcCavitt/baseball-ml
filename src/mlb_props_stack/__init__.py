@@ -12,5 +12,6 @@ __all__ = [
     "modeling",
     "paper_tracking",
     "pricing",
+    "stage_gates",
     "tracking",
 ]

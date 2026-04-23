@@ -45,6 +45,7 @@ from .paper_tracking import (
     DailyCandidateWorkflowResult,
     build_daily_candidate_workflow,
 )
+from .stage_gates import evaluate_stage_gates, render_stage_gate_summary
 from .tracking import TrackingConfig
 from .wager_card import build_wager_card, render_wager_card_summary
 
@@ -678,6 +679,51 @@ def build_argument_parser() -> argparse.ArgumentParser:
             "(0.0-1.0) required for a date to pass."
         ),
     )
+
+    stage_gates_parser = subparsers.add_parser(
+        "evaluate-stage-gates",
+        help=(
+            "Evaluate the latest training, backtest, CLV, ROI, and paper "
+            "artifacts against live-use readiness gates."
+        ),
+    )
+    stage_gates_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where normalized readiness artifacts live.",
+    )
+    stage_gates_parser.add_argument(
+        "--training-summary-path",
+        default=None,
+        help=(
+            "Optional explicit evaluation_summary.json path. Defaults to the "
+            "training run referenced by the latest backtest model_run_id."
+        ),
+    )
+    stage_gates_parser.add_argument(
+        "--backtest-run-dir",
+        default=None,
+        help=(
+            "Optional explicit walk_forward_backtest run directory. Defaults "
+            "to the latest run with backtest_runs.jsonl."
+        ),
+    )
+    stage_gates_parser.add_argument(
+        "--paper-results-path",
+        default=None,
+        help=(
+            "Optional explicit paper_results.jsonl path. Defaults to the "
+            "latest saved cumulative paper-results run."
+        ),
+    )
+    stage_gates_parser.add_argument(
+        "--fail-on-research-only",
+        action="store_true",
+        help=(
+            "Exit nonzero only when the evaluated status is research_only. "
+            "Without this flag the command is informational."
+        ),
+    )
     return parser
 
 
@@ -811,6 +857,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(render_data_alignment_summary(report))
         return 0 if report.passed else 1
+
+    if args.command == "evaluate-stage-gates":
+        result = evaluate_stage_gates(
+            output_dir=args.output_dir,
+            training_summary_path=args.training_summary_path,
+            backtest_run_dir=args.backtest_run_dir,
+            paper_results_path=args.paper_results_path,
+        )
+        print(render_stage_gate_summary(result))
+        if args.fail_on_research_only and result.status == "research_only":
+            return 1
+        return 0
 
     print(render_runtime_summary())
     return 0

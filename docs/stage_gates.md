@@ -15,6 +15,18 @@ artifact is missing, empty, or below threshold, the status stays
 
 Positive short-run ROI alone is never enough to promote the system.
 
+Executable checks and threshold constants live in
+`src/mlb_props_stack/stage_gates.py` and are exposed through:
+
+```bash
+uv run python -m mlb_props_stack evaluate-stage-gates
+```
+
+That command writes `stage_gate_report.json` and `stage_gate_report.md` under
+`data/normalized/stage_gates/run=<timestamp>/`. Use
+`--fail-on-research-only` only when a caller intentionally wants a research-only
+status to fail the process.
+
 ## Artifact Set To Review
 
 Apply the gates to one coherent artifact set for the same model version:

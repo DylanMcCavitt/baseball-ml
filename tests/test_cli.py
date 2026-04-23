@@ -10,6 +10,7 @@ from mlb_props_stack.ingest import (
 )
 from mlb_props_stack.modeling import StarterStrikeoutBaselineTrainingResult
 from mlb_props_stack.paper_tracking import DailyCandidateWorkflowResult
+from tests.stage_gate_fixtures import seed_stage_gate_artifacts
 
 
 def test_runtime_summary_includes_future_hooks():
@@ -356,3 +357,32 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
     assert "roi_summary_path=" in output
     assert "edge_bucket_summary_path=" in output
     assert "reproducibility_notes_path=" in output
+
+
+def test_stage_gate_cli_renders_report_and_optional_fail_flag(tmp_path, capsys):
+    seed_stage_gate_artifacts(tmp_path, passing=False)
+
+    exit_code = main(["evaluate-stage-gates", "--output-dir", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Stage-gate evaluation complete" in output
+    assert "status=research_only" in output
+    assert "scoreable_backtest_rows=0" in output
+    assert "backtest_skip_rate=1" in output
+    assert "settled_paper_bets=0" in output
+    assert "paper_same_line_clv_sample=0" in output
+    assert "paper_roi=n/a" in output
+    assert "backtest_roi=n/a" in output
+    assert "report_path=" in output
+
+    fail_exit_code = main(
+        [
+            "evaluate-stage-gates",
+            "--output-dir",
+            str(tmp_path),
+            "--fail-on-research-only",
+        ]
+    )
+
+    assert fail_exit_code == 1

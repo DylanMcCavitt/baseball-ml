@@ -16,6 +16,7 @@ from tests.test_statcast_feature_ingest import (
     StubStatcastClient,
     seed_postlock_mlb_metadata,
 )
+from tests.stage_gate_fixtures import seed_stage_gate_artifacts
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -442,3 +443,16 @@ def test_training_cli_smoke_writes_seeded_baseline_artifacts(
     assert evaluation["model_version"] == "starter-strikeout-baseline-v1"
     assert "Starter strikeout baseline training complete" in output
     assert f"evaluation_path={result.evaluation_path}" in output
+
+
+def test_stage_gate_cli_smoke_writes_readiness_report(tmp_path, capsys) -> None:
+    seed_stage_gate_artifacts(tmp_path, passing=False)
+
+    exit_code = main(["evaluate-stage-gates", "--output-dir", str(tmp_path)])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "Stage-gate evaluation complete" in output
+    assert "status=research_only" in output
+    assert "report_path=" in output
+    assert (tmp_path / "normalized" / "stage_gates").exists()
