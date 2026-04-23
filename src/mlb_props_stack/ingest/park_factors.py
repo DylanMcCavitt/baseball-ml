@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
 DEFAULT_PARK_FACTORS_PATH = (
@@ -73,11 +72,6 @@ def load_park_k_factors(
     return records
 
 
-@lru_cache(maxsize=1)
-def _default_park_k_factors() -> dict[tuple[int, int], ParkKFactorRecord]:
-    return load_park_k_factors(DEFAULT_PARK_FACTORS_PATH)
-
-
 def lookup_park_k_factor(
     season: int,
     venue_mlb_id: int | None,
@@ -93,7 +87,7 @@ def lookup_park_k_factor(
 
     if venue_mlb_id is None:
         return None
-    records = table if table is not None else _default_park_k_factors()
+    records = table if table is not None else load_park_k_factors(DEFAULT_PARK_FACTORS_PATH)
     if (season, venue_mlb_id) in records:
         return records[(season, venue_mlb_id)]
     if (season - 1, venue_mlb_id) in records:

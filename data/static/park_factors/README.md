@@ -33,6 +33,23 @@ season-end FanGraphs refresh lands.
 
 Source URL: <https://www.fangraphs.com/guts.aspx?type=pf&teamid=0&season=2025>
 
+## Venue-id aliases
+
+A few MLB parks appear under more than one venue id because the Stats API
+renumbered them over the years and both ids still surface in different
+historical payloads. Where this happens the CSV carries one row per id
+with the same factor values so the join succeeds regardless of which id
+the schedule response returns:
+
+| venue | ids | note |
+| --- | --- | --- |
+| Yankee Stadium | `10`, `2602` | Legacy id + current id both observed in schedule responses. |
+| loanDepot park | `31`, `2680` | Same park under the old Marlins Park id and the current renamed id. |
+
+If a future refresh introduces a new alias, add the new id as its own
+row(s) rather than deleting the old id — older artifacts on disk may
+still carry the retired id.
+
 ## Adding a venue
 
 1. Look up the venue's MLB Stats API id via
