@@ -38,6 +38,12 @@
 - Updated dashboard chart calls in `screens/backtest.py`, `screens/features.py`,
   and `screens/pitcher.py` from deprecated `use_container_width=True` to
   `width="stretch"`
+- Updated `src/mlb_props_stack/dashboard/app.py`
+  - replaced the custom HTML anchor nav with Streamlit-native button controls
+    that explicitly set `screen`, `board_date`, and pitcher context in
+    `st.query_params`, then rerun the app
+  - added a regression test covering query-param updates for regular screens
+    and pitcher context
 - Updated CLI summary output to include `approved_wagers=...`
 - Updated docs to distinguish raw actionable candidates from final approved
   wagers
@@ -49,6 +55,7 @@
 - `docs/modeling.md`
 - `docs/review_runtime_checks.md`
 - `src/mlb_props_stack/cli.py`
+- `src/mlb_props_stack/dashboard/app.py`
 - `src/mlb_props_stack/dashboard/lib/data.py`
 - `src/mlb_props_stack/dashboard/screens/backtest.py`
 - `src/mlb_props_stack/dashboard/screens/features.py`
@@ -56,6 +63,7 @@
 - `src/mlb_props_stack/paper_tracking.py`
 - `src/mlb_props_stack/wager_approval.py`
 - `tests/test_cli.py`
+- `tests/test_dashboard_app.py`
 - `tests/test_dashboard_data.py`
 - `tests/test_paper_tracking.py`
 
@@ -65,6 +73,7 @@ Commands run successfully:
 
 ```bash
 uv sync --extra dev
+uv run pytest tests/test_dashboard_app.py tests/test_dashboard_data.py tests/test_paper_tracking.py tests/test_runtime_smokes.py tests/test_cli.py
 uv run pytest tests/test_dashboard_data.py tests/test_paper_tracking.py tests/test_edge.py tests/test_cli.py
 uv run pytest tests/test_runtime_smokes.py
 uv run pytest
@@ -76,6 +85,7 @@ uv run python -m mlb_props_stack build-daily-candidates --date 2026-04-23 --outp
 Observed results:
 
 - focused dashboard/paper/edge/CLI suite passed: `27 passed`
+- focused dashboard app/data/paper/runtime/CLI suite passed: `20 passed`
 - runtime smoke suite passed
 - full test suite passed: `181 passed`, with the existing third-party MLflow /
   Pydantic deprecation warnings
@@ -96,8 +106,10 @@ Observed results:
   - `75 props`, `plays cleared=0`, `total stake=0.00u`
   - rejected board rows show explicit notes such as `hold above max` and
     `correlated same-slate play`
-  - pitcher, backtest, features, and config screens opened without Streamlit
-    tracebacks after the PMF lookup fix
+  - nav controls now click through to pitcher, backtest, MLflow, features,
+    config, and board, with each click updating `screen=...` in the URL
+  - pitcher, backtest, MLflow, features, and config screens opened without
+    Streamlit tracebacks after the PMF lookup and nav-control fixes
   - chart deprecation warnings disappeared after the `width="stretch"` cleanup
 
 Command run with expected non-zero outcome:

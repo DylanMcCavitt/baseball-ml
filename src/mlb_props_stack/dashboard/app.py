@@ -10,7 +10,6 @@ from pathlib import Path
 import sys
 import tomllib
 from typing import Any
-from urllib.parse import quote
 
 
 if __package__ in {None, ""}:  # pragma: no cover - exercised by file-entry runtime check
@@ -87,13 +86,71 @@ def _write_user_config(
     _user_config_path().write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _nav_url(*, screen: str, board_date: date | None, pitcher_id: str | None = None) -> str:
-    parts = [f"screen={quote(screen)}"]
+NAV_TABS: tuple[tuple[str, str, str], ...] = (
+    ("board", "BOARD", "1"),
+    ("pitcher", "PITCHER", "2"),
+    ("backtest", "BACKTEST", "3"),
+    ("registry", "MLFLOW", "4"),
+    ("features", "FEATURES", "5"),
+    ("config", "CONFIG", "6"),
+)
+
+
+def _set_dashboard_query_params(
+    streamlit_module: Any,
+    *,
+    screen: str,
+    board_date: date | None,
+    pitcher_id: str | None = None,
+) -> None:
+    target: dict[str, str] = {"screen": screen}
     if board_date is not None:
-        parts.append(f"board_date={quote(board_date.isoformat())}")
+        target["board_date"] = board_date.isoformat()
     if pitcher_id:
-        parts.append(f"pitcher_id={quote(pitcher_id)}")
-    return "?" + "&".join(parts)
+        target["pitcher_id"] = pitcher_id
+
+    query_params = getattr(streamlit_module, "query_params", None)
+    if query_params is None:
+        return
+    if hasattr(query_params, "clear"):
+        query_params.clear()
+    for key, value in target.items():
+        query_params[key] = value
+
+
+def _rerun_streamlit(streamlit_module: Any) -> None:
+    rerun = getattr(streamlit_module, "rerun", None)
+    if callable(rerun):
+        rerun()
+
+
+def _render_nav_controls(
+    *,
+    streamlit_module: Any,
+    active_screen: str,
+    board_date: date | None,
+    selected_pitcher_id: str | None,
+) -> None:
+    labels = {
+        screen: f"{label} \u2318{key_hint}"
+        for screen, label, key_hint in NAV_TABS
+    }
+
+    columns = streamlit_module.columns(len(NAV_TABS))
+    for column, (screen, _, _) in zip(columns, NAV_TABS, strict=True):
+        if column.button(
+            labels[screen],
+            key=f"strike_ops_screen_nav_{screen}",
+            type="primary" if screen == active_screen else "secondary",
+            use_container_width=True,
+        ):
+            _set_dashboard_query_params(
+                streamlit_module,
+                screen=screen,
+                board_date=board_date,
+                pitcher_id=selected_pitcher_id if screen == "pitcher" else None,
+            )
+            _rerun_streamlit(streamlit_module)
 
 
 def _ticker_html(context: dict[str, str]) -> str:
@@ -120,33 +177,11 @@ def _ticker_html(context: dict[str, str]) -> str:
 def _header_html(
     *,
     active_screen: str,
-    board_date: date | None,
-    selected_pitcher_id: str | None,
 ) -> str:
-    tabs = [
-        ("board", "BOARD", "1"),
-        ("pitcher", "PITCHER", "2"),
-        ("backtest", "BACKTEST", "3"),
-        ("registry", "MLFLOW", "4"),
-        ("features", "FEATURES", "5"),
-        ("config", "CONFIG", "6"),
-    ]
-    nav = []
-    for screen, label, key_hint in tabs:
-        nav.append(
-            "<a class='{}' href='{}'>{}<span class='strike-kbd'>⌘{}</span></a>".format(
-                "on" if active_screen == screen else "",
-                escape(
-                    _nav_url(
-                        screen=screen,
-                        board_date=board_date,
-                        pitcher_id=selected_pitcher_id if screen == "pitcher" else None,
-                    )
-                ),
-                escape(label),
-                escape(key_hint),
-            )
-        )
+    current = next(
+        (label for screen, label, _ in NAV_TABS if screen == active_screen),
+        active_screen.upper(),
+    )
     return (
         "<div class='strike-header'>"
         "<div class='strike-logo'>"
@@ -154,8 +189,8 @@ def _header_html(
         "<span>STRIKE<span class='strike-dim'>·</span>OPS</span>"
         "<span style='margin-left:auto;color:var(--dim);font-size:10px'>v0.3.1</span>"
         "</div>"
-        f"<div class='strike-nav'>{''.join(nav)}</div>"
         "<div class='strike-header-right'>"
+        f"<span>{escape(current)}</span><span class='strike-sep'>│</span>"
         "<span>PY 3.11</span><span class='strike-sep'>│</span>"
         "<span>MLflow 2.x</span><span class='strike-sep'>│</span>"
         "<span>Streamlit</span><span class='strike-sep'>│</span>"
@@ -290,10 +325,14 @@ def render_dashboard_page(
     st.markdown(
         _header_html(
             active_screen=active_screen,
-            board_date=board_date,
-            selected_pitcher_id=str(selected_row["pitcher_id"]) if selected_row is not None else None,
         ),
         unsafe_allow_html=True,
+    )
+    _render_nav_controls(
+        streamlit_module=st,
+        active_screen=active_screen,
+        board_date=board_date,
+        selected_pitcher_id=str(selected_row["pitcher_id"]) if selected_row is not None else None,
     )
 
     if active_screen == "board":
