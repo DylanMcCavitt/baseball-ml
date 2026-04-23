@@ -213,6 +213,11 @@ The current feature build is intentionally explicit about missing inputs:
 - park factor stays null with `missing_park_factor_source` rather than being
   silently backfilled
 
+Statcast CSV pulls retry transient failures (HTTP 429/5xx, timeouts, and
+connection errors) with bounded exponential backoff and fan out across a
+small thread pool (default four workers) so a full slate fetches in parallel
+while still writing raw and normalized artifacts in deterministic pull order.
+
 ## Starter Strikeout Baseline Training
 
 `AGE-147` adds the first reproducible training loop for expected starter

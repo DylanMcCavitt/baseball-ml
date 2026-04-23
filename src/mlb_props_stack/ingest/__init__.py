@@ -19,6 +19,7 @@ from .odds_api import (
 )
 from .statcast_features import (
     DEFAULT_HISTORY_DAYS,
+    DEFAULT_MAX_FETCH_WORKERS,
     GameContextFeatureRow,
     LineupDailyFeatureRow,
     PitcherDailyFeatureRow,
@@ -42,6 +43,7 @@ __all__ = [
     "ProbableStarterRecord",
     "PropLineSnapshotRecord",
     "DEFAULT_HISTORY_DAYS",
+    "DEFAULT_MAX_FETCH_WORKERS",
     "GameContextFeatureRow",
     "LineupDailyFeatureRow",
     "PitcherDailyFeatureRow",

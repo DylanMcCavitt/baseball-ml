@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import csv
 import json
+import threading
 from datetime import UTC, date, datetime, timedelta
 from io import StringIO
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlparse
+
+import pytest
 
 from mlb_props_stack.ingest import (
     StatcastFeatureIngestResult,
@@ -902,3 +906,233 @@ def test_ingest_statcast_features_dedupes_duplicate_pitcher_pulls(tmp_path) -> N
 
     assert result.raw_pull_count == 11
     assert sum("pitchers_lookup%5B%5D=680802" in url for url in stub_client.urls) == 1
+
+
+class _ResponseStub:
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def _http_error(code: int) -> HTTPError:
+    return HTTPError(url="https://example.com", code=code, msg="stub", hdrs=None, fp=None)
+
+
+def test_statcast_search_client_retries_transient_http_errors_with_backoff(
+    monkeypatch,
+) -> None:
+    responses: list[object] = [
+        _http_error(503),
+        URLError("connection reset"),
+        _ResponseStub(b"game_date,ok\n"),
+    ]
+
+    def fake_urlopen(request, timeout):
+        next_response = responses.pop(0)
+        if isinstance(next_response, Exception):
+            raise next_response
+        return next_response
+
+    monkeypatch.setattr(
+        "mlb_props_stack.ingest.statcast_features.urlopen",
+        fake_urlopen,
+    )
+
+    sleeps: list[float] = []
+    client = StatcastSearchClient(
+        max_attempts=3,
+        initial_backoff_seconds=0.5,
+        backoff_multiplier=2.0,
+        max_backoff_seconds=10.0,
+        sleep=sleeps.append,
+    )
+
+    csv_text = client.fetch_csv("https://example.com/statcast.csv")
+
+    assert csv_text == "game_date,ok\n"
+    assert sleeps == [0.5, 1.0]
+    assert responses == []
+
+
+def test_statcast_search_client_raises_after_exhausting_attempts(monkeypatch) -> None:
+    def fake_urlopen(request, timeout):
+        raise _http_error(502)
+
+    monkeypatch.setattr(
+        "mlb_props_stack.ingest.statcast_features.urlopen",
+        fake_urlopen,
+    )
+    sleeps: list[float] = []
+    client = StatcastSearchClient(
+        max_attempts=3,
+        initial_backoff_seconds=0.25,
+        backoff_multiplier=3.0,
+        max_backoff_seconds=1.0,
+        sleep=sleeps.append,
+    )
+
+    with pytest.raises(HTTPError) as excinfo:
+        client.fetch_csv("https://example.com/statcast.csv")
+
+    assert excinfo.value.code == 502
+    # Two sleeps between three attempts; second delay is clamped to max backoff.
+    assert sleeps == [0.25, 0.75]
+
+
+def test_statcast_search_client_does_not_retry_on_client_http_errors(monkeypatch) -> None:
+    call_count = {"value": 0}
+
+    def fake_urlopen(request, timeout):
+        call_count["value"] += 1
+        raise _http_error(404)
+
+    monkeypatch.setattr(
+        "mlb_props_stack.ingest.statcast_features.urlopen",
+        fake_urlopen,
+    )
+    sleeps: list[float] = []
+    client = StatcastSearchClient(
+        max_attempts=5,
+        initial_backoff_seconds=0.1,
+        sleep=sleeps.append,
+    )
+
+    with pytest.raises(HTTPError):
+        client.fetch_csv("https://example.com/statcast.csv")
+
+    assert call_count["value"] == 1
+    assert sleeps == []
+
+
+def test_statcast_search_client_rejects_invalid_retry_configuration() -> None:
+    with pytest.raises(ValueError):
+        StatcastSearchClient(max_attempts=0)
+    with pytest.raises(ValueError):
+        StatcastSearchClient(initial_backoff_seconds=-1.0)
+    with pytest.raises(ValueError):
+        StatcastSearchClient(backoff_multiplier=0.5)
+    with pytest.raises(ValueError):
+        StatcastSearchClient(max_backoff_seconds=-0.1)
+
+
+class _ConcurrencyProbeClient:
+    def __init__(self, rows_by_player: dict[tuple[str, int], list[dict[str, object]]]) -> None:
+        self._rows_by_player = rows_by_player
+        self._lock = threading.Lock()
+        self._in_flight = 0
+        self._ready = threading.Event()
+        self.urls: list[str] = []
+        self.max_in_flight = 0
+
+    def fetch_csv(self, url: str) -> str:
+        with self._lock:
+            self.urls.append(url)
+            self._in_flight += 1
+            if self._in_flight > self.max_in_flight:
+                self.max_in_flight = self._in_flight
+            should_release = self._in_flight >= 2
+        if should_release:
+            self._ready.set()
+        # Each worker waits until at least two fetches are simultaneously in
+        # flight; this proves the thread pool actually parallelises work.
+        self._ready.wait(timeout=1.0)
+        try:
+            query = parse_qs(urlparse(url).query)
+            player_type = query["player_type"][0]
+            lookup_key = (
+                "pitchers_lookup[]" if player_type == "pitcher" else "batters_lookup[]"
+            )
+            player_id = int(query[lookup_key][0])
+            rows: list[dict[str, object]] = self._rows_by_player.get(
+                (player_type, player_id),
+                [],
+            )
+            return _csv_text(rows)
+        finally:
+            with self._lock:
+                self._in_flight -= 1
+
+
+def test_ingest_statcast_features_fetches_pulls_in_parallel(tmp_path) -> None:
+    seed_mlb_metadata(tmp_path)
+    client = _ConcurrencyProbeClient(rows_by_player=statcast_rows_by_player())
+    timestamps = iter(
+        datetime(2026, 4, 21, 18, 0, tzinfo=UTC) + timedelta(minutes=index)
+        for index in range(20)
+    )
+
+    result = ingest_statcast_features_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        history_days=30,
+        client=client,
+        now=lambda: next(timestamps),
+        max_fetch_workers=4,
+    )
+
+    assert result.raw_pull_count == 11
+    assert client.max_in_flight >= 2
+
+
+def test_ingest_statcast_features_preserves_pull_ordering_under_threaded_fetch(
+    tmp_path,
+) -> None:
+    seed_mlb_metadata(tmp_path)
+    stub_client = StubStatcastClient()
+    timestamps = iter(
+        datetime(2026, 4, 21, 18, 0, tzinfo=UTC) + timedelta(minutes=index)
+        for index in range(20)
+    )
+
+    result = ingest_statcast_features_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        history_days=30,
+        client=stub_client,
+        now=lambda: next(timestamps),
+        max_fetch_workers=4,
+    )
+
+    manifest_rows = [
+        json.loads(line)
+        for line in result.pull_manifest_path.read_text(encoding="utf-8").splitlines()
+    ]
+    manifest_player_order = [
+        (row["player_type"], row["player_id"]) for row in manifest_rows
+    ]
+    expected_order = [
+        ("pitcher", 680802),
+        ("pitcher", 800048),
+    ] + [("batter", batter_id) for batter_id in sorted(
+        {608070, 671655, 677587, 680757, 682177, 682657, 595978, 700932, 800050}
+    )]
+    assert manifest_player_order == expected_order
+    captured_at_values = [row["captured_at"] for row in manifest_rows]
+    assert captured_at_values == sorted(captured_at_values)
+
+
+def test_ingest_statcast_features_rejects_invalid_max_fetch_workers(tmp_path) -> None:
+    seed_mlb_metadata(tmp_path)
+    stub_client = StubStatcastClient()
+    timestamps = iter(
+        datetime(2026, 4, 21, 18, 0, tzinfo=UTC) + timedelta(minutes=index)
+        for index in range(20)
+    )
+
+    with pytest.raises(ValueError):
+        ingest_statcast_features_for_date(
+            target_date=date(2026, 4, 21),
+            output_dir=tmp_path,
+            history_days=30,
+            client=stub_client,
+            now=lambda: next(timestamps),
+            max_fetch_workers=0,
+        )
