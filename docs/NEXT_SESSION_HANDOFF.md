@@ -188,34 +188,66 @@ Observed results:
   temperature actually improve starter-strikeout calibration — the
   literature disagrees and it is easy to add noise here
 
+## Design Callouts
+
+- `data/static/venues/venue_metadata.csv` is rebuilt against
+  `https://statsapi.mlb.com/api/v1/venues/{id}?hydrate=location` so
+  every row maps the exact MLB Stats API `venue_id` that schedule
+  responses emit (Angel Stadium=1, Tropicana=12, Chase=15,
+  Oracle=2395, Great American=2602, Citizens Bank=2681,
+  loanDepot=4169, Globe Life=5325, Citi=3289, Yankee=3313,
+  Target=3312, Truist=4705, Nationals=3309). A prior draft had ~15
+  rows pointing at the wrong coordinates (e.g. id=2395 labeled
+  T-Mobile Park) — every Open-Meteo call would have pulled weather
+  for the wrong city. If you edit this file, look up the id via
+  the MLB API first, do not guess from the team name
+- Legacy venue ids are preserved on purpose: id=10 (Oakland
+  Coliseum) covers 2022-2024 A's backfills before id=2529 (Sutter
+  Health Park), and id=2523 (George M. Steinbrenner Field) covers
+  the 2025 Rays while Tropicana (id=12) was offline. Removing any
+  of these rows silently regresses historical weather coverage
+- Leakage guard is layered: `_nearest_hour_index` picks the hourly
+  row closest to `commence_time - 60 min` (in either direction),
+  and `ingest_weather_for_date` asserts `captured_at <= commence_time`
+  before emission. With the default 60-minute offset, the picked
+  hour always lands within `[commence_time - 90 min, commence_time
+  - 30 min]`. The assertion is the hard safety net for pathological
+  short offsets; do not ship offset < 30 minutes without reworking
+  the nearest-hour logic
+- Retractable-roof parks (Chase, Rogers Centre, T-Mobile, American
+  Family, Daikin, loanDepot, Globe Life) always fetch outdoor
+  weather; only fixed domes (Tropicana) skip the API with a
+  `roof_closed` sentinel. MLB Stats API does not expose historical
+  roof state, so this is an accepted noise source in Toronto,
+  Arizona, Miami, Seattle, Minneapolis, Houston, Milwaukee, and
+  Texas games
+- Weather numerics (`weather_temperature_f`, `weather_wind_speed_mph`,
+  `weather_humidity_pct`) live in `OPTIONAL_NUMERIC_FEATURES` so
+  they drop out of training silently if coverage across the window
+  is below `OPTIONAL_FEATURE_MIN_COVERAGE`. Intended safety rail
+  for the first backfill; once 2024 + 2025 are seeded, confirm
+  coverage clears the threshold before assuming the features are
+  in the model
+- Open-Meteo Archive is the single weather provider. It's free and
+  no-API-key, but has no redundancy — a rate-limit or outage on a
+  given day means every affected game falls back to
+  `missing_weather_source`. The API's hourly cap is ~1000 points per
+  request, and the current client fetches one day per game per call.
+  If backfill volume becomes a problem, batch by venue across a
+  date window (one request can cover a full season of hourly data
+  for a single lat/lon)
+- Test fixtures in `tests/test_weather_ingest.py` track the real
+  MLB Stats API venue ids (Tropicana=12, Chase=15, Progressive=5)
+  even though the tests inject their own `venue_lookup`. Kept in
+  sync so the fixtures do not lie about what a real schedule row
+  looks like
+
 ## Constraints And Open Questions
 
-- Open-Meteo Archive serves pregame weather for the full
-  historical window we care about, but the API has a ~1000-point
-  hourly cap per request; the current client fetches one day at a
-  time, so long backfills cost one HTTP call per game per day. If
-  we need to amortize, batch by venue over a date window
-- The venue CSV hard-codes lat/lon and roof type. If a team moves
-  (temporary relocations, spring training, London / Seoul / Tokyo
-  series), the row must be updated by hand — there is no runtime
-  fallback that infers coordinates from `venue_name`
-- The leakage guard is "hourly row whose timestamp `<= commence_time
-  - offset_minutes`". A game that starts on the hour (e.g. 19:00Z)
-  pulls the 18:00Z row, so the recorded `captured_at` is typically
-  between 61 and 119 minutes before first pitch — safe, but the
-  recorded value is the hourly row, not the exact 60-minute offset
-- `roof_closed` is emitted for every `fixed`-roof stadium regardless
-  of the actual weather that day (Tropicana Field). Retractable-roof
-  parks are always treated as outdoor; the model does not yet know
-  whether the roof was actually closed for a given game, because
-  the MLB Stats API does not expose a reliable historical roof-state
-  field. This is a likely source of noise in Toronto, Arizona,
-  Miami, Seattle, Minneapolis, Houston, Milwaukee, and Texas games
-- Weather numerics are gated by `OPTIONAL_FEATURE_MIN_COVERAGE`; if
-  the next training run's weather coverage is below that threshold
-  across the training window, these features will silently drop
-  out of the model. That is the intended safety rail, but worth
-  watching after the first backfill
+- The venue CSV hard-codes lat/lon and roof type. If a team relocates
+  (London / Seoul / Tokyo series, spring-training regular-season
+  games, stadium rebuilds), the row must be updated by hand — there
+  is no runtime fallback that infers coordinates from `venue_name`
 
 ## Known Follow-Up Nits (Non-Blocking)
 
