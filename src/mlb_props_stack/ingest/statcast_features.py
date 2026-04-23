@@ -34,6 +34,11 @@ from .park_factors import (
     load_park_k_factors,
     lookup_park_k_factor,
 )
+from .weather import (
+    WEATHER_STATUS_MISSING_SOURCE,
+    WeatherSnapshotRecord,
+    load_latest_weather_snapshots_for_date,
+)
 
 STATCAST_SEARCH_CSV_ENDPOINT = "https://baseballsavant.mlb.com/statcast_search/csv"
 STATCAST_REQUEST_HEADERS = {
@@ -218,8 +223,11 @@ class GameContextFeatureRow:
     weather_status: str
     weather_source: str | None
     weather_temperature_f: float | None
-    weather_wind_mph: float | None
-    weather_conditions: str | None
+    weather_wind_speed_mph: float | None
+    weather_wind_direction_deg: float | None
+    weather_humidity_pct: float | None
+    weather_captured_at: datetime | None
+    roof_type: str | None
     expected_leash_pitch_count: float | None
     expected_leash_batters_faced: float | None
 
@@ -1277,6 +1285,7 @@ def _build_game_context_feature_row(
     lineup_snapshot: LineupSnapshot | None,
     all_rows: list[StatcastPitchRecord],
     park_k_factor_table: dict[tuple[int, int], ParkKFactorRecord],
+    weather_lookup: dict[int, WeatherSnapshotRecord],
 ) -> GameContextFeatureRow:
     base_features_as_of = max(game.captured_at, starter.captured_at, _history_cutoff(date.fromisoformat(starter.official_date)))
     if lineup_snapshot is not None:
@@ -1309,6 +1318,26 @@ def _build_game_context_feature_row(
         park_k_factor_vs_lhh = None
         park_factor_status = PARK_FACTOR_STATUS_MISSING_SOURCE
 
+    weather_snapshot = weather_lookup.get(starter.game_pk)
+    if weather_snapshot is not None:
+        weather_status = weather_snapshot.weather_status
+        weather_source = weather_snapshot.weather_source
+        weather_temperature_f = weather_snapshot.temperature_f
+        weather_wind_speed_mph = weather_snapshot.wind_speed_mph
+        weather_wind_direction_deg = weather_snapshot.wind_direction_deg
+        weather_humidity_pct = weather_snapshot.humidity_pct
+        weather_captured_at = weather_snapshot.captured_at
+        roof_type = weather_snapshot.roof_type
+    else:
+        weather_status = WEATHER_STATUS_MISSING_SOURCE
+        weather_source = None
+        weather_temperature_f = None
+        weather_wind_speed_mph = None
+        weather_wind_direction_deg = None
+        weather_humidity_pct = None
+        weather_captured_at = None
+        roof_type = None
+
     return GameContextFeatureRow(
         feature_row_id=(
             f"game-context:{starter.game_pk}:{starter.pitcher_id or 'missing'}:{starter.official_date}"
@@ -1330,11 +1359,14 @@ def _build_game_context_feature_row(
         park_k_factor_vs_lhh=park_k_factor_vs_lhh,
         park_factor_status=park_factor_status,
         rest_days=rest_days,
-        weather_status="missing_weather_source",
-        weather_source=None,
-        weather_temperature_f=None,
-        weather_wind_mph=None,
-        weather_conditions=None,
+        weather_status=weather_status,
+        weather_source=weather_source,
+        weather_temperature_f=weather_temperature_f,
+        weather_wind_speed_mph=weather_wind_speed_mph,
+        weather_wind_direction_deg=weather_wind_direction_deg,
+        weather_humidity_pct=weather_humidity_pct,
+        weather_captured_at=weather_captured_at,
+        roof_type=roof_type,
         expected_leash_pitch_count=expected_leash_pitch_count,
         expected_leash_batters_faced=expected_leash_batters_faced,
     )
@@ -1455,6 +1487,10 @@ def ingest_statcast_features_for_date(
     lineup_feature_rows: list[LineupDailyFeatureRow] = []
     game_context_rows: list[GameContextFeatureRow] = []
     park_k_factor_table = load_park_k_factors()
+    weather_lookup = load_latest_weather_snapshots_for_date(
+        output_dir=output_dir,
+        target_date=target_date,
+    )
 
     for starter in mlb_metadata.probable_starters:
         game = games_by_pk.get(starter.game_pk)
@@ -1486,6 +1522,7 @@ def ingest_statcast_features_for_date(
                 lineup_snapshot=selected_lineups.get((starter.game_pk, _opponent_team_side(starter.team_side))),
                 all_rows=all_pitch_records,
                 park_k_factor_table=park_k_factor_table,
+                weather_lookup=weather_lookup,
             )
         )
 

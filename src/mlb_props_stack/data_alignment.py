@@ -32,6 +32,9 @@ class ArtifactCounts:
     pitcher_daily_features: int
     lineup_daily_features: int
     game_context_features: int
+    weather_snapshots: int
+    weather_ok_snapshots: int
+    weather_roof_closed_snapshots: int
     training_rows: int
     calibrated_probabilities: int
     starter_outcomes: int
@@ -45,6 +48,7 @@ class DateCoverageRow:
     feature_coverage: float | None
     outcome_coverage: float | None
     odds_coverage: float | None
+    weather_coverage: float | None
     failing_artifacts: tuple[str, ...]
 
     @property
@@ -107,6 +111,10 @@ def build_date_coverage_rows(
         feature_coverage = _ratio(counts.pitcher_daily_features, counts.probable_starters)
         outcome_coverage = _ratio(counts.starter_outcomes, counts.training_rows)
         odds_coverage = _ratio(counts.prop_line_pitcher_coverage, counts.probable_starters)
+        weather_coverage = _ratio(
+            counts.weather_ok_snapshots + counts.weather_roof_closed_snapshots,
+            counts.games,
+        )
 
         failing: list[str] = []
         if _coverage_below_threshold(feature_coverage, threshold):
@@ -122,6 +130,7 @@ def build_date_coverage_rows(
                 feature_coverage=feature_coverage,
                 outcome_coverage=outcome_coverage,
                 odds_coverage=odds_coverage,
+                weather_coverage=weather_coverage,
                 failing_artifacts=tuple(failing),
             )
         )
@@ -274,6 +283,23 @@ def collect_artifact_counts_for_date(
         else 0
     )
 
+    weather_run = _latest_run_dir_for_date(
+        normalized_root / "weather",
+        target_date=target_date,
+        required_files=("weather_snapshots.jsonl",),
+    )
+    weather_snapshots = 0
+    weather_ok_snapshots = 0
+    weather_roof_closed_snapshots = 0
+    if weather_run is not None:
+        for row in _load_jsonl_rows(weather_run / "weather_snapshots.jsonl"):
+            weather_snapshots += 1
+            status = row.get("weather_status")
+            if status == "ok":
+                weather_ok_snapshots += 1
+            elif status == "roof_closed":
+                weather_roof_closed_snapshots += 1
+
     baseline_run = _latest_baseline_run_for_date(output_root, target_date=target_date)
     if baseline_run is not None:
         training_rows = _count_jsonl_rows_for_date(
@@ -303,6 +329,9 @@ def collect_artifact_counts_for_date(
         pitcher_daily_features=pitcher_daily_features,
         lineup_daily_features=lineup_daily_features,
         game_context_features=game_context_features,
+        weather_snapshots=weather_snapshots,
+        weather_ok_snapshots=weather_ok_snapshots,
+        weather_roof_closed_snapshots=weather_roof_closed_snapshots,
         training_rows=training_rows,
         calibrated_probabilities=calibrated_probabilities,
         starter_outcomes=starter_outcomes,
@@ -349,12 +378,15 @@ def render_data_alignment_summary(report: DataAlignmentReport) -> str:
         "pitcher_feats",
         "lineup_feats",
         "context_feats",
+        "weather_ok",
+        "weather_roof",
         "training",
         "calibrated",
         "outcomes",
         "feat_cov",
         "out_cov",
         "odds_cov",
+        "wx_cov",
         "status",
     )
     table_rows: list[tuple[str, ...]] = [header]
@@ -371,12 +403,15 @@ def render_data_alignment_summary(report: DataAlignmentReport) -> str:
                 str(counts.pitcher_daily_features),
                 str(counts.lineup_daily_features),
                 str(counts.game_context_features),
+                str(counts.weather_ok_snapshots),
+                str(counts.weather_roof_closed_snapshots),
                 str(counts.training_rows),
                 str(counts.calibrated_probabilities),
                 str(counts.starter_outcomes),
                 _format_ratio(row.feature_coverage),
                 _format_ratio(row.outcome_coverage),
                 _format_ratio(row.odds_coverage),
+                _format_ratio(row.weather_coverage),
                 "FAIL" if row.below_threshold else "ok",
             )
         )

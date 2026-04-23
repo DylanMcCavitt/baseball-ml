@@ -171,8 +171,11 @@ def _seed_feature_run(
                 "weather_status": "missing_weather_source",
                 "weather_source": None,
                 "weather_temperature_f": None,
-                "weather_wind_mph": None,
-                "weather_conditions": None,
+                "weather_wind_speed_mph": None,
+                "weather_wind_direction_deg": None,
+                "weather_humidity_pct": None,
+                "weather_captured_at": None,
+                "roof_type": None,
                 "expected_leash_pitch_count": row["expected_leash_pitch_count"],
                 "expected_leash_batters_faced": row["expected_leash_batters_faced"],
             }

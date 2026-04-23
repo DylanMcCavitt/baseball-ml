@@ -70,6 +70,9 @@ OPTIONAL_NUMERIC_FEATURES = (
     "park_k_factor",
     "park_k_factor_vs_rhh",
     "park_k_factor_vs_lhh",
+    "weather_temperature_f",
+    "weather_wind_speed_mph",
+    "weather_humidity_pct",
 )
 CATEGORICAL_FEATURES: tuple[str, ...] = ()
 PROHIBITED_MODEL_FEATURE_FIELDS = frozenset(
@@ -137,6 +140,13 @@ class StarterStrikeoutTrainingRow:
     park_k_factor_vs_rhh: float | None
     park_k_factor_vs_lhh: float | None
     weather_status: str
+    weather_source: str | None
+    weather_temperature_f: float | None
+    weather_wind_speed_mph: float | None
+    weather_wind_direction_deg: float | None
+    weather_humidity_pct: float | None
+    weather_captured_at: datetime | None
+    roof_type: str | None
     pitch_sample_size: int
     plate_appearance_sample_size: int
     pitcher_k_rate: float | None
@@ -614,6 +624,25 @@ def _load_feature_rows_for_date(*, target_date: date, output_dir: Path) -> list[
                     game_context_row.get("park_k_factor_vs_lhh")
                 ),
                 weather_status=str(game_context_row["weather_status"]),
+                weather_source=_as_optional_text(game_context_row.get("weather_source")),
+                weather_temperature_f=_as_optional_float(
+                    game_context_row.get("weather_temperature_f")
+                ),
+                weather_wind_speed_mph=_as_optional_float(
+                    game_context_row.get("weather_wind_speed_mph")
+                ),
+                weather_wind_direction_deg=_as_optional_float(
+                    game_context_row.get("weather_wind_direction_deg")
+                ),
+                weather_humidity_pct=_as_optional_float(
+                    game_context_row.get("weather_humidity_pct")
+                ),
+                weather_captured_at=(
+                    parse_api_datetime(game_context_row["weather_captured_at"])
+                    if game_context_row.get("weather_captured_at")
+                    else None
+                ),
+                roof_type=_as_optional_text(game_context_row.get("roof_type")),
                 pitch_sample_size=int(pitcher_row["pitch_sample_size"]),
                 plate_appearance_sample_size=int(pitcher_row["plate_appearance_sample_size"]),
                 pitcher_k_rate=_as_optional_float(pitcher_row.get("pitcher_k_rate")),

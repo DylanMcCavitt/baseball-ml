@@ -31,18 +31,24 @@ from .ingest import (
     MLBMetadataIngestResult,
     OddsAPIIngestResult,
     StatcastFeatureIngestResult,
+    WeatherIngestResult,
     ingest_mlb_metadata_for_date,
     ingest_odds_api_pitcher_lines_for_date,
     ingest_statcast_features_for_date,
+    ingest_weather_for_date,
 )
 
 
 SOURCE_MLB_METADATA = "mlb-metadata"
+SOURCE_WEATHER = "weather"
 SOURCE_ODDS_API = "odds-api"
 SOURCE_STATCAST_FEATURES = "statcast-features"
 
+# Weather must run after MLB metadata (depends on games.jsonl) and before
+# statcast-features (which joins weather snapshots into game_context).
 ALL_SOURCES: tuple[str, ...] = (
     SOURCE_MLB_METADATA,
+    SOURCE_WEATHER,
     SOURCE_ODDS_API,
     SOURCE_STATCAST_FEATURES,
 )
@@ -56,6 +62,7 @@ REQUIRED_ARTIFACT_FILES: dict[str, tuple[str, ...]] = {
         "probable_starters.jsonl",
         "lineup_snapshots.jsonl",
     ),
+    SOURCE_WEATHER: ("weather_snapshots.jsonl",),
     SOURCE_ODDS_API: (
         "event_game_mappings.jsonl",
         "prop_line_snapshots.jsonl",
@@ -73,6 +80,7 @@ REQUIRED_ARTIFACT_FILES: dict[str, tuple[str, ...]] = {
 # ``data/normalized``. Keep aligned with the ingest modules' write paths.
 NORMALIZED_ROOT_BY_SOURCE: dict[str, str] = {
     SOURCE_MLB_METADATA: "mlb_stats_api",
+    SOURCE_WEATHER: "weather",
     SOURCE_ODDS_API: "the_odds_api",
     SOURCE_STATCAST_FEATURES: "statcast_search",
 }
@@ -263,6 +271,9 @@ def backfill_historical(
     mlb_metadata_runner: Callable[
         ..., MLBMetadataIngestResult
     ] = ingest_mlb_metadata_for_date,
+    weather_runner: Callable[
+        ..., WeatherIngestResult
+    ] = ingest_weather_for_date,
     odds_api_runner: Callable[
         ..., OddsAPIIngestResult
     ] = ingest_odds_api_pitcher_lines_for_date,
@@ -296,6 +307,10 @@ def backfill_historical(
 
     runners: dict[str, Callable[[date], object]] = {
         SOURCE_MLB_METADATA: lambda target_date: mlb_metadata_runner(
+            target_date=target_date,
+            output_dir=output_root,
+        ),
+        SOURCE_WEATHER: lambda target_date: weather_runner(
             target_date=target_date,
             output_dir=output_root,
         ),
