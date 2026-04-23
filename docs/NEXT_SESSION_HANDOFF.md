@@ -3,112 +3,109 @@
 ## Current State
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
-- Default branch: `main`
-- Last completed issue branch: `feat/dashboard-ui-strike-ops`
-- This slice delivers the first real Strike Ops dashboard workbench and adds a
-  historical replay path so model iteration can happen off saved artifacts
-- Current status: dashboard scaffolding is in place, but the local checkout
-  still needs saved historical odds snapshots under `data/normalized/the_odds_api/`
-  before historical replay can populate real board rows
+- Default branch: `main` at `f271684`
+- Last completed issue: `AGE-198` on branch `dylan/adoring-hopper-e6b43f`
+  (merged via [PR #24](https://github.com/DylanMcCavitt/baseball-ml/pull/24))
+- This slice adds a per-date coverage diagnostic that reports row counts and
+  feature/outcome/odds coverage ratios across every ingest, feature, and
+  modeling artifact the scoring stack depends on
+- Current status: the diagnostic is wired into the CLI and exits non-zero when
+  coverage falls under the configured threshold, so it can gate
+  `build-walk-forward-backtest` in future automation
 
 ## What Was Completed In This Slice
 
-- `src/mlb_props_stack/dashboard/app.py`
-  - replaces the placeholder with the multi-screen Streamlit Strike Ops shell
-  - wires board, pitcher, backtest, registry, features, and config screens
-  - persists dashboard controls to `user_config.toml`
-- `src/mlb_props_stack/dashboard/lib/`
-  - adds artifact-backed loaders, Plotly helpers, local MLflow helpers, and
-    theme assets
-  - board loading now falls back from `daily_candidates` -> `edge_candidates`
-    -> latest `walk_forward_backtest` reporting rows
-  - historical replay now labels the ticker as `HIST REPLAY` when the board is
-    sourced from backtest artifacts
-- `src/mlb_props_stack/dashboard/screens/`
-  - adds the board, pitcher drill-down, backtest, registry, feature, and
-    config screens
-- `app.py` and `.streamlit/config.toml`
-  - add the repo-root Streamlit entrypoint and local theme config
-- `README.md` and `docs/architecture.md`
-  - document the Strike Ops dashboard shape and the historical replay workflow
-- `tests/test_dashboard_data.py`
-  - adds focused coverage for replaying a historical board from backtest
-    artifacts
-- `tests/test_runtime_smokes.py` and `tests/test_paper_tracking.py`
-  - update the dashboard runtime smoke coverage for the new multi-screen UI
+- `src/mlb_props_stack/data_alignment.py`
+  - adds `ArtifactCounts`, `DateCoverageRow`, and `DataAlignmentReport`
+    dataclasses plus the pure `build_date_coverage_rows` helper
+  - counts per-date rows in `games.jsonl`, `probable_starters.jsonl`,
+    `lineup_snapshots.jsonl`, `prop_line_snapshots.jsonl` (plus distinct
+    `pitcher_mlb_id` coverage), the Statcast feature tables, and the latest
+    baseline run's `training_dataset.jsonl`,
+    `raw_vs_calibrated_probabilities.jsonl`, and `starter_outcomes.jsonl`
+  - derives `feature_coverage`, `outcome_coverage`, and `odds_coverage`
+    ratios and flags any date whose ratios fall below the threshold
+  - renders a human-readable table plus a footer of failing dates
+- `src/mlb_props_stack/cli.py`
+  - adds the `check-data-alignment --start-date --end-date --threshold`
+    subcommand
+  - changes `main()` to return an `int` so non-zero exits flow out of
+    `python -m mlb_props_stack`
+- `src/mlb_props_stack/__main__.py`
+  - propagates the CLI exit code via `sys.exit(main())`
+- `README.md`
+  - adds a one-line usage example for the new subcommand
+- `tests/test_data_alignment.py`
+  - adds focused tests for the pure helper, the filesystem orchestrator,
+    the renderer, and the CLI exit-code surface on synthetic fixtures
 
 ## Files Changed
 
-- `.streamlit/config.toml`
 - `README.md`
-- `app.py`
-- `docs/architecture.md`
-- `docs/NEXT_SESSION_HANDOFF.md`
-- `pyproject.toml`
-- `src/mlb_props_stack/dashboard/__init__.py`
-- `src/mlb_props_stack/dashboard/app.py`
-- `src/mlb_props_stack/dashboard/lib/__init__.py`
-- `src/mlb_props_stack/dashboard/lib/data.py`
-- `src/mlb_props_stack/dashboard/lib/mlflow_io.py`
-- `src/mlb_props_stack/dashboard/lib/plots.py`
-- `src/mlb_props_stack/dashboard/lib/theme.py`
-- `src/mlb_props_stack/dashboard/screens/__init__.py`
-- `src/mlb_props_stack/dashboard/screens/backtest.py`
-- `src/mlb_props_stack/dashboard/screens/board.py`
-- `src/mlb_props_stack/dashboard/screens/config.py`
-- `src/mlb_props_stack/dashboard/screens/features.py`
-- `src/mlb_props_stack/dashboard/screens/pitcher.py`
-- `tests/test_dashboard_data.py`
-- `tests/test_paper_tracking.py`
-- `tests/test_runtime_smokes.py`
-- `user_config.toml`
-- `uv.lock`
+- `src/mlb_props_stack/__main__.py`
+- `src/mlb_props_stack/cli.py`
+- `src/mlb_props_stack/data_alignment.py`
+- `tests/test_data_alignment.py`
 
 ## Verification
 
-Commands run successfully on April 22, 2026:
+Commands run successfully before merge:
 
 ```bash
 uv sync --extra dev
-uv run pytest tests/test_dashboard_data.py
-uv run pytest tests/test_runtime_smokes.py
-uv run pytest tests/test_paper_tracking.py
 uv run pytest
 uv run python -m mlb_props_stack
-python3 -m compileall src tests app.py
+uv run python -m mlb_props_stack check-data-alignment \
+  --start-date 2026-04-18 \
+  --end-date 2026-04-23
 ```
 
 Observed results:
 
-- targeted dashboard tests passed
-- full test suite passed: `69 passed`
+- full test suite passed: `84 passed`
 - `uv run python -m mlb_props_stack`
   - printed the runtime summary successfully
-- `python3 -m compileall src tests app.py`
-  - completed successfully
+- `uv run python -m mlb_props_stack check-data-alignment --start-date 2026-04-18 --end-date 2026-04-23`
+  - reproduced the all-skipped backtest window root cause for the current
+    repo state (missing ingest, feature, and odds artifacts for every date)
+  - exited with code `1`
 
 ## Recommended Next Issue
 
-- Build or backfill the saved historical odds snapshot set under
-  `data/normalized/the_odds_api/` and verify the dashboard historical replay
-  loop against real replayable dates
+- Backfill the saved historical ingest, feature, and odds snapshot set under
+  `data/normalized/mlb_stats_api/`, `data/normalized/statcast_search/`, and
+  `data/normalized/the_odds_api/` for `2026-04-18` through `2026-04-23`, then
+  rerun `check-data-alignment` and `build-walk-forward-backtest` to confirm
+  the diagnostic flips to green and the backtest window produces non-zero
+  actionable rows
 
 Why this should go next:
 
-- the dashboard can now replay historical backtest dates without a fresh Odds
-  API call, but only if saved historical line snapshots already exist locally
-- this checkout still has model and backtest summaries but no local
-  `the_odds_api`, `daily_candidates`, or `edge_candidates` artifact trees
-- the next useful milestone is a real `train -> backtest -> dashboard replay`
-  workflow on saved historical pitcher strikeout markets
+- `check-data-alignment` now makes the missing-artifact root cause visible in
+  seconds, but the local checkout still does not contain the historical
+  ingest, feature, or odds snapshots required to actually train/backtest on
+  `2026-04-18` through `2026-04-23`
+- the Strike Ops dashboard replay path from the previous slice still depends
+  on saved historical odds snapshots, so the same backfill unblocks both
+  automated backtests and the dashboard replay loop
+- once the coverage report passes for that window, the natural follow-up is
+  to gate `build-walk-forward-backtest` on `check-data-alignment --threshold`
+  so all-skipped windows surface as a precondition failure instead of an
+  opaque skip-rate
 
 ## Constraints And Open Questions
 
-- The board replay fallback currently uses the latest walk-forward backtest run;
-  if multiple backtest windows should be browsable side by side later, add a
-  backtest-run selector rather than overloading the slate-date picker
-- Historical replay is intentionally a fallback. Live board artifacts still
-  take precedence when `daily_candidates` or `edge_candidates` exist
-- The local checkout at handoff time does not include saved
-  `data/normalized/the_odds_api/...` artifacts, so the board may still show
-  empty states until those historical line snapshots are available
+- `feature_coverage` uses `pitcher_daily_features / probable_starters` as its
+  denominator, and `odds_coverage` uses `unique pitcher_mlb_id with lines /
+  probable_starters`. If probable starters for a slate are zero, both ratios
+  are reported as `n/a` and the date is treated as failing so empty ingest
+  surfaces explicitly rather than silently passing
+- The report scans the latest normalized run per date for ingest artifacts
+  and the latest baseline run whose `training_dataset.jsonl` contains the
+  requested date for modeling artifacts. There is currently no explicit
+  `--model-run-dir` override; add one only if a future slice needs to pin a
+  specific baseline run for the report
+- The diagnostic is read-only — it does not mutate or clean up artifacts.
+  A separate archival / rotation path should land before running the CLI on
+  very large historical windows, because it loads each JSONL file once per
+  requested date to filter rows by `official_date`
