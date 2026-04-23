@@ -1,6 +1,7 @@
 """MLB props stack package."""
 
 __all__ = [
+    "backfill",
     "backtest",
     "config",
     "dashboard",

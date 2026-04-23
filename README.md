@@ -225,6 +225,64 @@ the target path. Readers therefore only ever observe a fully written JSONL or
 the prior version, and a crash mid-write leaves the previous artifact intact
 rather than producing a truncated normalized file.
 
+## Historical Backfill
+
+`AGE-201` adds the `backfill-historical` CLI subcommand so the three ingest
+adapters above can be replayed across an arbitrary date window in one
+invocation. The default sweep walks `ingest-mlb-metadata`,
+`ingest-odds-api-lines`, and `ingest-statcast-features` for every calendar
+date in `[--start-date, --end-date]`, and each per-date source is treated
+independently — a transient odds-history gap or a single bad Statcast pull
+no longer aborts the rest of the run.
+
+```bash
+ODDS_API_KEY=YOUR_KEY uv run python -m mlb_props_stack backfill-historical \
+  --start-date 2024-03-28 \
+  --end-date 2024-09-29
+```
+
+By default, the sweep is **idempotent**: for each date and source the helper
+checks whether the latest normalized run directory already contains every
+required artifact (`games.jsonl` plus `probable_starters.jsonl` and
+`lineup_snapshots.jsonl` for the MLB metadata source, `event_game_mappings.jsonl`
+plus `prop_line_snapshots.jsonl` for the odds source, and the five Statcast
+feature tables for the Statcast source). When everything is on disk the
+source is recorded as `skipped_resume` and no API call is made; pass
+`--force` to re-ingest dates that are already complete. Use `--sources` to
+restrict the sweep to a subset (e.g. `--sources mlb-metadata,statcast-features`
+to skip the Odds API entirely while testing).
+
+Each sweep also writes a manifest under
+`data/normalized/backfill/run=<RUN_ID>/backfill_manifest.json` capturing the
+per-date outcome (`ingested`, `skipped_resume`, or `failed`), the resulting
+ingest `run_id`, and any error type and message recorded for failed sources.
+The CLI exits non-zero whenever at least one source recorded `failed` so
+overnight runs can be supervised by simple shell wrappers.
+
+Operational notes for full-season runs:
+
+- **Runtime.** Each MLB metadata pull costs ~1 schedule call plus one
+  `feed/live` call per scheduled game (~15 games/day in regular season).
+  The Statcast feature build issues one CSV pull per starter and per
+  opposing-lineup batter (default `--history-days 30`), with the bounded
+  retry/backoff and four-worker thread pool from AGE-199 controlling fan-out.
+  In practice a single full regular season (~180 dates) takes several hours
+  end to end and is best run overnight on a stable connection. The
+  resume logic means an interrupted run can be re-invoked with the exact
+  same arguments and only the missing dates will be ingested.
+- **Disk footprint.** A full regular season produces tens of gigabytes of
+  raw Statcast CSVs and hundreds of megabytes of normalized JSONL. The
+  raw `data/` tree is intentionally `.gitignore`d; commit the normalized
+  outputs (or, for the AGE-201 acceptance run, ship the raw artifacts as
+  a release tarball or via git-lfs rather than as plain git history).
+- **Odds-history limitation.** The Odds API only exposes live and
+  near-future markets on the standard plan, so historical pitcher
+  strikeout lines for 2024 and 2025 will frequently come back empty or
+  result in `failed` outcomes. The `--sources` flag and best-effort
+  failure handling let the MLB-metadata and Statcast-feature backfills
+  succeed even when the odds source has nothing useful to return for a
+  given date — this is expected behavior, not a regression.
+
 ## Starter Strikeout Baseline Training
 
 `AGE-147` adds the first reproducible training loop for expected starter

@@ -6,6 +6,11 @@ import argparse
 from datetime import date
 import json
 
+from .backfill import (
+    ALL_SOURCES,
+    BackfillResult,
+    backfill_historical,
+)
 from .backtest import (
     BACKTEST_CHECKLIST,
     WalkForwardBacktestResult,
@@ -250,6 +255,41 @@ def render_walk_forward_backtest_summary(result: WalkForwardBacktestResult) -> s
     return "\n".join(lines)
 
 
+def render_backfill_historical_summary(result: BackfillResult) -> str:
+    """Return a human-readable summary for one backfill-historical sweep."""
+    lines = [
+        (
+            "Backfill historical complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"force={str(result.force).lower()}",
+        f"sources={','.join(result.sources)}",
+        f"history_days={result.history_days}",
+        f"date_count={result.date_count}",
+        f"ingested_outcomes={result.ingested_count}",
+        f"skipped_outcomes={result.skipped_count}",
+        f"failed_outcomes={result.failed_count}",
+        f"manifest_path={result.manifest_path}",
+    ]
+    if result.failed_count:
+        lines.append("failed_dates:")
+        for date_outcome in result.dates:
+            failures = [
+                source_outcome
+                for source_outcome in date_outcome.sources
+                if source_outcome.status == "failed"
+            ]
+            for source_outcome in failures:
+                lines.append(
+                    "- "
+                    f"{date_outcome.target_date.isoformat()} "
+                    f"{source_outcome.source}: "
+                    f"{source_outcome.error_type}: {source_outcome.error_message}"
+                )
+    return "\n".join(lines)
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     """Create the top-level CLI parser."""
     parser = argparse.ArgumentParser(prog="mlb-props-stack")
@@ -312,6 +352,62 @@ def build_argument_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_HISTORY_DAYS,
         help="Number of prior official dates to include in the Statcast history window.",
+    )
+
+    backfill_parser = subparsers.add_parser(
+        "backfill-historical",
+        help=(
+            "Iterate ingest-mlb-metadata, ingest-odds-api-lines (best-effort), "
+            "and ingest-statcast-features across a date window with idempotent "
+            "resume."
+        ),
+    )
+    backfill_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the backfill window (YYYY-MM-DD).",
+    )
+    backfill_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the backfill window (YYYY-MM-DD).",
+    )
+    backfill_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where raw and normalized ingest artifacts will be written.",
+    )
+    backfill_parser.add_argument(
+        "--sources",
+        default=",".join(ALL_SOURCES),
+        help=(
+            "Comma-separated list of sources to backfill. "
+            f"Valid values: {','.join(ALL_SOURCES)}. "
+            "Defaults to all three."
+        ),
+    )
+    backfill_parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Re-ingest dates even when the latest normalized run already "
+            "contains every required artifact. Off by default so reruns "
+            "are idempotent."
+        ),
+    )
+    backfill_parser.add_argument(
+        "--history-days",
+        type=int,
+        default=DEFAULT_HISTORY_DAYS,
+        help=(
+            "Number of prior official dates to include in each per-date "
+            "Statcast history window."
+        ),
+    )
+    backfill_parser.add_argument(
+        "--api-key",
+        default=None,
+        help="Optional Odds API key override. Defaults to ODDS_API_KEY.",
     )
 
     training_parser = subparsers.add_parser(
@@ -485,6 +581,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(render_statcast_feature_ingest_summary(result))
         return 0
+
+    if args.command == "backfill-historical":
+        sources = tuple(
+            source.strip()
+            for source in args.sources.split(",")
+            if source.strip()
+        )
+        backfill_result = backfill_historical(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            sources=sources,
+            force=args.force,
+            history_days=args.history_days,
+            odds_api_key=args.api_key,
+        )
+        print(render_backfill_historical_summary(backfill_result))
+        return 0 if backfill_result.all_succeeded else 1
 
     if args.command == "train-starter-strikeout-baseline":
         result = train_starter_strikeout_baseline(

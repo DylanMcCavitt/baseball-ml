@@ -4,52 +4,84 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Last completed issue: `AGE-200` on branch
-  `dylan/condescending-gagarin-7a53f8`
-- This slice hardens normalized JSONL writes across every ingest adapter:
-  `ingest/mlb_stats_api.py`, `ingest/odds_api.py`, and
-  `ingest/statcast_features.py` now stream every `_write_jsonl` through a
-  sibling `<name>.tmp` file and only `os.replace` it over the target path
-  once the full record stream has been serialized successfully
-- Current status: crashes or exceptions mid-write can no longer leave a
-  truncated normalized JSONL on disk; the prior artifact (if any) is
-  preserved unchanged, and the temp file is unlinked before the exception
-  propagates
+- Last completed issue: `AGE-201` on branch
+  `feat/age-201-backfill-historical`
+- This slice adds the `backfill-historical` CLI subcommand and a new
+  `mlb_props_stack.backfill` module that walks an inclusive date window
+  and replays `ingest-mlb-metadata`, `ingest-odds-api-lines`, and
+  `ingest-statcast-features` for each calendar date with idempotent
+  resume and best-effort per-source failure handling
+- Current status: a season-long backfill can be re-invoked safely after a
+  crash or interrupt — every source for every date is checked against
+  the latest normalized run on disk first, so only missing artifacts are
+  re-fetched. Source-level exceptions are captured per-date so a sparse
+  Odds API response cannot abort the rest of the sweep, and a manifest
+  records the per-date outcome under `data/normalized/backfill/run=.../`
 
 ## What Was Completed In This Slice
 
-- `src/mlb_props_stack/ingest/mlb_stats_api.py`
-  - adds `import os`
-  - rewrites `_write_jsonl` to write into `path.with_name(f"{path.name}.tmp")`,
-    `os.replace` the temp file over the target path on success, and unlink
-    the temp file on any `BaseException` (including KeyboardInterrupt) before
-    re-raising
-- `src/mlb_props_stack/ingest/odds_api.py`
-  - rewrites `_write_jsonl` with the same atomic `.tmp` + `os.replace`
-    pattern (the module already imported `os`)
-- `src/mlb_props_stack/ingest/statcast_features.py`
-  - adds `import os`
-  - rewrites `_write_jsonl` with the same atomic `.tmp` + `os.replace`
-    pattern so pull manifests, pitch-level base rows, and the three daily
-    feature tables all publish atomically
-- `tests/test_ingest_atomic_writes.py`
-  - new parametrized test file that exercises `_write_jsonl` in all three
-    ingest modules: happy path writes the target and removes the temp file,
-    nested parents are created, and a `TypeError` mid-write leaves any
-    prior file intact and removes the temp file (covering both the
-    fresh-target and overwrite-existing cases)
+- `src/mlb_props_stack/backfill.py` (new module)
+  - `iter_backfill_dates(start, end)`: inclusive calendar-day iterator
+    that rejects inverted windows
+  - `is_source_complete(output_dir, source, target_date)`: returns True
+    when the latest `run=...` directory under
+    `data/normalized/<source-root>/date=<iso>/` contains every required
+    artifact file (mirrors the "latest run wins" rule used by
+    `data_alignment._latest_run_dir_for_date`)
+  - `normalize_sources(seq)`: validates the requested source list,
+    rejects unknown values and empty input, and dedupes while preserving
+    declared order
+  - `backfill_historical(...)`: core orchestration helper. For each date
+    and each source it skips when the artifacts are already complete and
+    `force=False`; otherwise it invokes the matching ingest runner and
+    records its `run_id`. Source-level `Exception`s are captured per
+    date so the sweep continues; `BaseException` (KeyboardInterrupt,
+    SystemExit) still propagates immediately.
+  - manifest writes go through `<name>.tmp` + `os.replace`, matching the
+    atomicity guarantee from AGE-200
+  - exposes `BackfillResult`, `BackfillDateOutcome`,
+    `BackfillSourceOutcome`, plus `STATUS_INGESTED`,
+    `STATUS_SKIPPED_RESUME`, `STATUS_FAILED`, `ALL_SOURCES`, and the
+    per-source required-artifact list
+- `src/mlb_props_stack/__init__.py`
+  - adds `"backfill"` to `__all__`
+- `src/mlb_props_stack/cli.py`
+  - imports the new backfill helpers and adds
+    `render_backfill_historical_summary`
+  - adds the `backfill-historical` subparser with `--start-date`,
+    `--end-date`, `--output-dir`, `--sources` (comma-separated, defaults
+    to all three), `--force`, `--history-days` (default
+    `DEFAULT_HISTORY_DAYS` from the Statcast ingest), and `--api-key`
+  - dispatches to `backfill_historical`, prints the summary, and exits
+    non-zero whenever any source recorded `failed`
+- `tests/test_backfill.py` (new file, 18 tests)
+  - covers `iter_backfill_dates` window validation
+  - covers `normalize_sources` dedup, ordering, unknown-source rejection,
+    and empty-list rejection
+  - covers `is_source_complete` requiring every artifact and falling
+    back to an older complete run when a newer run only has a partial
+    write (the AGE-200 guarantee in action)
+  - covers `backfill_historical` invoking each runner per date,
+    skipping complete dates, re-ingesting under `--force`, only
+    re-ingesting missing sources for partially-complete dates,
+    continuing past a single failed source, restricting to a subset of
+    sources, writing the manifest with per-date outcomes, and
+    forwarding `--history-days` and `--api-key` to the right runners
+  - exercises the CLI render path for both the success and the failure
+    exit codes
 - `README.md`
-  - documents the atomic JSONL write guarantee for the three ingest
-    adapters alongside the existing Statcast retry/backoff note
+  - new "Historical Backfill" section documenting the CLI invocation,
+    idempotent resume behavior, manifest layout, expected runtime, disk
+    footprint, and the Odds API history limitation
 
 ## Files Changed
 
 - `README.md`
 - `docs/NEXT_SESSION_HANDOFF.md`
-- `src/mlb_props_stack/ingest/mlb_stats_api.py`
-- `src/mlb_props_stack/ingest/odds_api.py`
-- `src/mlb_props_stack/ingest/statcast_features.py`
-- `tests/test_ingest_atomic_writes.py`
+- `src/mlb_props_stack/__init__.py`
+- `src/mlb_props_stack/backfill.py`
+- `src/mlb_props_stack/cli.py`
+- `tests/test_backfill.py`
 
 ## Verification
 
@@ -59,64 +91,87 @@ Commands run successfully before merge:
 uv sync --extra dev
 uv run pytest
 uv run python -m mlb_props_stack
+uv run python -m mlb_props_stack backfill-historical --help
 ```
 
 Observed results:
 
-- full test suite passed: `103 passed` (up from `91` on the previous slice;
-  the 12 additional tests are the parametrized atomic-write coverage across
-  all three ingest modules)
-- `uv run python -m mlb_props_stack` rendered the runtime summary as before
-- new tests cover happy-path writes, parent-directory creation, failure
-  mid-write preserving a prior file, and first-write failures not leaving a
-  target or a temp file behind
+- full test suite passed: `121 passed` (up from `103` on the previous
+  slice; the 18 additional tests are the parametrized backfill coverage
+  in `tests/test_backfill.py`)
+- `uv run python -m mlb_props_stack` rendered the runtime summary as
+  before
+- `backfill-historical --help` lists the documented arguments and
+  references the three valid `--sources` values
 
 ## Recommended Next Issue
 
-- Backfill the saved historical ingest, feature, and odds snapshot set under
-  `data/normalized/mlb_stats_api/`, `data/normalized/statcast_search/`, and
-  `data/normalized/the_odds_api/` for `2026-04-18` through `2026-04-23`, then
-  rerun `check-data-alignment` and `build-walk-forward-backtest` to confirm
-  the diagnostic flips to green and the backtest window produces non-zero
-  actionable rows
+- Run the actual overnight 2024 + 2025 regular-season backfill against
+  real APIs (out of scope for the code-only slice committed here):
+  `uv run python -m mlb_props_stack backfill-historical --start-date 2024-03-28 --end-date 2024-09-29`
+  followed by the same invocation across the 2025 regular season. The
+  resume logic added in this slice means an interrupted run can be
+  re-invoked verbatim and only the missing dates will be ingested.
+- After both sweeps finish, run
+  `uv run python -m mlb_props_stack check-data-alignment --start-date 2024-03-28 --end-date 2024-09-29 --threshold 0.95`
+  (and the same for 2025) to confirm the issue's >=95% per-date feature
+  and outcome coverage criterion.
+- Then trigger a fresh
+  `uv run python -m mlb_props_stack train-starter-strikeout-baseline --start-date 2024-03-28 --end-date 2024-09-29`
+  to confirm `held_out_rows >= 100`, and a 14-day
+  `uv run python -m mlb_props_stack build-walk-forward-backtest`
+  inside the backfill window to confirm at least one scoreable row.
+- Raw artifacts from those runs should ship via git-lfs or a release
+  tarball rather than plain git, per the issue requirement.
 
 Why this should go next:
 
-- `check-data-alignment` still flags the missing historical ingest/feature/
-  odds artifacts for that window, and AGE-199 + AGE-200 only hardened how
-  those artifacts are fetched and written — they did not actually pull any
-  new snapshots
-- the threaded fetch pool from AGE-199 and the atomic JSONL writes from
-  AGE-200 together make a multi-date backfill safe to re-run: partial
-  failures no longer corrupt a run directory, and retries stay bounded
-- once the coverage report passes for that window, the natural follow-up is
-  to gate `build-walk-forward-backtest` on `check-data-alignment --threshold`
-  so all-skipped windows surface as a precondition failure instead of an
-  opaque skip-rate
+- The CLI, resume logic, manifest, and tests for the backfill are now
+  all in place — only the actual long-running ingest sweep is pending,
+  and it is the precondition the rest of the stage-gate metrics
+  (`held_out_rows >= 100`, `scoreable_backtest_rows >= 100`, settled
+  paper-bet counts) depend on
+- Until the sweep finishes, every downstream evaluation is still
+  dominated by the four-date 2026-04-18 → 2026-04-21 window from the
+  previous slice
 
 ## Constraints And Open Questions
 
-- Atomicity guarantee is scoped to the normalized JSONL artifacts inside
-  the three ingest modules. Raw JSON snapshots (`_write_json`) and raw
-  Statcast CSV pulls (`_write_text` in `statcast_features.py`) still rename
-  in-place; if a future issue needs the same guarantee for those, copy the
-  same `.tmp` + `os.replace` pattern. The same is true for the write sites
-  in `backtest.py`, `modeling.py`, `edge.py`, and `paper_tracking.py`, which
-  were intentionally out of scope for AGE-200
-- `os.replace` is atomic on POSIX and same-volume on Windows. The temp file
-  is always created as a sibling of the final path (`path.with_name(...)`),
-  so the replace is guaranteed to stay on the same filesystem and remain
-  atomic regardless of where the user points `output_dir`
-- The helpers catch `BaseException` rather than `Exception` on purpose: a
-  KeyboardInterrupt or SystemExit during serialization also needs to clean
-  up the sibling `.tmp` file, and the exception is re-raised unchanged. If
-  the process is `SIGKILL`ed between the final write and the `os.replace`,
-  the target remains the prior version (which is the point of the change)
-  but a stray `.tmp` can linger until the next successful write overwrites
-  it. A follow-up could add a startup sweep if lingering temp files ever
-  become a practical problem
-- Three near-identical `_write_jsonl` helpers now live in the ingest
-  package. Extracting a shared utility was deliberately avoided in this
-  slice to keep the diff narrow and reviewable; consolidate only if a
-  future ingest adapter lands and the duplication becomes a real
-  maintenance burden
+- "Officialness" of dates is not enforced. `iter_backfill_dates` walks
+  every calendar date in `[start, end]`. The MLB Stats API schedule
+  endpoint returns an empty payload for off-days (no games), so the
+  resulting `games.jsonl` will be a zero-row file and the date is still
+  recorded as `ingested`. The Odds and Statcast sources will then fall
+  through with no work to do for those dates. If a future issue wants
+  to skip non-game days entirely, drive the iterator from the MLB
+  schedule rather than the calendar.
+- Resume completeness is judged on file existence, not row count. Empty
+  off-day artifacts are therefore considered "complete" and resume will
+  skip them on rerun. This matches what `check-data-alignment` reads,
+  so the diagnostic stays consistent end-to-end. If a future feature
+  requires nonzero-row guarantees, lift the row-count check from
+  `data_alignment.collect_artifact_counts_for_date` into
+  `is_source_complete`.
+- Source-level failure handling captures `Exception` only.
+  `KeyboardInterrupt` and `SystemExit` still propagate, so a Ctrl-C
+  during an overnight run aborts immediately rather than silently
+  retrying. The previous date's manifest is *not* written when a
+  `BaseException` propagates mid-sweep — only completed sweeps emit a
+  manifest. If supervisors need partial manifests, wrap the loop in a
+  `try/finally` that persists progress on `BaseException` too.
+- The Odds API ingest still expects a prior MLB metadata run for the
+  same date to exist before it starts. The default source order in
+  `ALL_SOURCES` (`mlb-metadata`, `odds-api`, `statcast-features`) keeps
+  that invariant satisfied because each date is processed top-to-bottom
+  before moving to the next date. If a user passes a custom `--sources`
+  with `odds-api` before `mlb-metadata`, the odds runner will still
+  fail with `FileNotFoundError` from `_load_latest_mlb_metadata_for_date`
+  — that failure is captured per-date as `failed` rather than raised, so
+  the sweep continues, but the user should keep the default order for
+  full season runs.
+- `BackfillResult.manifest_path` is the only on-disk artifact this
+  slice adds. The actual raw and normalized data still flows through
+  the existing ingest helpers, so all downstream consumers
+  (`check-data-alignment`, `train-starter-strikeout-baseline`,
+  `build-walk-forward-backtest`) need no changes to read backfilled
+  dates.
