@@ -4,11 +4,14 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Current issue branch: `feat/age-260-approved-wager-card`
-- Current issue: `AGE-260` - add an approved wager card CLI/report for the
-  live slate
-- Status: implementation, local verification, saved-slate runtime checks, and
-  Codex browser dashboard checks are complete
+- Current issue branch: none; `AGE-260` has been merged to `main`
+- Last completed issue: `AGE-260` - add an approved wager card CLI/report for
+  the live slate
+- Status: implementation, local verification, saved-slate runtime checks,
+  Codex browser dashboard checks, PR creation, PR merge, and canonical local
+  `main` sync are complete
+- Merged PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/35>
+- Merge commit on `main`: `4f0eb76`
 - Streamlit preview for this branch is running at `http://localhost:8502` with
   `MLB_PROPS_STACK_DATA_DIR=/Users/dylanmccavitt/projects/nba-ml/data`
 
@@ -129,18 +132,68 @@ Observed results:
   - raw HTML board/pitcher links were confirmed buggy before the patch
   - native `Open pitcher` and `← board` controls were verified after the patch
   - dashboard `plays cleared=0` matches the latest approved wager card count
+- Follow-up dashboard/model investigation after merge:
+  - the repeated Jacob deGrom and Davis Martin rows are mostly not true
+    duplicate artifacts; the board is line/book-level and currently hides
+    sportsbook provenance
+  - with `Show rejected` enabled, the top rows are dominated by multiple
+    sportsbooks and alternate lines for the same pitchers
+  - active inference run
+    `data/normalized/starter_strikeout_inference/date=2026-04-23/run=20260423T210236Z`
+    uses source model run `20260422T202712Z`
+  - the active model uses only 11 core encoded features:
+    `pitch_sample_size`, `plate_appearance_sample_size`, `pitcher_k_rate`,
+    `swinging_strike_rate`, `csw_rate`, `recent_batters_faced`,
+    `recent_pitch_count`, `rest_days`, `last_start_batters_faced`,
+    `expected_leash_batters_faced`, and `lineup_is_confirmed`
+  - optional split, lineup, park, weather, and umpire features are supported in
+    code but are not active in the current model because the source training
+    rows had zero populated optional-feature coverage
+  - target-date weather and umpire artifacts were missing for `2026-04-23`;
+    `check-data-alignment` showed `wx_cov=0.0%` and `ump_cov=0.0%`
 
-## Recommended Next Issue
+## Recommended Issue Order
 
-- `AGE-262` - run the first approved-wager evidence refresh and readiness
-  report, using the new wager-card artifact as the terminal/operator source of
-  truth
-- Keep `AGE-261` as the separate stage-gate evaluator CLI issue. Do not fold
-  live-use readiness evaluation into the wager-card report.
+Work the next issues in this order so the dashboard and model evidence remain
+coherent:
+
+1. `AGE-261` - add a stage-gate evaluator CLI for live-use readiness
+   - Independent and useful immediately.
+   - Produces the executable readiness report that later evidence issues should
+     consume.
+2. `AGE-265` - add sportsbook provenance and grouped pitcher view to the
+   dashboard board
+   - Fixes the deGrom/Davis Martin duplicate-looking board rows.
+   - Makes line/book-level candidates clear without deleting auditable rows.
+3. `AGE-266` - show active and excluded optional feature diagnostics in the
+   dashboard
+   - Makes the Feature Inspection screen answer whether optional features are
+     active, missing from artifacts, or excluded by coverage/variance gates.
+4. `AGE-267` - regenerate historical optional-feature artifacts with
+   timestamp-valid coverage
+   - Backfills/regenerates weather, umpire, park, handedness split, and lineup
+     aggregate artifacts so optional columns can actually reach training rows.
+5. `AGE-268` - train and compare expanded-feature baseline against core-only
+   model
+   - Runs only after `AGE-267` proves optional feature coverage exists.
+   - Compares the expanded model against the core model with walk-forward,
+     calibration, CLV, ROI, edge-bucket, and approval-gate evidence.
+6. `AGE-262` - run the first approved-wager evidence refresh and readiness
+   report
+   - Now blocked behind `AGE-268` so it does not refresh readiness against a
+     known core-only/empty-optional-feature model.
+7. `AGE-263` - close the sample-size gap for live-use stage gates
+   - Broader evidence collection after the first coherent refresh.
+
+Related but not on the critical path:
+
+- `AGE-209` - add per-pitcher and per-game exposure caps to Kelly sizing
+  - Keep queued unless grouped board work shows exposure/correlation sizing is
+    still materially distorting the wager card before `AGE-262`.
 
 ## Constraints And Notes
 
-- The branch uses the canonical ignored data directory for live verification:
+- Use the canonical ignored data directory for live verification:
   `/Users/dylanmccavitt/projects/nba-ml/data`
 - The saved 2026-04-23 slate still has no approved wagers. That is expected
   because final wager gates block every scored candidate.
