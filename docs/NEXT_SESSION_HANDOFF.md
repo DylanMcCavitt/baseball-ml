@@ -4,57 +4,52 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Last completed issue: `AGE-199` on branch
-  `dylan/unruffled-albattani-af303f`
-- This slice hardens Statcast CSV ingestion: `StatcastSearchClient.fetch_csv`
-  now retries transient failures with bounded exponential backoff, and
-  `ingest_statcast_features_for_date` fans Statcast pulls out across a small
-  thread pool instead of serialising one HTTP request per player
-- Current status: the client retries 429/5xx/URLError/TimeoutError while
-  passing 4xx through immediately, and the ingest reliably completes all
-  pulls in pull-order-deterministic parallel fetches
+- Last completed issue: `AGE-200` on branch
+  `dylan/condescending-gagarin-7a53f8`
+- This slice hardens normalized JSONL writes across every ingest adapter:
+  `ingest/mlb_stats_api.py`, `ingest/odds_api.py`, and
+  `ingest/statcast_features.py` now stream every `_write_jsonl` through a
+  sibling `<name>.tmp` file and only `os.replace` it over the target path
+  once the full record stream has been serialized successfully
+- Current status: crashes or exceptions mid-write can no longer leave a
+  truncated normalized JSONL on disk; the prior artifact (if any) is
+  preserved unchanged, and the temp file is unlinked before the exception
+  propagates
 
 ## What Was Completed In This Slice
 
+- `src/mlb_props_stack/ingest/mlb_stats_api.py`
+  - adds `import os`
+  - rewrites `_write_jsonl` to write into `path.with_name(f"{path.name}.tmp")`,
+    `os.replace` the temp file over the target path on success, and unlink
+    the temp file on any `BaseException` (including KeyboardInterrupt) before
+    re-raising
+- `src/mlb_props_stack/ingest/odds_api.py`
+  - rewrites `_write_jsonl` with the same atomic `.tmp` + `os.replace`
+    pattern (the module already imported `os`)
 - `src/mlb_props_stack/ingest/statcast_features.py`
-  - adds `DEFAULT_MAX_FETCH_ATTEMPTS`, `DEFAULT_INITIAL_BACKOFF_SECONDS`,
-    `DEFAULT_BACKOFF_MULTIPLIER`, `DEFAULT_MAX_BACKOFF_SECONDS`, and
-    `DEFAULT_MAX_FETCH_WORKERS` module constants so retry/parallelism
-    defaults are explicit and tunable
-  - rewrites `StatcastSearchClient` with retry + exponential backoff around
-    `urlopen`; accepts `max_attempts`, `initial_backoff_seconds`,
-    `backoff_multiplier`, `max_backoff_seconds`, and an injectable `sleep`
-    callable; only retries 429/5xx `HTTPError` plus `URLError` / `TimeoutError`
-  - adds `_is_retriable_http_error` and `_fetch_csv_texts_concurrently`
-    helpers; ingest pre-computes pull specs serially (keeps the `now()` test
-    seam deterministic) and then dispatches CSV fetches through a bounded
-    `ThreadPoolExecutor` while writes, dedup, and record ordering remain
-    serial
-  - `ingest_statcast_features_for_date` gains `max_fetch_workers`
-    (defaulting to `DEFAULT_MAX_FETCH_WORKERS = 4`) and validates it
-- `src/mlb_props_stack/ingest/__init__.py`
-  - re-exports `DEFAULT_MAX_FETCH_WORKERS` alongside the existing ingest
-    surface
+  - adds `import os`
+  - rewrites `_write_jsonl` with the same atomic `.tmp` + `os.replace`
+    pattern so pull manifests, pitch-level base rows, and the three daily
+    feature tables all publish atomically
+- `tests/test_ingest_atomic_writes.py`
+  - new parametrized test file that exercises `_write_jsonl` in all three
+    ingest modules: happy path writes the target and removes the temp file,
+    nested parents are created, and a `TypeError` mid-write leaves any
+    prior file intact and removes the temp file (covering both the
+    fresh-target and overwrite-existing cases)
 - `README.md`
-  - notes the retry-with-backoff and threaded fetch pool behaviour of the
-    Statcast feature ingest
-- `tests/test_statcast_feature_ingest.py`
-  - adds retry-success, retry-exhausted, 4xx-no-retry, and
-    config-validation coverage for `StatcastSearchClient`
-  - adds a `_ConcurrencyProbeClient` that blocks until at least two fetches
-    overlap to prove the thread pool actually parallelises work
-  - adds a pull-ordering assertion that confirms manifest rows stay in
-    pitcher-then-batter sorted order and captured-at timestamps stay
-    monotonic even under threaded fetches
-  - asserts that `max_fetch_workers=0` is rejected
+  - documents the atomic JSONL write guarantee for the three ingest
+    adapters alongside the existing Statcast retry/backoff note
 
 ## Files Changed
 
 - `README.md`
 - `docs/NEXT_SESSION_HANDOFF.md`
-- `src/mlb_props_stack/ingest/__init__.py`
+- `src/mlb_props_stack/ingest/mlb_stats_api.py`
+- `src/mlb_props_stack/ingest/odds_api.py`
 - `src/mlb_props_stack/ingest/statcast_features.py`
-- `tests/test_statcast_feature_ingest.py`
+- `tests/test_ingest_atomic_writes.py`
 
 ## Verification
 
@@ -68,9 +63,13 @@ uv run python -m mlb_props_stack
 
 Observed results:
 
-- full test suite passed: `91 passed` (up from `84` on the previous slice)
+- full test suite passed: `103 passed` (up from `91` on the previous slice;
+  the 12 additional tests are the parametrized atomic-write coverage across
+  all three ingest modules)
 - `uv run python -m mlb_props_stack` rendered the runtime summary as before
-- new tests cover both the retry loop and the parallel fetch pool behaviour
+- new tests cover happy-path writes, parent-directory creation, failure
+  mid-write preserving a prior file, and first-write failures not leaving a
+  target or a temp file behind
 
 ## Recommended Next Issue
 
@@ -84,10 +83,12 @@ Observed results:
 Why this should go next:
 
 - `check-data-alignment` still flags the missing historical ingest/feature/
-  odds artifacts for that window, and this slice only improved how the
-  ingest fetches data — it did not actually pull any new snapshots
-- the threaded fetch pool is what unblocks doing the backfill in a
-  reasonable wall-clock budget, but the backfill itself is still pending
+  odds artifacts for that window, and AGE-199 + AGE-200 only hardened how
+  those artifacts are fetched and written — they did not actually pull any
+  new snapshots
+- the threaded fetch pool from AGE-199 and the atomic JSONL writes from
+  AGE-200 together make a multi-date backfill safe to re-run: partial
+  failures no longer corrupt a run directory, and retries stay bounded
 - once the coverage report passes for that window, the natural follow-up is
   to gate `build-walk-forward-backtest` on `check-data-alignment --threshold`
   so all-skipped windows surface as a precondition failure instead of an
@@ -95,23 +96,27 @@ Why this should go next:
 
 ## Constraints And Open Questions
 
-- `StatcastSearchClient` retries only on 429, 5xx, `URLError`, and
-  `TimeoutError`. Other `HTTPError` codes (e.g. 400, 401, 403, 404)
-  short-circuit immediately so bad requests are not amplified into retry
-  storms. If a future Baseball Savant behavioural change requires retrying
-  other status codes, revisit `_is_retriable_http_error`
-- The thread pool is CPU-light — each worker spends almost all of its time
-  blocked on I/O — so `DEFAULT_MAX_FETCH_WORKERS=4` is deliberately modest
-  to keep us well under any Baseball Savant soft rate limits. Raise
-  `max_fetch_workers` only after confirming the endpoint tolerates it, and
-  consider wiring the override through the CLI if the ingest ever needs to
-  burst harder in a specific slice
-- Pull timestamps (`captured_at`) are still generated serially in the main
-  thread before dispatch so the existing `now()` / deterministic test
-  seam keeps working. If the real-world gap between dispatch and completion
-  ever matters (e.g. to compute latency per pull), add a second completion
-  timestamp rather than threading the `now()` closure into workers
-- `modeling._fetch_starter_outcome` still calls `client.fetch_csv` one row
-  at a time. It already benefits from retry/backoff via the shared client,
-  but it has not been parallelised yet. Add a threaded fan-out there only if
-  a future training slice actually needs the throughput
+- Atomicity guarantee is scoped to the normalized JSONL artifacts inside
+  the three ingest modules. Raw JSON snapshots (`_write_json`) and raw
+  Statcast CSV pulls (`_write_text` in `statcast_features.py`) still rename
+  in-place; if a future issue needs the same guarantee for those, copy the
+  same `.tmp` + `os.replace` pattern. The same is true for the write sites
+  in `backtest.py`, `modeling.py`, `edge.py`, and `paper_tracking.py`, which
+  were intentionally out of scope for AGE-200
+- `os.replace` is atomic on POSIX and same-volume on Windows. The temp file
+  is always created as a sibling of the final path (`path.with_name(...)`),
+  so the replace is guaranteed to stay on the same filesystem and remain
+  atomic regardless of where the user points `output_dir`
+- The helpers catch `BaseException` rather than `Exception` on purpose: a
+  KeyboardInterrupt or SystemExit during serialization also needs to clean
+  up the sibling `.tmp` file, and the exception is re-raised unchanged. If
+  the process is `SIGKILL`ed between the final write and the `os.replace`,
+  the target remains the prior version (which is the point of the change)
+  but a stray `.tmp` can linger until the next successful write overwrites
+  it. A follow-up could add a startup sweep if lingering temp files ever
+  become a practical problem
+- Three near-identical `_write_jsonl` helpers now live in the ingest
+  package. Extracting a shared utility was deliberately avoided in this
+  slice to keep the diff narrow and reviewable; consolidate only if a
+  future ingest adapter lands and the duplication becomes a real
+  maintenance burden
