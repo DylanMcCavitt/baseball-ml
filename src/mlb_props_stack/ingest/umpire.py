@@ -548,15 +548,16 @@ def compute_rolling_umpire_metrics(
         umpire_game_pks=umpire_game_pks,
         pitch_aggregates=pitch_aggregates,
     )
-    if ump_pitches == 0 or ump_pa == 0:
+    if ump_pitches == 0:
         return None, None
+    called_strike_rate = round(ump_called_strikes / ump_pitches, 6)
+
     league_pitches, _, league_pa, league_strikeouts = _compute_league_totals(
         pitch_aggregates
     )
-    if league_pa == 0 or league_pitches == 0:
-        return None, None
+    if ump_pa == 0 or league_pa == 0 or league_pitches == 0:
+        return called_strike_rate, None
 
-    called_strike_rate = round(ump_called_strikes / ump_pitches, 6)
     ump_k_rate = ump_strikeouts / ump_pa
     league_k_rate = league_strikeouts / league_pa
     k_per_9_delta = round(

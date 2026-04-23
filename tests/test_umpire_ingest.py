@@ -480,6 +480,31 @@ def test_compute_rolling_umpire_metrics_returns_none_when_umpire_has_no_overlap(
     assert delta is None
 
 
+def test_compute_rolling_umpire_metrics_returns_rate_when_plate_appearances_missing() -> None:
+    # Umpire's games have pitches but no PA finals (e.g. suspended game or
+    # stale pitch_level_base). Called-strike rate is still computable;
+    # K/9 delta degrades to None rather than dragging rate down with it.
+    aggregates = {
+        date(2026, 4, 20): _DailyPitchAggregates(
+            total_pitches=30,
+            called_strikes=12,
+            plate_appearances=5,
+            strikeouts=2,
+            by_game_pk={
+                500: (20, 8, 0, 0),
+                501: (10, 4, 5, 2),
+            },
+        )
+    }
+    rate, delta = compute_rolling_umpire_metrics(
+        umpire_id=1,
+        umpire_game_pks={date(2026, 4, 20): {500}},
+        pitch_aggregates=aggregates,
+    )
+    assert rate == pytest.approx(8 / 20)
+    assert delta is None
+
+
 def test_load_latest_umpire_snapshots_for_date_returns_empty_when_missing(
     tmp_path: Path,
 ) -> None:
