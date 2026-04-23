@@ -56,8 +56,14 @@ CORE_NUMERIC_FEATURES = (
     "lineup_is_confirmed",
 )
 OPTIONAL_NUMERIC_FEATURES = (
+    "pitcher_k_rate_vs_rhh",
+    "pitcher_k_rate_vs_lhh",
+    "pitcher_whiff_rate_vs_rhh",
+    "pitcher_whiff_rate_vs_lhh",
     "projected_lineup_k_rate",
     "projected_lineup_k_rate_vs_pitcher_hand",
+    "lineup_k_rate_vs_rhp",
+    "lineup_k_rate_vs_lhp",
     "projected_lineup_chase_rate",
     "projected_lineup_contact_rate",
     "lineup_continuity_ratio",
@@ -128,7 +134,11 @@ class StarterStrikeoutTrainingRow:
     pitch_sample_size: int
     plate_appearance_sample_size: int
     pitcher_k_rate: float | None
+    pitcher_k_rate_vs_rhh: float | None
+    pitcher_k_rate_vs_lhh: float | None
     swinging_strike_rate: float | None
+    pitcher_whiff_rate_vs_rhh: float | None
+    pitcher_whiff_rate_vs_lhh: float | None
     csw_rate: float | None
     average_release_speed: float | None
     release_speed_delta_vs_baseline: float | None
@@ -141,6 +151,8 @@ class StarterStrikeoutTrainingRow:
     last_start_batters_faced: int | None
     projected_lineup_k_rate: float | None
     projected_lineup_k_rate_vs_pitcher_hand: float | None
+    lineup_k_rate_vs_rhp: float | None
+    lineup_k_rate_vs_lhp: float | None
     projected_lineup_chase_rate: float | None
     projected_lineup_contact_rate: float | None
     lineup_size: int
@@ -592,7 +604,19 @@ def _load_feature_rows_for_date(*, target_date: date, output_dir: Path) -> list[
                 pitch_sample_size=int(pitcher_row["pitch_sample_size"]),
                 plate_appearance_sample_size=int(pitcher_row["plate_appearance_sample_size"]),
                 pitcher_k_rate=_as_optional_float(pitcher_row.get("pitcher_k_rate")),
+                pitcher_k_rate_vs_rhh=_as_optional_float(
+                    pitcher_row.get("pitcher_k_rate_vs_rhh")
+                ),
+                pitcher_k_rate_vs_lhh=_as_optional_float(
+                    pitcher_row.get("pitcher_k_rate_vs_lhh")
+                ),
                 swinging_strike_rate=_as_optional_float(pitcher_row.get("swinging_strike_rate")),
+                pitcher_whiff_rate_vs_rhh=_as_optional_float(
+                    pitcher_row.get("pitcher_whiff_rate_vs_rhh")
+                ),
+                pitcher_whiff_rate_vs_lhh=_as_optional_float(
+                    pitcher_row.get("pitcher_whiff_rate_vs_lhh")
+                ),
                 csw_rate=_as_optional_float(pitcher_row.get("csw_rate")),
                 average_release_speed=_as_optional_float(pitcher_row.get("average_release_speed")),
                 release_speed_delta_vs_baseline=_as_optional_float(
@@ -614,6 +638,12 @@ def _load_feature_rows_for_date(*, target_date: date, output_dir: Path) -> list[
                 projected_lineup_k_rate=_as_optional_float(lineup_row.get("projected_lineup_k_rate")),
                 projected_lineup_k_rate_vs_pitcher_hand=_as_optional_float(
                     lineup_row.get("projected_lineup_k_rate_vs_pitcher_hand")
+                ),
+                lineup_k_rate_vs_rhp=_as_optional_float(
+                    lineup_row.get("lineup_k_rate_vs_rhp")
+                ),
+                lineup_k_rate_vs_lhp=_as_optional_float(
+                    lineup_row.get("lineup_k_rate_vs_lhp")
                 ),
                 projected_lineup_chase_rate=_as_optional_float(
                     lineup_row.get("projected_lineup_chase_rate")
