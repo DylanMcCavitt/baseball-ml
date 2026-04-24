@@ -489,6 +489,10 @@ def test_render_dashboard_page_uses_daily_candidates_and_paper_results(
             self._parent.toggles[label] = value
             return value
 
+        def radio(self, label, options, index=0, **kwargs):
+            self._parent.radios[label] = list(options)
+            return options[index]
+
         def text_input(self, label, value="", **kwargs):
             self._parent.text_inputs[label] = value
             return value
@@ -518,6 +522,7 @@ def test_render_dashboard_page_uses_daily_candidates_and_paper_results(
             self.plots = []
             self.selectboxes = {}
             self.toggles = {}
+            self.radios = {}
             self.text_inputs = {}
             self.multiselects = {}
             self.buttons = []
@@ -554,6 +559,10 @@ def test_render_dashboard_page_uses_daily_candidates_and_paper_results(
             self.toggles[label] = value
             return value
 
+        def radio(self, label, options, index=0, **kwargs):
+            self.radios[label] = list(options)
+            return options[index]
+
         def text_input(self, label, value="", **kwargs):
             self.text_inputs[label] = value
             return value
@@ -580,5 +589,6 @@ def test_render_dashboard_page_uses_daily_candidates_and_paper_results(
 
     assert fake_streamlit.page_config["page_title"] == "Strike Ops"
     assert "2026-04-22" in fake_streamlit.selectboxes["Slate date"]
+    assert fake_streamlit.radios["Rows"] == ["All line rows", "Grouped by pitcher"]
     assert any("SLATE BOARD" in body for body in fake_streamlit.markdowns)
     assert any("Today Arm" in body for body in fake_streamlit.markdowns)

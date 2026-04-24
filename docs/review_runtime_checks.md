@@ -67,6 +67,9 @@ Review requirement:
 - confirm the page loads in the browser
 - if the page is expected to read artifacts, confirm whether it shows real rows
   or an honest empty-state message
+- for board row or table changes, confirm the all-line-row view and any grouped
+  pitcher view preserve sportsbook provenance, hidden-row counts, and pitcher
+  detail navigation
 
 ### CLI, Ingest, Modeling, Backtest, Or Paper-Tracking Changes
 

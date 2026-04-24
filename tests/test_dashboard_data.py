@@ -7,6 +7,7 @@ from mlb_props_stack.dashboard.lib.data import (
     current_slate_metrics,
     get_feature_importance,
     get_pmf,
+    group_board_by_pitcher,
     list_available_board_dates,
     load_board_dataframe,
     ticker_context,
@@ -150,6 +151,187 @@ def test_board_daily_candidates_use_shared_final_wager_gates(tmp_path: Path) -> 
     assert board.iloc[0]["wager_blocked_reason"] == "hold above max"
     assert "hold above max" in board.iloc[0]["note"]
     assert current_slate_metrics(board)["plays_cleared"] == 0
+
+
+def test_board_joins_sportsbook_provenance_from_line_snapshot(tmp_path: Path) -> None:
+    candidate_run = (
+        tmp_path
+        / "normalized"
+        / "daily_candidates"
+        / "date=2026-04-23"
+        / "run=20260423T210236Z"
+    )
+    snapshot_id = (
+        "prop-line:betrivers:528817a2bf72047f1124e81a7ae55de9:"
+        "mlb-pitcher:594798:5_5:20260423T194826Z"
+    )
+    _write_jsonl(
+        candidate_run / "daily_candidates.jsonl",
+        [
+            {
+                "daily_candidate_id": f"{snapshot_id}|starter-strikeout-baseline-v1",
+                "official_date": "2026-04-23",
+                "evaluation_status": "actionable",
+                "player_id": "mlb-pitcher:594798",
+                "pitcher_mlb_id": 594798,
+                "player_name": "Jacob deGrom",
+                "game_pk": 822912,
+                "line": 5.5,
+                "selected_side": "under",
+                "selected_odds": 200,
+                "over_odds": -278,
+                "under_odds": 200,
+                "selected_model_probability": 0.72,
+                "selected_market_probability": 0.50,
+                "expected_value_pct": 1.27,
+                "model_run_id": "20260423T201434Z",
+                "model_version": "starter-strikeout-baseline-v1",
+                "line_snapshot_id": snapshot_id,
+                "captured_at": "2026-04-23T19:48:26Z",
+                "reason": "under clears minimum edge threshold (22.00% >= 4.50%)",
+            }
+        ],
+    )
+    odds_run = (
+        tmp_path
+        / "normalized"
+        / "the_odds_api"
+        / "date=2026-04-23"
+        / "run=20260423T194825Z"
+    )
+    _write_jsonl(
+        odds_run / "prop_line_snapshots.jsonl",
+        [
+            {
+                "line_snapshot_id": snapshot_id,
+                "sportsbook_title": "BetRivers",
+                "event_id": "528817a2bf72047f1124e81a7ae55de9",
+                "game_pk": 822912,
+                "commence_time": "2026-04-24T00:06:00Z",
+                "market_last_update": "2026-04-23T19:47:32Z",
+                "captured_at": "2026-04-23T19:48:26Z",
+                "line": 5.5,
+                "over_odds": -278,
+                "under_odds": 200,
+                "player_name": "Jacob deGrom",
+            }
+        ],
+    )
+
+    board, source = load_board_dataframe(
+        tmp_path,
+        target_date=date(2026, 4, 23),
+        settings=DashboardSettings(),
+    )
+
+    assert source == "daily_candidates"
+    assert board.iloc[0]["sportsbook"] == "BetRivers"
+    assert board.iloc[0]["sportsbook_key"] == "betrivers"
+    assert board.iloc[0]["source_event_id"] == "528817a2bf72047f1124e81a7ae55de9"
+    assert board.iloc[0]["market_last_update"].isoformat() == "2026-04-23T19:47:32+00:00"
+    assert "BetRivers" in board.iloc[0]["provenance"]
+    assert "event 528817a2" in board.iloc[0]["provenance"]
+
+
+def test_group_board_by_pitcher_keeps_best_row_with_hidden_summary(tmp_path: Path) -> None:
+    run_dir = (
+        tmp_path
+        / "normalized"
+        / "daily_candidates"
+        / "date=2026-04-23"
+        / "run=20260423T210236Z"
+    )
+    _write_jsonl(
+        run_dir / "daily_candidates.jsonl",
+        [
+            {
+                "daily_candidate_id": "line-a|starter-strikeout-baseline-v1",
+                "official_date": "2026-04-23",
+                "evaluation_status": "actionable",
+                "player_id": "mlb-pitcher:663436",
+                "pitcher_mlb_id": 663436,
+                "player_name": "Davis Martin",
+                "game_pk": 825096,
+                "line": 4.5,
+                "selected_side": "over",
+                "selected_odds": 180,
+                "over_odds": 180,
+                "under_odds": -245,
+                "selected_model_probability": 0.70,
+                "expected_value_pct": 0.94,
+                "edge_pct": 0.36,
+                "model_run_id": "20260423T201434Z",
+                "model_version": "starter-strikeout-baseline-v1",
+                "sportsbook_title": "BetRivers",
+                "line_snapshot_id": "line-a",
+                "captured_at": "2026-04-23T19:48:26Z",
+                "reason": "over clears minimum edge threshold (36.00% >= 4.50%)",
+            },
+            {
+                "daily_candidate_id": "line-b|starter-strikeout-baseline-v1",
+                "official_date": "2026-04-23",
+                "evaluation_status": "actionable",
+                "player_id": "mlb-pitcher:663436",
+                "pitcher_mlb_id": 663436,
+                "player_name": "Davis Martin",
+                "game_pk": 825096,
+                "line": 3.5,
+                "selected_side": "over",
+                "selected_odds": -115,
+                "over_odds": -115,
+                "under_odds": -115,
+                "selected_model_probability": 0.69,
+                "expected_value_pct": 0.58,
+                "edge_pct": 0.34,
+                "model_run_id": "20260423T201434Z",
+                "model_version": "starter-strikeout-baseline-v1",
+                "sportsbook_title": "DraftKings",
+                "line_snapshot_id": "line-b",
+                "captured_at": "2026-04-23T19:48:26Z",
+                "reason": "over clears minimum edge threshold (34.00% >= 4.50%)",
+            },
+            {
+                "daily_candidate_id": "line-c|starter-strikeout-baseline-v1",
+                "official_date": "2026-04-23",
+                "evaluation_status": "actionable",
+                "player_id": "mlb-pitcher:594798",
+                "pitcher_mlb_id": 594798,
+                "player_name": "Jacob deGrom",
+                "game_pk": 822912,
+                "line": 5.5,
+                "selected_side": "under",
+                "selected_odds": 200,
+                "over_odds": -278,
+                "under_odds": 200,
+                "selected_model_probability": 0.72,
+                "expected_value_pct": 1.27,
+                "edge_pct": 0.44,
+                "model_run_id": "20260423T201434Z",
+                "model_version": "starter-strikeout-baseline-v1",
+                "sportsbook_title": "BetRivers",
+                "line_snapshot_id": "line-c",
+                "captured_at": "2026-04-23T19:48:26Z",
+                "reason": "under clears minimum edge threshold (44.00% >= 4.50%)",
+            },
+        ],
+    )
+
+    board, _ = load_board_dataframe(
+        tmp_path,
+        target_date=date(2026, 4, 23),
+        settings=DashboardSettings(),
+    )
+    grouped = group_board_by_pitcher(board)
+    davis_row = grouped[grouped["pitcher"] == "Davis Martin"].iloc[0]
+
+    assert len(grouped) == 2
+    assert davis_row["line"] == 4.5
+    assert davis_row["line_row_count"] == 2
+    assert davis_row["hidden_line_row_count"] == 1
+    assert davis_row["sportsbook_count"] == 2
+    assert "BetRivers OVER 4.5" in davis_row["line_group_summary"]
+    assert "DraftKings OVER 3.5" in davis_row["line_group_summary"]
+    assert "grouped view hides 1 book/line rows" in davis_row["note"]
 
 
 def test_pitcher_drilldown_uses_replayed_model_run(tmp_path: Path) -> None:

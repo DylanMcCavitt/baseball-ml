@@ -237,6 +237,10 @@ class _FakeBlock:
         self._parent.toggles[label] = value
         return value
 
+    def radio(self, label: str, options: list[str], index: int = 0, **kwargs: object) -> str:
+        self._parent.radios[label] = list(options)
+        return options[index]
+
     def text_input(self, label: str, value: str = "", **kwargs: object) -> str:
         self._parent.text_inputs[label] = value
         return value
@@ -273,6 +277,7 @@ class _FakeStreamlit(ModuleType):
         self.plots: list[object] = []
         self.selectboxes: dict[str, list[str]] = {}
         self.toggles: dict[str, bool] = {}
+        self.radios: dict[str, list[str]] = {}
         self.text_inputs: dict[str, str] = {}
         self.multiselects: dict[str, list[str]] = {}
         self.buttons: list[str] = []
@@ -308,6 +313,10 @@ class _FakeStreamlit(ModuleType):
     def toggle(self, label: str, value: bool = False, **kwargs: object) -> bool:
         self.toggles[label] = value
         return value
+
+    def radio(self, label: str, options: list[str], index: int = 0, **kwargs: object) -> str:
+        self.radios[label] = list(options)
+        return options[index]
 
     def text_input(self, label: str, value: str = "", **kwargs: object) -> str:
         self.text_inputs[label] = value
@@ -345,6 +354,7 @@ def test_dashboard_file_entrypoint_smoke(monkeypatch, tmp_path) -> None:
 
     assert fake_streamlit.page_config["page_title"] == "Strike Ops"
     assert fake_streamlit.selectboxes["Slate date"] == ["2026-04-22"]
+    assert fake_streamlit.radios["Rows"] == ["All line rows", "Grouped by pitcher"]
     assert any("SLATE BOARD" in body for body in fake_streamlit.markdowns)
     assert any("Today Arm" in body for body in fake_streamlit.markdowns)
 

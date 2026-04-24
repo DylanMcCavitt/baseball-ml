@@ -310,6 +310,54 @@ def _lookup_line_snapshot_metadata(output_root: Path) -> dict[str, dict[str, Any
     return lookup
 
 
+def _sportsbook_key_from_snapshot_id(line_snapshot_id: str | None) -> str:
+    if not line_snapshot_id:
+        return ""
+    parts = str(line_snapshot_id).split(":")
+    if len(parts) >= 2 and parts[0] == "prop-line":
+        return parts[1]
+    return ""
+
+
+def _short_identifier(value: Any, *, length: int = 8) -> str:
+    if value is None or value == "":
+        return "n/a"
+    return str(value)[:length]
+
+
+def line_snapshot_display_id(line_snapshot_id: str | None) -> str:
+    """Return a compact line-snapshot label for dashboard provenance."""
+    if not line_snapshot_id:
+        return "n/a"
+    parts = str(line_snapshot_id).split(":")
+    if len(parts) >= 2 and parts[0] == "prop-line":
+        return parts[-1]
+    return _short_identifier(line_snapshot_id, length=12)
+
+
+def _line_label(row: dict[str, Any] | pd.Series) -> str:
+    side = str(row.get("side") or row.get("selected_side") or "").upper()
+    line = row.get("line")
+    try:
+        line_label = f"{float(line):.1f}"
+    except (TypeError, ValueError):
+        line_label = "n/a"
+    sportsbook = str(row.get("sportsbook") or row.get("sportsbook_title") or "unknown book")
+    return f"{sportsbook} {side} {line_label}".strip()
+
+
+def _compact_join(values: list[str], *, limit: int = 4) -> str:
+    clean_values = []
+    for value in values:
+        if not value or value in clean_values:
+            continue
+        clean_values.append(value)
+    if len(clean_values) <= limit:
+        return ", ".join(clean_values)
+    remaining = len(clean_values) - limit
+    return f"{', '.join(clean_values[:limit])}, +{remaining} more"
+
+
 def _ensure_board_source_rows(
     output_root: Path,
     *,
@@ -425,12 +473,23 @@ def _normalize_board_dataframe(
                 "model_version",
                 "commence_time",
                 "features_as_of",
+                "sportsbook",
+                "sportsbook_key",
+                "source_event_id",
+                "market_last_update",
+                "line_captured_at",
+                "provenance",
+                "line_row_count",
+                "hidden_line_row_count",
+                "sportsbook_count",
+                "line_group_summary",
             ]
         )
 
     normalized_rows: list[dict[str, Any]] = []
     for row in rows:
-        line_snapshot = line_lookup.get(str(row.get("line_snapshot_id"))) or {}
+        line_snapshot_id = str(row.get("line_snapshot_id") or "")
+        line_snapshot = line_lookup.get(line_snapshot_id) or {}
         game_pk = row.get("game_pk")
         pitcher_mlb_id = row.get("pitcher_mlb_id")
         feature_row = (
@@ -503,6 +562,41 @@ def _normalize_board_dataframe(
 
         captured_at_value = row.get("captured_at") or row.get("decision_snapshot_captured_at")
         commence_time_value = line_snapshot.get("commence_time") or row.get("commence_time")
+        sportsbook = str(
+            line_snapshot.get("sportsbook_title")
+            or row.get("sportsbook_title")
+            or line_snapshot.get("sportsbook")
+            or row.get("sportsbook")
+            or "n/a"
+        )
+        sportsbook_key = str(
+            line_snapshot.get("sportsbook_key")
+            or row.get("sportsbook_key")
+            or _sportsbook_key_from_snapshot_id(line_snapshot_id)
+        )
+        source_event_id = str(
+            line_snapshot.get("event_id")
+            or row.get("event_id")
+            or row.get("source_event_id")
+            or ""
+        )
+        market_last_update = (
+            parse_datetime(str(line_snapshot.get("market_last_update")))
+            if line_snapshot.get("market_last_update")
+            else None
+        )
+        line_captured_at = (
+            parse_datetime(str(line_snapshot.get("captured_at") or captured_at_value))
+            if line_snapshot.get("captured_at") or captured_at_value
+            else None
+        )
+        provenance_parts = [
+            sportsbook,
+            f"event {_short_identifier(source_event_id)}",
+            f"snapshot {line_snapshot_display_id(line_snapshot_id)}",
+        ]
+        if market_last_update is not None:
+            provenance_parts.append(f"updated {format_timestamp(market_last_update)}")
 
         normalized_rows.append(
             {
@@ -545,7 +639,23 @@ def _normalize_board_dataframe(
                 "official_date": str(row.get("official_date") or ""),
                 "model_run_id": str(row.get("model_run_id") or ""),
                 "model_version": str(row.get("model_version") or ""),
-                "line_snapshot_id": str(row.get("line_snapshot_id") or ""),
+                "line_snapshot_id": line_snapshot_id,
+                "sportsbook": sportsbook,
+                "sportsbook_key": sportsbook_key,
+                "source_event_id": source_event_id,
+                "market_last_update": market_last_update,
+                "line_captured_at": line_captured_at,
+                "provenance": " · ".join(part for part in provenance_parts if part),
+                "line_row_count": 1,
+                "hidden_line_row_count": 0,
+                "sportsbook_count": 1 if sportsbook != "n/a" else 0,
+                "line_group_summary": _line_label(
+                    {
+                        "sportsbook": sportsbook,
+                        "side": selected_side,
+                        "line": row.get("line"),
+                    }
+                ),
                 "lineup_status": str(lineup_status or ""),
                 "pitcher_status": (
                     "confirmed"
@@ -578,6 +688,41 @@ def _normalize_board_dataframe(
         ascending=[False, False, True],
     ).reset_index(drop=True)
     return dataframe
+
+
+def group_board_by_pitcher(board: pd.DataFrame) -> pd.DataFrame:
+    """Collapse visible line rows to the current best row for each pitcher."""
+    if board.empty or "pitcher_id" not in board.columns:
+        return board.copy()
+
+    grouped_rows: list[pd.Series] = []
+    for _, group in board.groupby("pitcher_id", sort=False):
+        selected = group.iloc[0].copy()
+        line_labels = [_line_label(row) for _, row in group.iterrows()]
+        sportsbook_values = [
+            str(value)
+            for value in group.get("sportsbook", pd.Series(dtype=object)).dropna().tolist()
+            if str(value) and str(value) != "n/a"
+        ]
+        line_row_count = int(len(group))
+        hidden_line_row_count = max(0, line_row_count - 1)
+        selected["line_row_count"] = line_row_count
+        selected["hidden_line_row_count"] = hidden_line_row_count
+        selected["sportsbook_count"] = len(set(sportsbook_values))
+        selected["line_group_summary"] = _compact_join(line_labels)
+        if hidden_line_row_count:
+            notes = list(selected.get("notes") or [])
+            grouping_note = (
+                f"grouped view hides {hidden_line_row_count} book/line rows: "
+                f"{selected['line_group_summary']}"
+            )
+            if grouping_note not in notes:
+                notes.append(grouping_note)
+            selected["notes"] = notes
+            selected["note"] = " · ".join(str(note) for note in notes)
+        grouped_rows.append(selected)
+
+    return pd.DataFrame(grouped_rows).reset_index(drop=True)
 
 
 def load_board_dataframe(
