@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime
+
+import pandas as pd
 
 from mlb_props_stack.dashboard.app import _render_nav_controls
+from mlb_props_stack.dashboard.screens.board import _board_table_html
 
 
 class _FakeNavColumn:
@@ -69,3 +72,45 @@ def test_nav_controls_keep_pitcher_context_for_pitcher_screen() -> None:
         "pitcher_id": "mlb-pitcher:594798",
     }
     assert fake_streamlit.rerun_called is True
+
+
+def test_board_table_renders_sportsbook_provenance_and_group_summary() -> None:
+    html = _board_table_html(
+        pd.DataFrame(
+            [
+                {
+                    "cleared": False,
+                    "pitcher_id": "mlb-pitcher:594798",
+                    "pitcher": "Jacob deGrom",
+                    "team": "TEX",
+                    "opp": "OAK",
+                    "hand": "R",
+                    "sportsbook": "BetRivers",
+                    "source_event_id": "528817a2bf72047f1124e81a7ae55de9",
+                    "line_snapshot_id": "prop-line:betrivers:event:pitcher:5_5:run",
+                    "market_last_update": datetime(2026, 4, 23, 19, 47, 32, tzinfo=UTC),
+                    "line": 5.5,
+                    "side": "under",
+                    "p_model": 0.72,
+                    "p_market": 0.50,
+                    "american": 200,
+                    "edge": 0.22,
+                    "kelly_units": 0.0,
+                    "conf": 0.72,
+                    "line_row_count": 3,
+                    "hidden_line_row_count": 2,
+                    "sportsbook_count": 2,
+                    "line_group_summary": "BetRivers UNDER 5.5, DraftKings UNDER 6.5",
+                    "note": "hold above max",
+                }
+            ]
+        ),
+        selected_pitcher_id=None,
+    )
+
+    assert "SOURCE" in html
+    assert "GROUP" in html
+    assert "BetRivers" in html
+    assert "event 528817a2" in html
+    assert "+2 hidden" in html
+    assert "DraftKings UNDER 6.5" in html
