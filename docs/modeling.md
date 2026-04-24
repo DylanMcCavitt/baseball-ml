@@ -221,13 +221,38 @@ Current AGE-147 behavior:
   `pitcher_k_rate * expected_leash_batters_faced`
 - trains a deterministic ridge-style linear regressor with only pregame-valid
   feature fields, anchored on a dense pitcher/workload core and only adding
-  lineup numeric fields when the train window actually has enough populated,
-  non-constant lineup data to support them
+  optional numeric fields when the train window actually has enough populated,
+  non-constant data to support them
 - reports RMSE, MAE, and Spearman rank correlation plus coefficient-based
   feature importance in `evaluation.json`
 - writes `evaluation_summary.json` and `evaluation_summary.md` so each run has
-  a readable held-out benchmark comparison, calibration snapshot, top-feature
-  table, and previous-run delta on the same date window when available
+  a readable held-out benchmark comparison, calibration snapshot,
+  optional-feature activation/exclusion table, top-feature table, and
+  previous-run delta on the same date window when available
+
+The training CLI now has an explicit `--feature-set` switch:
+
+- `core`
+  uses the dense pitcher/workload schema only and records every optional family
+  as excluded by the core feature-set guard
+- `expanded`
+  uses the dense core plus any optional numeric feature that passes coverage
+  and variance gates
+
+`AGE-268` adds the comparison command:
+
+```bash
+uv run python -m mlb_props_stack compare-starter-strikeout-baselines \
+  --start-date 2026-04-18 \
+  --end-date 2026-04-23 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+```
+
+That command trains `core` and `expanded` variants over the same window, runs a
+pinned walk-forward backtest for each model run, applies the shared final wager
+approval gates to the backtest reporting rows, and writes
+`model_comparison.json` plus `model_comparison.md` under
+`data/normalized/starter_strikeout_model_comparison/...`.
 
 AGE-148 adds the first explicit count-distribution layer on top of that mean:
 

@@ -148,6 +148,15 @@ def _path_run_id(run_dir: Path) -> str:
     return run_dir.name.split("=", 1)[-1]
 
 
+def _unique_timestamp_run_id(base_time: datetime, run_root: Path) -> str:
+    candidate_time = base_time.astimezone(UTC)
+    while True:
+        run_id = candidate_time.strftime("%Y%m%dT%H%M%SZ")
+        if not run_root.joinpath(f"run={run_id}").exists():
+            return run_id
+        candidate_time += timedelta(seconds=1)
+
+
 def _requested_dates(start_date: date, end_date: date) -> list[date]:
     if start_date > end_date:
         raise ValueError("start_date cannot be after end_date")
@@ -369,6 +378,8 @@ def _build_bet_reporting_rows(
                 "line": row.get("line"),
                 "selected_side": row.get("selected_side"),
                 "selected_odds": row.get("selected_odds"),
+                "over_odds": row.get("over_odds"),
+                "under_odds": row.get("under_odds"),
                 "fair_odds": row.get("fair_odds"),
                 "edge_pct": edge_pct,
                 "edge_bucket": _edge_bucket_label(edge_pct) if edge_pct is not None else None,
@@ -1461,6 +1472,8 @@ def build_walk_forward_backtest(
                     6,
                 ),
                 "selected_odds": int(analysis["selected_odds"]),
+                "over_odds": int(selected_row["over_odds"]),
+                "under_odds": int(selected_row["under_odds"]),
                 "edge_pct": round(float(analysis["edge_pct"]), 6),
                 "expected_value_pct": round(float(analysis["expected_value_pct"]), 6),
                 "uncapped_stake_fraction": round(
@@ -1530,15 +1543,15 @@ def build_walk_forward_backtest(
     )
     audit_rows.sort(key=lambda row: str(row["audit_id"]))
 
-    run_id = now().astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
     sorted_skip_reason_counts = dict(sorted(skip_reason_counts.items()))
-    normalized_root = (
+    run_root = (
         output_root
         / "normalized"
         / "walk_forward_backtest"
         / f"start={start_date.isoformat()}_end={end_date.isoformat()}"
-        / f"run={run_id}"
     )
+    run_id = _unique_timestamp_run_id(now().astimezone(UTC), run_root)
+    normalized_root = run_root / f"run={run_id}"
     backtest_bets_path = normalized_root / "backtest_bets.jsonl"
     bet_reporting_path = normalized_root / "bet_reporting.jsonl"
     backtest_runs_path = normalized_root / "backtest_runs.jsonl"

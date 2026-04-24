@@ -80,6 +80,7 @@ Run the actual changed command, not just the module entrypoint:
 - `ingest-statcast-features`
 - `ingest-odds-api-lines`
 - `train-starter-strikeout-baseline`
+- `compare-starter-strikeout-baselines`
 - `build-edge-candidates`
 - `build-walk-forward-backtest`
 - `build-daily-candidates`
@@ -106,6 +107,19 @@ For training and calibration work, open:
 - `calibration_summary.json`
 - `raw_vs_calibrated_probabilities.jsonl`
 - `ladder_probabilities.jsonl`
+
+For model-variant comparison work, open:
+
+- `model_comparison.json`
+- `model_comparison.md`
+- the core and expanded `evaluation_summary.json` files linked from the report
+- the core and expanded `backtest_runs.jsonl`, `clv_summary.jsonl`,
+  `roi_summary.jsonl`, and `edge_bucket_summary.jsonl` files linked from the
+  report
+
+Confirm that both variants use the same date window and cutoff, that optional
+features are listed as active or explicitly excluded, and that final-gate
+approved wager counts are reported separately from edge-rule placed bets.
 
 For odds, edge, or daily candidate work, inspect:
 

@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from mlb_props_stack.modeling import (
+    FEATURE_SET_EXPANDED,
     calibrate_starter_strikeout_ladder_probabilities,
     starter_strikeout_ladder_probabilities,
     starter_strikeout_line_probability,
@@ -409,12 +410,16 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
 
     assert result.row_count == 10
     assert result.outcome_count == 10
+    assert result.feature_set == FEATURE_SET_EXPANDED
     assert result.dispersion_alpha >= 0.0
     assert result.held_out_status == "beating_benchmark"
     assert result.previous_run_id == "20260420T170000Z"
     assert result.evaluation_summary_path.exists()
     assert result.evaluation_summary_markdown_path.exists()
     assert evaluation["held_out_beats_benchmark"] == {"rmse": True, "mae": True}
+    assert evaluation["feature_set"] == FEATURE_SET_EXPANDED
+    assert evaluation["feature_schema"]["feature_set"] == FEATURE_SET_EXPANDED
+    assert "projected_lineup_k_rate" in evaluation["feature_schema"]["active_optional_features"]
     assert evaluation["model"]["held_out"]["rmse"] < evaluation["benchmark"]["held_out"]["rmse"]
     assert evaluation["model"]["held_out"]["mae"] <= evaluation["benchmark"]["held_out"]["mae"]
     assert result.held_out_model_rmse == evaluation["model"]["held_out"]["rmse"]
@@ -459,6 +464,8 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     assert "starter_strikeouts" not in model_artifact["encoded_feature_names"]
     assert "features_as_of" not in model_artifact["encoded_feature_names"]
     assert "projected_lineup_k_rate" in model_artifact["encoded_feature_names"]
+    assert model_artifact["feature_set"] == FEATURE_SET_EXPANDED
+    assert "projected_lineup_k_rate" in model_artifact["feature_selection"]["active_optional_features"]
     assert model_artifact["count_distribution"]["dispersion_alpha"] == result.dispersion_alpha
     assert model_artifact["tracking"]["mlflow_run_id"] == result.mlflow_run_id
     assert model_artifact["probability_calibration"]["name"] == (
@@ -470,6 +477,7 @@ def test_train_starter_strikeout_baseline_builds_artifacts_and_beats_benchmark(t
     )
     assert evaluation["tracking"]["mlflow_run_id"] == result.mlflow_run_id
     assert evaluation_summary["held_out_performance"]["status"] == "beating_benchmark"
+    assert evaluation_summary["feature_schema"]["feature_set"] == FEATURE_SET_EXPANDED
     assert evaluation_summary["mlflow_run_id"] == result.mlflow_run_id
     assert (
         evaluation_summary["mlflow_experiment_name"]
@@ -685,6 +693,11 @@ def test_train_starter_strikeout_baseline_excludes_sparse_optional_lineup_featur
     assert "projected_lineup_k_rate" not in model_artifact["encoded_feature_names"]
     assert "projected_lineup_contact_rate" not in model_artifact["encoded_feature_names"]
     assert "lineup_continuity_ratio" not in model_artifact["encoded_feature_names"]
+    excluded_by_feature = {
+        row["feature"]: row["status"]
+        for row in model_artifact["feature_selection"]["excluded_optional_features"]
+    }
+    assert excluded_by_feature["projected_lineup_k_rate"] == "excluded_low_coverage"
 
 
 def test_line_and_ladder_probability_helpers_are_monotonic_and_complementary():

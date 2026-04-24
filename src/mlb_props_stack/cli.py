@@ -37,9 +37,15 @@ from .ingest import (
     ingest_weather_for_date,
 )
 from .modeling import (
+    FEATURE_SET_CHOICES,
+    FEATURE_SET_EXPANDED,
     StarterStrikeoutInferenceResult,
     StarterStrikeoutBaselineTrainingResult,
     train_starter_strikeout_baseline,
+)
+from .model_comparison import (
+    compare_starter_strikeout_baselines,
+    render_model_comparison_summary,
 )
 from .paper_tracking import (
     DailyCandidateWorkflowResult,
@@ -192,6 +198,7 @@ def render_starter_strikeout_training_summary(
             f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
         ),
         f"run_id={result.run_id}",
+        f"feature_set={result.feature_set}",
         f"mlflow_run_id={result.mlflow_run_id}",
         f"mlflow_experiment_name={result.mlflow_experiment_name}",
         f"training_rows={result.row_count}",
@@ -535,6 +542,44 @@ def build_argument_parser() -> argparse.ArgumentParser:
         default="data",
         help="Directory where feature inputs and training artifacts live.",
     )
+    training_parser.add_argument(
+        "--feature-set",
+        choices=FEATURE_SET_CHOICES,
+        default=FEATURE_SET_EXPANDED,
+        help=(
+            "Feature schema to train. 'core' uses dense pitcher/workload fields only; "
+            "'expanded' also admits optional fields that pass coverage and variance gates."
+        ),
+    )
+
+    comparison_parser = subparsers.add_parser(
+        "compare-starter-strikeout-baselines",
+        help=(
+            "Train core and expanded starter strikeout baselines, backtest both, "
+            "and write a same-window comparison report."
+        ),
+    )
+    comparison_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the comparison window.",
+    )
+    comparison_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the comparison window.",
+    )
+    comparison_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where feature, odds, model, and comparison artifacts live.",
+    )
+    comparison_parser.add_argument(
+        "--cutoff-minutes-before-first-pitch",
+        type=int,
+        default=StackConfig().backtest_cutoff_minutes_before_first_pitch,
+        help="Latest allowed odds snapshot timestamp before scheduled first pitch.",
+    )
 
     daily_candidates_parser = subparsers.add_parser(
         "build-daily-candidates",
@@ -798,8 +843,19 @@ def main(argv: list[str] | None = None) -> int:
             start_date=date.fromisoformat(args.start_date),
             end_date=date.fromisoformat(args.end_date),
             output_dir=args.output_dir,
+            feature_set=args.feature_set,
         )
         print(render_starter_strikeout_training_summary(result))
+        return 0
+
+    if args.command == "compare-starter-strikeout-baselines":
+        result = compare_starter_strikeout_baselines(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            cutoff_minutes_before_first_pitch=args.cutoff_minutes_before_first_pitch,
+        )
+        print(render_model_comparison_summary(result))
         return 0
 
     if args.command == "build-daily-candidates":

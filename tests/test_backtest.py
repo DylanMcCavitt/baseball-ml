@@ -345,7 +345,7 @@ def test_build_walk_forward_backtest_replays_deterministically_and_preserves_tra
         "snapshot_groups": 2,
     }
     assert summary_rows[0]["skip_reason_counts"] == {"late_snapshot_after_cutoff": 1}
-    assert summary_rows[0]["mlflow_run_id"] == second_result.mlflow_run_id
+    assert summary_rows[0]["mlflow_run_id"] == result.mlflow_run_id
     assert summary_rows[0]["bet_outcomes"]["placed_bets"] == 1
     assert summary_rows[0]["clv_summary"]["sample_count"] == 1
     assert summary_rows[0]["roi_summary"]["placed_bets"] == 1

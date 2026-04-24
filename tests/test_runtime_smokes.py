@@ -415,7 +415,13 @@ def test_training_cli_smoke_writes_seeded_baseline_artifacts(
     captured: dict[str, object] = {}
     fixed_now = lambda: datetime(2026, 4, 21, 18, 0, tzinfo=UTC)
 
-    def _run_smoke_training(*, start_date: date, end_date: date, output_dir: str):
+    def _run_smoke_training(
+        *,
+        start_date: date,
+        end_date: date,
+        output_dir: str,
+        feature_set: str,
+    ):
         result = train_starter_strikeout_baseline(
             start_date=start_date,
             end_date=end_date,
@@ -423,6 +429,7 @@ def test_training_cli_smoke_writes_seeded_baseline_artifacts(
             client=stub_client,
             now=fixed_now,
             tracking_config=_tracking_config(Path(output_dir)),
+            feature_set=feature_set,
         )
         captured["result"] = result
         return result
