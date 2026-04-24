@@ -7,8 +7,9 @@
 - Current issue branch: `feat/age-265-dashboard-board-grouping`
 - Last completed issue in this worktree: `AGE-265` - add sportsbook provenance
   and grouped pitcher view to the dashboard board
-- Status: implementation and local verification are complete; PR publication is
-  the next closeout step
+- Status: implementation, local verification, branch push, and draft PR
+  creation are complete; CI and final review/merge remain open
+- Draft PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/38>
 - Base branch at issue start: `main` / `origin/main` at `348aba6`
 
 ## What Changed In This Slice
@@ -95,6 +96,7 @@ Observed results:
     `?screen=pitcher&board_date=2026-04-23&pitcher_id=mlb-pitcher%3A594798`.
   - A layout issue where row-mode labels wrapped vertically was fixed by giving
     the mode control its own wider row area and moving search below it.
+- PR #38 was opened as a draft after the branch was pushed.
 
 The test runs still show the existing third-party MLflow/Pydantic deprecation
 warnings.
