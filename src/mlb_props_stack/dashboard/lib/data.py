@@ -12,6 +12,13 @@ from typing import Any
 
 import pandas as pd
 
+from mlb_props_stack.data_alignment import collect_artifact_counts_for_date
+from mlb_props_stack.modeling import (
+    CORE_NUMERIC_FEATURES,
+    MIN_FEATURE_VARIANCE,
+    OPTIONAL_FEATURE_MIN_COVERAGE,
+    OPTIONAL_NUMERIC_FEATURES,
+)
 from mlb_props_stack.paper_tracking import (
     list_available_daily_candidate_dates,
     load_latest_daily_candidates,
@@ -42,6 +49,74 @@ class DashboardSettings(WagerApprovalSettings):
     refresh_cadence_minutes: int = 5
     active_run_id: str | None = None
     active_model_label: str | None = None
+
+
+OPTIONAL_FEATURE_FAMILIES: tuple[dict[str, Any], ...] = (
+    {
+        "key": "split_features",
+        "label": "Split Features",
+        "features": (
+            "pitcher_k_rate_vs_rhh",
+            "pitcher_k_rate_vs_lhh",
+            "pitcher_whiff_rate_vs_rhh",
+            "pitcher_whiff_rate_vs_lhh",
+        ),
+        "target_artifact": "pitcher_daily_features.jsonl",
+        "status_fields": (),
+        "aliases": {},
+    },
+    {
+        "key": "lineup_aggregate_features",
+        "label": "Lineup Aggregates",
+        "features": (
+            "projected_lineup_k_rate",
+            "projected_lineup_k_rate_vs_pitcher_hand",
+            "lineup_k_rate_vs_rhp",
+            "lineup_k_rate_vs_lhp",
+            "projected_lineup_chase_rate",
+            "projected_lineup_contact_rate",
+            "lineup_continuity_ratio",
+        ),
+        "target_artifact": "lineup_daily_features.jsonl",
+        "status_fields": ("lineup_status",),
+        "aliases": {},
+    },
+    {
+        "key": "park_factors",
+        "label": "Park Factors",
+        "features": (
+            "park_k_factor",
+            "park_k_factor_vs_rhh",
+            "park_k_factor_vs_lhh",
+        ),
+        "target_artifact": "game_context_features.jsonl",
+        "status_fields": ("park_factor_status",),
+        "aliases": {"park_k_factor": ("park_factor",)},
+    },
+    {
+        "key": "weather",
+        "label": "Weather",
+        "features": (
+            "weather_temperature_f",
+            "weather_wind_speed_mph",
+            "weather_humidity_pct",
+        ),
+        "target_artifact": "game_context_features.jsonl",
+        "status_fields": ("weather_status",),
+        "aliases": {"weather_wind_speed_mph": ("weather_wind_mph",)},
+    },
+    {
+        "key": "umpire",
+        "label": "Umpire",
+        "features": (
+            "ump_called_strike_rate_30d",
+            "ump_k_per_9_delta_vs_league_30d",
+        ),
+        "target_artifact": "game_context_features.jsonl",
+        "status_fields": ("umpire_status",),
+        "aliases": {},
+    },
+)
 
 
 def parse_datetime(value: str | None) -> datetime | None:
@@ -1137,6 +1212,489 @@ def get_calibration(output_root: Path) -> pd.DataFrame:
         for row in bins
     ]
     return pd.DataFrame(rows)
+
+
+def _latest_inference_run_dir(
+    output_root: Path,
+    *,
+    target_date: date | None = None,
+    run_id: str | None = None,
+) -> Path | None:
+    inference_root = output_root / "normalized" / "starter_strikeout_inference"
+    if not inference_root.exists():
+        return None
+    if run_id is not None:
+        candidates = [
+            path
+            for path in inference_root.rglob(f"run={run_id}")
+            if path.is_dir() and path.joinpath("baseline_model.json").exists()
+        ]
+        return sorted(candidates)[-1] if candidates else None
+    if target_date is None:
+        run_dirs = _latest_run_dirs(inference_root, "baseline_model.json")
+        return run_dirs[-1] if run_dirs else None
+    date_root = inference_root / f"date={target_date.isoformat()}"
+    run_dirs = [
+        path
+        for path in sorted(date_root.glob("run=*"))
+        if path.is_dir() and path.joinpath("baseline_model.json").exists()
+    ]
+    return run_dirs[-1] if run_dirs else None
+
+
+def _resolve_active_model_run_dir(
+    output_root: Path,
+    *,
+    target_date: date | None = None,
+    run_id: str | None = None,
+) -> tuple[Path | None, str | None]:
+    if run_id is not None:
+        inference_run_dir = _latest_inference_run_dir(output_root, run_id=run_id)
+        if inference_run_dir is not None:
+            return inference_run_dir, "inference"
+        baseline_run_dir = _model_run_lookup(output_root).get(run_id)
+        if baseline_run_dir is not None:
+            return baseline_run_dir, "baseline"
+
+    inference_run_dir = _latest_inference_run_dir(output_root, target_date=target_date)
+    if inference_run_dir is not None:
+        return inference_run_dir, "inference"
+
+    baseline_run_dir = latest_model_run_dir(output_root, run_id=run_id)
+    if baseline_run_dir is not None:
+        return baseline_run_dir, "baseline"
+    return None, None
+
+
+def _load_baseline_model_payload(run_dir: Path | None) -> dict[str, Any]:
+    if run_dir is None:
+        return {}
+    path = run_dir / "baseline_model.json"
+    if not path.exists():
+        return {}
+    return _load_json(str(path))
+
+
+def _source_model_run_dir_for_active(
+    output_root: Path,
+    *,
+    active_run_dir: Path,
+    active_run_kind: str | None,
+    model_payload: dict[str, Any],
+) -> Path | None:
+    if active_run_kind == "baseline":
+        return active_run_dir
+
+    source_run_id = model_payload.get("source_model_run_id")
+    if source_run_id is not None:
+        source_run_dir = _model_run_lookup(output_root).get(str(source_run_id))
+        if source_run_dir is not None:
+            return source_run_dir
+
+    source_model_path = model_payload.get("source_model_path")
+    if source_model_path:
+        source_run_dir = Path(str(source_model_path)).parent
+        if source_run_dir.joinpath("training_dataset.jsonl").exists():
+            return source_run_dir
+    return None
+
+
+def _latest_statcast_feature_run_dir(
+    output_root: Path,
+    *,
+    target_date: date,
+    artifact_name: str,
+) -> Path | None:
+    date_root = (
+        output_root
+        / "normalized"
+        / "statcast_search"
+        / f"date={target_date.isoformat()}"
+    )
+    if not date_root.exists():
+        return None
+    run_dirs = [
+        path
+        for path in sorted(date_root.glob("run=*"))
+        if path.is_dir() and path.joinpath(artifact_name).exists()
+    ]
+    return run_dirs[-1] if run_dirs else None
+
+
+def _load_target_feature_rows(
+    output_root: Path,
+    *,
+    target_date: date | None,
+    artifact_name: str,
+) -> tuple[list[dict[str, Any]], Path | None]:
+    if target_date is None:
+        return [], None
+    run_dir = _latest_statcast_feature_run_dir(
+        output_root,
+        target_date=target_date,
+        artifact_name=artifact_name,
+    )
+    if run_dir is None:
+        return [], None
+    return _load_jsonl(str(run_dir / artifact_name)), run_dir
+
+
+def _has_feature_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str) and not value.strip():
+        return False
+    return True
+
+
+def _feature_numeric_values(rows: list[dict[str, Any]], feature_name: str) -> list[float]:
+    values: list[float] = []
+    for row in rows:
+        value = row.get(feature_name)
+        if isinstance(value, bool) or value is None:
+            continue
+        if isinstance(value, (int, float)):
+            values.append(float(value))
+    return values
+
+
+def _feature_coverage_stats(
+    rows: list[dict[str, Any]],
+    *,
+    feature_name: str,
+    aliases: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    row_count = len(rows)
+    non_null_count = sum(1 for row in rows if _has_feature_value(row.get(feature_name)))
+    alias_fields_present = sorted(
+        alias
+        for alias in aliases
+        if any(alias in row for row in rows)
+    )
+    numeric_values = _feature_numeric_values(rows, feature_name)
+    variance_range = (
+        max(numeric_values) - min(numeric_values)
+        if len(numeric_values) >= 2
+        else (0.0 if len(numeric_values) == 1 else None)
+    )
+    return {
+        "feature": feature_name,
+        "field_present": any(feature_name in row for row in rows),
+        "non_null_count": non_null_count,
+        "row_count": row_count,
+        "coverage": (non_null_count / row_count) if row_count else None,
+        "variance_range": variance_range,
+        "alias_fields_present": alias_fields_present,
+    }
+
+
+def _coverage_label(non_null_count: int, row_count: int) -> str:
+    if row_count <= 0:
+        return "n/a"
+    return f"{non_null_count}/{row_count} ({non_null_count / row_count:.0%})"
+
+
+def _family_missing_source_reason(
+    family_key: str,
+    *,
+    status_values: set[str],
+    target_date: date | None,
+    output_root: Path,
+) -> str | None:
+    missing_statuses = sorted(
+        status for status in status_values if "missing" in status.lower()
+    )
+    if family_key == "weather" and target_date is not None:
+        counts = collect_artifact_counts_for_date(output_root, target_date=target_date)
+        usable_weather = counts.weather_ok_snapshots + counts.weather_roof_closed_snapshots
+        if counts.weather_snapshots == 0:
+            return "target-date weather source artifact missing"
+        if usable_weather == 0:
+            return "target-date weather source has 0 usable snapshots"
+    if family_key == "umpire" and target_date is not None:
+        counts = collect_artifact_counts_for_date(output_root, target_date=target_date)
+        if counts.umpire_assignments == 0:
+            return "target-date umpire source artifact missing"
+        if counts.umpire_ok_snapshots == 0:
+            return "target-date umpire source has 0 usable snapshots"
+    if missing_statuses:
+        return ", ".join(missing_statuses)
+    return None
+
+
+def _status_values_for_fields(
+    rows: list[dict[str, Any]],
+    status_fields: tuple[str, ...],
+) -> set[str]:
+    values: set[str] = set()
+    for row in rows:
+        for field_name in status_fields:
+            value = row.get(field_name)
+            if value is not None and str(value):
+                values.add(str(value))
+    return values
+
+
+def _max_coverage(stats: list[dict[str, Any]]) -> tuple[int, int, float | None]:
+    if not stats:
+        return 0, 0, None
+    row_count = max((int(row["row_count"]) for row in stats), default=0)
+    non_null_count = max((int(row["non_null_count"]) for row in stats), default=0)
+    return non_null_count, row_count, (non_null_count / row_count) if row_count else None
+
+
+def _optional_family_diagnostics(
+    *,
+    family: dict[str, Any],
+    encoded_features: set[str],
+    selection_rows: list[dict[str, Any]],
+    all_training_rows: list[dict[str, Any]],
+    target_rows: list[dict[str, Any]],
+    target_date: date | None,
+    output_root: Path,
+) -> dict[str, Any]:
+    features = tuple(str(feature) for feature in family["features"])
+    aliases = {
+        str(feature_name): tuple(str(alias) for alias in alias_names)
+        for feature_name, alias_names in dict(family.get("aliases") or {}).items()
+    }
+    active_features = sorted(feature for feature in features if feature in encoded_features)
+    selection_stats = [
+        _feature_coverage_stats(
+            selection_rows,
+            feature_name=feature,
+            aliases=aliases.get(feature, ()),
+        )
+        for feature in features
+    ]
+    all_training_stats = [
+        _feature_coverage_stats(
+            all_training_rows,
+            feature_name=feature,
+            aliases=aliases.get(feature, ()),
+        )
+        for feature in features
+    ]
+    target_stats = [
+        _feature_coverage_stats(
+            target_rows,
+            feature_name=feature,
+            aliases=aliases.get(feature, ()),
+        )
+        for feature in features
+    ]
+    selection_non_null, selection_row_count, selection_coverage = _max_coverage(selection_stats)
+    all_non_null, all_row_count, _ = _max_coverage(all_training_stats)
+    target_non_null, target_row_count, target_coverage = _max_coverage(target_stats)
+    variance_ranges = [
+        float(row["variance_range"])
+        for row in selection_stats
+        if row["variance_range"] is not None
+        and float(row["coverage"] or 0.0) >= OPTIONAL_FEATURE_MIN_COVERAGE
+    ]
+    max_variance = max(variance_ranges) if variance_ranges else None
+    status_fields = tuple(str(field) for field in family.get("status_fields", ()))
+    status_values = _status_values_for_fields(target_rows, status_fields)
+    status_values.update(_status_values_for_fields(all_training_rows, status_fields))
+    missing_source_reason = _family_missing_source_reason(
+        str(family["key"]),
+        status_values=status_values,
+        target_date=target_date,
+        output_root=output_root,
+    )
+
+    if active_features:
+        status = "active"
+        reason = "selected in active encoded model schema"
+    elif missing_source_reason:
+        status = "missing_source"
+        reason = missing_source_reason
+    elif selection_coverage is None:
+        status = "missing_source"
+        reason = "source training rows unavailable"
+    elif selection_coverage < OPTIONAL_FEATURE_MIN_COVERAGE:
+        status = "excluded_below_coverage"
+        reason = (
+            f"source train coverage {_coverage_label(selection_non_null, selection_row_count)} "
+            f"is below {OPTIONAL_FEATURE_MIN_COVERAGE:.0%}"
+        )
+    elif max_variance is not None and max_variance <= MIN_FEATURE_VARIANCE:
+        status = "excluded_low_variance"
+        reason = "source train values pass coverage but have no usable variance"
+    else:
+        status = "excluded_by_selection"
+        reason = "not present in active encoded model schema"
+
+    schema_notes: list[str] = []
+    for stat in [*target_stats, *all_training_stats]:
+        for alias in stat["alias_fields_present"]:
+            schema_notes.append(f"{alias} present; expected {stat['feature']}")
+    schema_notes = sorted(set(schema_notes))
+
+    return {
+        "key": str(family["key"]),
+        "label": str(family["label"]),
+        "status": status,
+        "reason": reason,
+        "active_features": active_features,
+        "inactive_features": [feature for feature in features if feature not in active_features],
+        "source_train_non_null_count": selection_non_null,
+        "source_train_row_count": selection_row_count,
+        "source_all_non_null_count": all_non_null,
+        "source_all_row_count": all_row_count,
+        "target_non_null_count": target_non_null,
+        "target_row_count": target_row_count,
+        "source_train_coverage": selection_coverage,
+        "target_coverage": target_coverage,
+        "source_train_coverage_label": _coverage_label(selection_non_null, selection_row_count),
+        "source_all_coverage_label": _coverage_label(all_non_null, all_row_count),
+        "target_coverage_label": _coverage_label(target_non_null, target_row_count),
+        "status_values": sorted(status_values),
+        "schema_notes": schema_notes,
+        "feature_stats": {
+            "source_train": selection_stats,
+            "source_all": all_training_stats,
+            "target": target_stats,
+        },
+    }
+
+
+def _training_selection_rows(
+    run_dir: Path | None,
+    all_training_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if run_dir is None:
+        return []
+    summary_path = run_dir / "evaluation_summary.json"
+    if not summary_path.exists():
+        return all_training_rows
+    train_dates = set(
+        str(value)
+        for value in (_load_json(str(summary_path)).get("date_splits") or {}).get("train", [])
+    )
+    if not train_dates:
+        return all_training_rows
+    return [
+        row
+        for row in all_training_rows
+        if str(row.get("official_date")) in train_dates
+    ]
+
+
+def get_optional_feature_diagnostics(
+    output_root: Path,
+    *,
+    target_date: date | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Return active-schema and optional-feature coverage diagnostics."""
+    active_run_dir, active_run_kind = _resolve_active_model_run_dir(
+        output_root,
+        target_date=target_date,
+        run_id=run_id,
+    )
+    if active_run_dir is None:
+        return {
+            "active_model_run_id": None,
+            "active_run_kind": None,
+            "source_model_run_id": None,
+            "target_date": target_date.isoformat() if target_date else None,
+            "encoded_feature_count": 0,
+            "active_core_features": [],
+            "active_optional_features": [],
+            "active_other_features": [],
+            "family_rows": [],
+            "warnings": ["No active model artifact was found."],
+        }
+
+    model_payload = _load_baseline_model_payload(active_run_dir)
+    encoded_features = [str(feature) for feature in model_payload.get("encoded_feature_names", [])]
+    encoded_feature_set = set(encoded_features)
+    optional_feature_set = set(OPTIONAL_NUMERIC_FEATURES)
+    core_feature_set = set(CORE_NUMERIC_FEATURES)
+    active_optional = sorted(feature for feature in encoded_features if feature in optional_feature_set)
+    active_core = sorted(feature for feature in encoded_features if feature in core_feature_set)
+    active_other = sorted(
+        feature
+        for feature in encoded_features
+        if feature not in optional_feature_set and feature not in core_feature_set
+    )
+
+    source_run_dir = _source_model_run_dir_for_active(
+        output_root,
+        active_run_dir=active_run_dir,
+        active_run_kind=active_run_kind,
+        model_payload=model_payload,
+    )
+    source_model_run_id = (
+        str(model_payload.get("source_model_run_id"))
+        if model_payload.get("source_model_run_id") is not None
+        else (_run_id_from_dir(source_run_dir) if source_run_dir is not None else None)
+    )
+    all_training_rows = (
+        _load_jsonl(str(source_run_dir / "training_dataset.jsonl"))
+        if source_run_dir is not None
+        and source_run_dir.joinpath("training_dataset.jsonl").exists()
+        else []
+    )
+    selection_rows = _training_selection_rows(source_run_dir, all_training_rows)
+
+    target_rows_by_artifact: dict[str, list[dict[str, Any]]] = {}
+    target_run_dirs: dict[str, str] = {}
+    for family in OPTIONAL_FEATURE_FAMILIES:
+        artifact_name = str(family["target_artifact"])
+        if artifact_name in target_rows_by_artifact:
+            continue
+        rows, target_run_dir = _load_target_feature_rows(
+            output_root,
+            target_date=target_date,
+            artifact_name=artifact_name,
+        )
+        target_rows_by_artifact[artifact_name] = rows
+        if target_run_dir is not None:
+            target_run_dirs[artifact_name] = str(target_run_dir)
+
+    family_rows = [
+        _optional_family_diagnostics(
+            family=family,
+            encoded_features=encoded_feature_set,
+            selection_rows=selection_rows,
+            all_training_rows=all_training_rows,
+            target_rows=target_rows_by_artifact.get(str(family["target_artifact"]), []),
+            target_date=target_date,
+            output_root=output_root,
+        )
+        for family in OPTIONAL_FEATURE_FAMILIES
+    ]
+
+    return {
+        "active_model_run_id": _run_id_from_dir(active_run_dir),
+        "active_run_kind": active_run_kind,
+        "source_model_run_id": source_model_run_id,
+        "target_date": target_date.isoformat() if target_date else None,
+        "model_version": str(model_payload.get("model_version") or ""),
+        "active_model_path": str(active_run_dir / "baseline_model.json"),
+        "source_model_path": (
+            str(source_run_dir / "baseline_model.json")
+            if source_run_dir is not None
+            and source_run_dir.joinpath("baseline_model.json").exists()
+            else str(model_payload.get("source_model_path") or "")
+        ),
+        "source_training_row_count": len(all_training_rows),
+        "source_selection_row_count": len(selection_rows),
+        "encoded_feature_count": len(encoded_features),
+        "active_core_features": active_core,
+        "active_optional_features": active_optional,
+        "active_other_features": active_other,
+        "optional_feature_count": len(active_optional),
+        "family_rows": family_rows,
+        "target_feature_run_dirs": target_run_dirs,
+        "selection_thresholds": {
+            "optional_feature_min_coverage": OPTIONAL_FEATURE_MIN_COVERAGE,
+            "min_feature_variance": MIN_FEATURE_VARIANCE,
+        },
+        "warnings": [],
+    }
 
 
 def _feature_values_for_run(
