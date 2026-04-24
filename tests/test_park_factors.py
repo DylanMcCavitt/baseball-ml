@@ -31,6 +31,21 @@ def test_default_park_factors_csv_exists_and_loads() -> None:
     assert 0.5 <= progressive.park_k_factor_vs_lhh <= 1.5
 
 
+def test_default_park_factors_include_current_mlb_venue_aliases() -> None:
+    table = load_park_k_factors(DEFAULT_PARK_FACTORS_PATH)
+
+    expected_aliases = {
+        (2026, 2529): "Sutter Health Park",
+        (2026, 3309): "Nationals Park",
+        (2026, 3312): "Target Field",
+        (2026, 3313): "Yankee Stadium",
+        (2026, 5325): "Globe Life Field",
+    }
+    for key, venue_name in expected_aliases.items():
+        assert key in table
+        assert table[key].venue_name == venue_name
+
+
 def test_default_park_factors_carry_prior_season_when_requested_season_missing() -> None:
     table = load_park_k_factors(DEFAULT_PARK_FACTORS_PATH)
     assert (2026, 5) in table

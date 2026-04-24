@@ -81,7 +81,11 @@ def _build_game_context_feature_row(
     weather_lookup: dict[int, WeatherSnapshotRecord],
     umpire_lookup: dict[int, UmpireSnapshotRecord],
 ) -> GameContextFeatureRow:
-    base_features_as_of = max(game.captured_at, starter.captured_at, _history_cutoff(date.fromisoformat(starter.official_date)))
+    base_features_as_of = _history_cutoff(date.fromisoformat(starter.official_date))
+    if game.captured_at <= game.commence_time:
+        base_features_as_of = max(base_features_as_of, game.captured_at)
+    if starter.captured_at <= game.commence_time:
+        base_features_as_of = max(base_features_as_of, starter.captured_at)
     if lineup_snapshot is not None:
         base_features_as_of = max(base_features_as_of, lineup_snapshot.captured_at)
 
@@ -122,6 +126,8 @@ def _build_game_context_feature_row(
         weather_humidity_pct = weather_snapshot.humidity_pct
         weather_captured_at = weather_snapshot.captured_at
         roof_type = weather_snapshot.roof_type
+        if weather_captured_at <= game.commence_time:
+            base_features_as_of = max(base_features_as_of, weather_captured_at)
     else:
         weather_status = WEATHER_STATUS_MISSING_SOURCE
         weather_source = None
@@ -141,6 +147,8 @@ def _build_game_context_feature_row(
         umpire_captured_at = umpire_snapshot.captured_at
         ump_called_strike_rate_30d = umpire_snapshot.ump_called_strike_rate_30d
         ump_k_per_9_delta_vs_league_30d = umpire_snapshot.ump_k_per_9_delta_vs_league_30d
+        if umpire_captured_at <= game.commence_time:
+            base_features_as_of = max(base_features_as_of, umpire_captured_at)
     else:
         umpire_status = UMPIRE_STATUS_MISSING_SOURCE
         umpire_source = None
