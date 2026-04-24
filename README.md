@@ -53,8 +53,8 @@ That is a math-and-process problem first, and a betting problem second.
   Targeted Statcast pulls plus normalized pitcher, lineup, and game-context
   feature tables for one slate date.
 - `src/mlb_props_stack/modeling.py`
-  Date-split starter strikeout dataset assembly, naive benchmark, and the first
-  reproducible trainable baseline model.
+  Date-split starter strikeout dataset assembly, naive benchmark, and the
+  frozen `starter-strikeout-baseline-v0` infrastructure model.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
 - `src/mlb_props_stack/paper_tracking.py`
@@ -391,6 +391,12 @@ and exclude every optional family. Use `--feature-set expanded` when a run
 should admit optional fields that pass the configured coverage and variance
 gates; sparse or constant optional fields remain explicit exclusions in the
 saved feature schema instead of being silently ignored.
+
+AGE-286 freezes this path as `starter-strikeout-baseline-v0`. That label is an
+audit boundary, not a live-use promotion: the ridge baseline, global dispersion,
+calibration, and artifact layout remain useful infrastructure, but the current
+projection is not trusted for betting decisions or readiness reporting. The
+limitations are recorded in `docs/baseline_v0_audit.md`.
 
 ## Starter Strikeout Model Variant Comparison
 

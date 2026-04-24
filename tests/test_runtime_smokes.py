@@ -457,7 +457,7 @@ def test_training_cli_smoke_writes_seeded_baseline_artifacts(
     assert result.row_count == 10
     assert result.model_path.exists()
     assert result.evaluation_path.exists()
-    assert evaluation["model_version"] == "starter-strikeout-baseline-v1"
+    assert evaluation["model_version"] == "starter-strikeout-baseline-v0"
     assert "Starter strikeout baseline training complete" in output
     assert f"evaluation_path={result.evaluation_path}" in output
 
