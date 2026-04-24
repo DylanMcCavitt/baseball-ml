@@ -394,6 +394,7 @@ def render_dashboard_page(
             st=st,
             output_root=output_root,
             board=board,
+            board_date=board_date,
             settings=settings,
         )
     elif active_screen == "config":

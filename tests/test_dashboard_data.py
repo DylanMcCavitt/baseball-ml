@@ -6,6 +6,7 @@ from mlb_props_stack.dashboard.lib.data import (
     DashboardSettings,
     current_slate_metrics,
     get_feature_importance,
+    get_optional_feature_diagnostics,
     get_pmf,
     group_board_by_pitcher,
     list_available_board_dates,
@@ -465,3 +466,177 @@ def test_pitcher_pmf_can_resolve_daily_inference_run_id(tmp_path: Path) -> None:
     assert ladder_row is not None
     assert ladder_row["model_mean"] == 6.8
     assert pmf_rows
+
+
+def test_optional_feature_diagnostics_resolve_active_schema_and_missing_sources(
+    tmp_path: Path,
+) -> None:
+    source_run = (
+        tmp_path
+        / "normalized"
+        / "starter_strikeout_baseline"
+        / "start=2026-04-20_end=2026-04-21"
+        / "run=20260422T202712Z"
+    )
+    _write_json(
+        source_run / "evaluation_summary.json",
+        {
+            "run_id": "20260422T202712Z",
+            "date_splits": {"train": ["2026-04-20"]},
+        },
+    )
+    _write_json(
+        source_run / "baseline_model.json",
+        {
+            "model_version": "starter-strikeout-baseline-v1",
+            "encoded_feature_names": [
+                "pitch_sample_size",
+                "pitcher_k_rate",
+                "projected_lineup_k_rate",
+            ],
+        },
+    )
+    _write_jsonl(
+        source_run / "training_dataset.jsonl",
+        [
+            {
+                "official_date": "2026-04-20",
+                "training_row_id": "train-1",
+                "pitch_sample_size": 120,
+                "pitcher_k_rate": 0.28,
+                "projected_lineup_k_rate": 0.23,
+                "park_factor_status": "missing_park_factor_source",
+                "park_factor": 1.02,
+                "weather_status": "missing_weather_source",
+                "weather_wind_mph": 8.0,
+            },
+            {
+                "official_date": "2026-04-20",
+                "training_row_id": "train-2",
+                "pitch_sample_size": 100,
+                "pitcher_k_rate": 0.24,
+                "projected_lineup_k_rate": 0.25,
+                "park_factor_status": "missing_park_factor_source",
+                "park_factor": 0.98,
+                "weather_status": "missing_weather_source",
+                "weather_wind_mph": 6.0,
+            },
+            {
+                "official_date": "2026-04-21",
+                "training_row_id": "held-out-1",
+                "pitch_sample_size": 110,
+                "pitcher_k_rate": 0.26,
+                "projected_lineup_k_rate": None,
+                "weather_status": "missing_weather_source",
+            },
+        ],
+    )
+
+    inference_run = (
+        tmp_path
+        / "normalized"
+        / "starter_strikeout_inference"
+        / "date=2026-04-23"
+        / "run=20260423T210236Z"
+    )
+    _write_json(
+        inference_run / "baseline_model.json",
+        {
+            "model_version": "starter-strikeout-baseline-v1",
+            "source_model_run_id": "20260422T202712Z",
+            "encoded_feature_names": [
+                "pitch_sample_size",
+                "pitcher_k_rate",
+                "projected_lineup_k_rate",
+            ],
+        },
+    )
+
+    feature_run = (
+        tmp_path
+        / "normalized"
+        / "statcast_search"
+        / "date=2026-04-23"
+        / "run=20260423T180000Z"
+    )
+    _write_jsonl(
+        feature_run / "game_context_features.jsonl",
+        [
+            {
+                "official_date": "2026-04-23",
+                "game_pk": 1,
+                "pitcher_id": 100,
+                "park_factor_status": "missing_park_factor_source",
+                "park_factor": 1.0,
+                "weather_status": "missing_weather_source",
+                "weather_temperature_f": None,
+                "weather_wind_mph": 9.0,
+            },
+            {
+                "official_date": "2026-04-23",
+                "game_pk": 2,
+                "pitcher_id": 101,
+                "park_factor_status": "missing_park_factor_source",
+                "park_factor": 1.1,
+                "weather_status": "missing_weather_source",
+                "weather_temperature_f": None,
+                "weather_wind_mph": 12.0,
+            },
+        ],
+    )
+    _write_jsonl(
+        feature_run / "lineup_daily_features.jsonl",
+        [
+            {
+                "official_date": "2026-04-23",
+                "game_pk": 1,
+                "pitcher_id": 100,
+                "projected_lineup_k_rate": None,
+            },
+            {
+                "official_date": "2026-04-23",
+                "game_pk": 2,
+                "pitcher_id": 101,
+                "projected_lineup_k_rate": None,
+            },
+        ],
+    )
+    _write_jsonl(
+        feature_run / "pitcher_daily_features.jsonl",
+        [
+            {"official_date": "2026-04-23", "game_pk": 1, "pitcher_id": 100},
+            {"official_date": "2026-04-23", "game_pk": 2, "pitcher_id": 101},
+        ],
+    )
+
+    diagnostics = get_optional_feature_diagnostics(
+        tmp_path,
+        target_date=date(2026, 4, 23),
+    )
+
+    assert diagnostics["active_model_run_id"] == "20260423T210236Z"
+    assert diagnostics["source_model_run_id"] == "20260422T202712Z"
+    assert diagnostics["encoded_feature_count"] == 3
+    assert diagnostics["active_optional_features"] == ["projected_lineup_k_rate"]
+    assert diagnostics["source_selection_row_count"] == 2
+    assert diagnostics["source_training_row_count"] == 3
+
+    families = {row["key"]: row for row in diagnostics["family_rows"]}
+    assert families["lineup_aggregate_features"]["status"] == "active"
+    assert families["split_features"]["status"] == "excluded_below_coverage"
+    assert families["split_features"]["source_train_coverage_label"] == "0/2 (0%)"
+
+    assert families["weather"]["status"] == "missing_source"
+    assert families["weather"]["target_coverage_label"] == "0/2 (0%)"
+    assert "target-date weather source artifact missing" in families["weather"]["reason"]
+    assert (
+        "weather_wind_mph present; expected weather_wind_speed_mph"
+        in families["weather"]["schema_notes"]
+    )
+
+    assert families["park_factors"]["status"] == "missing_source"
+    assert (
+        "park_factor present; expected park_k_factor"
+        in families["park_factors"]["schema_notes"]
+    )
+    assert families["umpire"]["status"] == "missing_source"
