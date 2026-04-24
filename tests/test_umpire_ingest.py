@@ -338,6 +338,52 @@ def test_ingest_umpire_preserves_pregame_persisted_capture_after_commence(
     assert snapshot["umpire_status"] == UMPIRE_STATUS_OK
 
 
+def test_ingest_umpire_selects_latest_pregame_payload_when_postgame_exists(
+    tmp_path: Path,
+) -> None:
+    _seed_games(
+        tmp_path,
+        [
+            _build_game_row(
+                game_pk=824456,
+                commence_time="2026-04-21T18:00:00Z",
+            )
+        ],
+    )
+    _seed_persisted_feed_live(
+        tmp_path,
+        game_pk=824456,
+        officials=[_home_plate_official(umpire_id=427395, umpire_name="Ed Hickox")],
+        captured_at_stamp="20260421T170500Z",
+    )
+    _seed_persisted_feed_live(
+        tmp_path,
+        game_pk=824456,
+        officials=[
+            _home_plate_official(umpire_id=500001, umpire_name="Alfonso Marquez")
+        ],
+        captured_at_stamp="20260421T220000Z",
+    )
+
+    client = _StubMLBStatsAPIClient()
+    result = ingest_umpire_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        client=client,
+        now=lambda: datetime(2026, 4, 21, 22, 30, tzinfo=UTC),
+    )
+
+    assert client.urls == []
+    assert result.ok_snapshot_count == 1
+    assert result.missing_source_count == 0
+    snapshot = json.loads(
+        result.umpire_snapshots_path.read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert snapshot["captured_at"] == "2026-04-21T17:05:00Z"
+    assert snapshot["umpire_id"] == 427395
+    assert snapshot["umpire_name"] == "Ed Hickox"
+
+
 def test_ingest_umpire_rejects_postgame_persisted_feed_live_payload(
     tmp_path: Path,
 ) -> None:

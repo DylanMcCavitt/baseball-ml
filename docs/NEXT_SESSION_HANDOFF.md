@@ -5,10 +5,12 @@
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
 - Current branch: `main`
-- Current `main`: synced to `origin/main` after the AGE-267 merge
+- Current `main`: synced to `origin/main` after the AGE-267 follow-up review fix
 - Last completed issue: `AGE-267` - regenerate historical optional-feature artifacts
   with timestamp-valid coverage
 - Merged PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/40>
+- Post-merge handoff PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/41>
+- Review-fix PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/42>
 - Merge commit: `a573b05`
 - Canonical ignored data directory used for regeneration:
   `/Users/dylanmccavitt/projects/nba-ml/data`
@@ -39,6 +41,10 @@
   `ump_k_per_9_delta_vs_league_30d`.
 - Did not train or compare an expanded-feature model, did not change
   stage-gate status, and did not loosen optional-feature selection thresholds.
+- Follow-up review fix: umpire ingest now selects the latest pregame-valid
+  persisted `feed/live` payload when both pregame and postgame files exist for
+  the same game, instead of letting the newest postgame file mask usable
+  pregame source coverage.
 
 ## Artifact Runs Produced
 
@@ -141,6 +147,7 @@ uv run python -m mlb_props_stack ingest-umpire --date <date> --output-dir /Users
 uv run python -m mlb_props_stack ingest-statcast-features --date <date> --output-dir /Users/dylanmccavitt/projects/nba-ml/data
 uv run pytest tests/test_umpire_ingest.py tests/test_statcast_feature_ingest.py
 uv run pytest tests/test_park_factors.py tests/test_statcast_feature_ingest.py tests/test_weather_ingest.py tests/test_umpire_ingest.py tests/test_data_alignment.py
+uv run pytest tests/test_statcast_feature_ingest.py tests/test_weather_ingest.py tests/test_umpire_ingest.py tests/test_data_alignment.py
 uv run pytest tests/test_runtime_smokes.py
 uv run pytest
 python3 -m compileall src tests
@@ -157,6 +164,10 @@ Observed results:
 - `tests/test_park_factors.py tests/test_statcast_feature_ingest.py
   tests/test_weather_ingest.py tests/test_umpire_ingest.py
   tests/test_data_alignment.py`: `71 passed`
+- AGE-267 review fix:
+  - `tests/test_umpire_ingest.py`: `18 passed`
+  - `tests/test_statcast_feature_ingest.py tests/test_weather_ingest.py
+    tests/test_umpire_ingest.py tests/test_data_alignment.py`: `65 passed`
 - `tests/test_runtime_smokes.py`: `4 passed` with existing third-party
   MLflow/Pydantic warnings
 - Full suite: `198 passed` with the same existing third-party warnings

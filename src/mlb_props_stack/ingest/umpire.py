@@ -237,6 +237,7 @@ def _latest_persisted_feed_live_path(
     output_dir: Path,
     target_date: date,
     game_pk: int,
+    latest_at_or_before: datetime | None = None,
 ) -> Path | None:
     """Return the most recent persisted feed/live file for one game, if any."""
 
@@ -253,6 +254,14 @@ def _latest_persisted_feed_live_path(
     candidates = sorted(path for path in feed_live_dir.glob("captured_at=*.json") if path.is_file())
     if not candidates:
         return None
+    if latest_at_or_before is not None:
+        pregame_candidates: list[tuple[datetime, Path]] = []
+        for path in candidates:
+            captured_at = _captured_at_from_feed_live_path(path)
+            if captured_at is not None and captured_at <= latest_at_or_before:
+                pregame_candidates.append((captured_at, path))
+        if pregame_candidates:
+            return max(pregame_candidates, key=lambda item: item[0])[1]
     return candidates[-1]
 
 
@@ -635,6 +644,7 @@ def ingest_umpire_for_date(
             output_dir=output_root,
             target_date=target_date,
             game_pk=game.game_pk,
+            latest_at_or_before=game.commence_time,
         )
         payload: dict[str, Any] | None = None
         fetch_captured_at = now().astimezone(UTC)
