@@ -4,16 +4,16 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Working branch: `feat/age-267-optional-feature-artifacts`
-- Base commit: `1701e7a` (`origin/main` at issue start)
-- Current issue: `AGE-267` - regenerate historical optional-feature artifacts
+- Current branch: `main`
+- Current `main`: synced to `origin/main` after the AGE-267 merge
+- Last completed issue: `AGE-267` - regenerate historical optional-feature artifacts
   with timestamp-valid coverage
-- Pull request: <https://github.com/DylanMcCavitt/baseball-ml/pull/40>
+- Merged PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/40>
+- Merge commit: `a573b05`
 - Canonical ignored data directory used for regeneration:
   `/Users/dylanmccavitt/projects/nba-ml/data`
-- Status: AGE-267 implementation, local artifact regeneration, verification,
-  and PR creation are complete. Merge closeout is still pending at the time this
-  handoff was written.
+- Status: AGE-267 is merged, CI passed, and the canonical local checkout is
+  synced to `origin/main`.
 
 ## What Changed In This Slice
 
