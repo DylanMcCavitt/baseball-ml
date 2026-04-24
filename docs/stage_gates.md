@@ -130,9 +130,12 @@ Resolve status in this order:
 There is no fourth state for "probably ready." If the artifact set does not
 clear the thresholds, the repo is still `research_only`.
 
-## Worked Example: Latest Saved Artifact Set
+## Worked Example: Historical Artifact Set
 
-The latest saved artifact set reviewed for this issue used:
+The saved artifact set reviewed for the original stage-gate issue used the
+following run ids. The generated local artifacts were removed during the
+2026-04-24 model-rebuild cleanup, so treat these values as historical evidence,
+not as files expected to exist in a fresh checkout:
 
 - training run `20260422T205727Z`
 - walk-forward backtest run `20260422T205734Z`

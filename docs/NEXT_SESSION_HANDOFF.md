@@ -15,6 +15,9 @@
   a projection-first model rebuild.
 - Canonical ignored data directory used for live model checks:
   `/Users/dylanmccavitt/projects/nba-ml/data`
+- Tracked and local generated outputs under `data/normalized`, plus local
+  ignored raw-data cache files under `data/raw`, were deleted on 2026-04-24
+  after the model-rebuild rescope to prevent stale artifact drift.
 - Active rebuild track: `AGE-285` - rebuild pitcher strikeout projection model
   before betting layer.
 - First next issue: `AGE-286` - audit and freeze current strikeout baseline as
@@ -45,6 +48,11 @@
   comparison report workflow.
 
 ## AGE-268 Real Artifact Result
+
+The generated files from this run were intentionally removed from the canonical
+checkout on 2026-04-24. The command, run IDs, paths, and metrics below are kept
+as historical evidence only; future issue work should regenerate required data
+instead of relying on stale local artifacts.
 
 Command run:
 
@@ -227,6 +235,8 @@ Observed results:
 
 - Keep using `/Users/dylanmccavitt/projects/nba-ml/data` for canonical live
   dashboard/model checks.
+- Expect `data/normalized` and `data/raw` to start clean after the 2026-04-24
+  cleanup.
 - Do not perform live-readiness, approved-wager, or dashboard reconnection work
   until the projection-first rebuild and validation gates pass.
 - Do not loosen optional-feature coverage or variance thresholds to make sparse
