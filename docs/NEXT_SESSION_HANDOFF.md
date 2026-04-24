@@ -5,7 +5,8 @@
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
 - Current branch: `main`
-- Current `main`: `cae1aa6` (`[age-266]: add optional feature diagnostics`)
+- Current `main`: synced to `origin/main` after the AGE-266 merge and handoff
+  update
 - Last completed issue: `AGE-266` - show active and excluded optional feature
   diagnostics in the dashboard
 - Merged PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/39>
