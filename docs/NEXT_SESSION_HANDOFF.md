@@ -8,7 +8,8 @@
 - Current branch base: `origin/main` at `d3be83d`
 - Active issue: `AGE-268` - train and compare expanded-feature baseline
   against core-only model
-- Status: implementation and local verification are complete; PR/merge
+- PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/43>
+- Status: implementation and local verification are complete; PR review/merge
   closeout is still pending from this worktree.
 - Canonical ignored data directory used for live model checks:
   `/Users/dylanmccavitt/projects/nba-ml/data`
