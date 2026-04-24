@@ -4,14 +4,13 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Current issue branch: `feat/age-266-optional-feature-diagnostics`
-- Current issue: `AGE-266` - show active and excluded optional feature
+- Current branch: `main`
+- Current `main`: `cae1aa6` (`[age-266]: add optional feature diagnostics`)
+- Last completed issue: `AGE-266` - show active and excluded optional feature
   diagnostics in the dashboard
-- Branch base after rebase: `origin/main` at `9b553b6`
-  (`[age-265]: add board provenance grouping`)
-- Status: implementation, rebase, local verification, PR creation, branch push,
-  and CI are complete; PR #39 is open for review/merge
-- Open PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/39>
+- Merged PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/39>
+- Status: AGE-266 is merged, CI passed, and the canonical local checkout is
+  synced to `origin/main`
 - Last completed prerequisite: `AGE-265` / PR #38 merged at `9b553b6`
 
 ## What Changed In This Slice
@@ -122,7 +121,7 @@ warnings.
 
 ## Recommended Next Issue
 
-Once `AGE-266` is merged, work:
+Work:
 
 1. `AGE-267` - regenerate historical optional-feature artifacts with
    timestamp-valid coverage
