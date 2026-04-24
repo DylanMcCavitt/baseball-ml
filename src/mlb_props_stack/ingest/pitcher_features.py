@@ -119,7 +119,9 @@ def _build_pitcher_daily_feature_row(
     history_start_date: date,
     history_end_date: date,
 ) -> PitcherDailyFeatureRow:
-    features_as_of = max(_history_cutoff(date.fromisoformat(starter.official_date)), starter.captured_at)
+    features_as_of = _history_cutoff(date.fromisoformat(starter.official_date))
+    if starter.captured_at <= game.commence_time:
+        features_as_of = max(features_as_of, starter.captured_at)
     opponent_team_abbreviation, _ = _opponent_team(game, starter.team_side)
 
     if starter.pitcher_id is None:

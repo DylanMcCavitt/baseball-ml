@@ -774,6 +774,17 @@ def test_ingest_statcast_features_falls_back_to_latest_complete_historical_metad
 
     assert result.mlb_probable_starters_path == probable_starters_path
     assert result.pitcher_feature_count == 2
+    for path in (
+        result.pitcher_daily_features_path,
+        result.lineup_daily_features_path,
+        result.game_context_features_path,
+    ):
+        rows = [
+            json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert {row["features_as_of"] for row in rows} == {"2026-04-21T00:00:00Z"}
 
 
 def test_ingest_statcast_features_for_date_writes_feature_tables_and_handles_missing_inputs(

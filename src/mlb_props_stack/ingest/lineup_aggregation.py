@@ -171,7 +171,9 @@ def _build_lineup_daily_feature_row(
     pitcher_hand: str | None,
 ) -> LineupDailyFeatureRow:
     opponent_team_abbreviation, opponent_team_name = _opponent_team(game, starter.team_side)
-    base_features_as_of = max(_history_cutoff(date.fromisoformat(starter.official_date)), starter.captured_at)
+    base_features_as_of = _history_cutoff(date.fromisoformat(starter.official_date))
+    if starter.captured_at <= game.commence_time:
+        base_features_as_of = max(base_features_as_of, starter.captured_at)
     lineup_player_ids: tuple[int, ...] = ()
     lineup_status = "missing_pregame_lineup"
     features_as_of = base_features_as_of

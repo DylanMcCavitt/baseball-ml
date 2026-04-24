@@ -4,152 +4,198 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Current branch: `main`
-- Current `main`: synced to `origin/main` after the AGE-266 merge and handoff
-  update
-- Last completed issue: `AGE-266` - show active and excluded optional feature
-  diagnostics in the dashboard
-- Merged PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/39>
-- Status: AGE-266 is merged, CI passed, and the canonical local checkout is
-  synced to `origin/main`
-- Last completed prerequisite: `AGE-265` / PR #38 merged at `9b553b6`
+- Working branch: `feat/age-267-optional-feature-artifacts`
+- Base commit: `1701e7a` (`origin/main` at issue start)
+- Current issue: `AGE-267` - regenerate historical optional-feature artifacts
+  with timestamp-valid coverage
+- Pull request: <https://github.com/DylanMcCavitt/baseball-ml/pull/40>
+- Canonical ignored data directory used for regeneration:
+  `/Users/dylanmccavitt/projects/nba-ml/data`
+- Status: AGE-267 implementation, local artifact regeneration, verification,
+  and PR creation are complete. Merge closeout is still pending at the time this
+  handoff was written.
 
 ## What Changed In This Slice
 
-- Added active-schema diagnostics to the Feature Inspection screen:
-  - active inference run ID
-  - source training run ID
-  - target date
-  - encoded feature count
-  - active core features
-  - active optional features
-- Added read-only optional-feature family diagnostics under
-  `src/mlb_props_stack/dashboard/lib/data.py`.
-- The diagnostics resolve the active target-date inference model first, then
-  follow `source_model_run_id` back to the source baseline training run.
-- The diagnostic table now reports, by optional feature family:
-  - active feature count
-  - source train coverage
-  - current target-date coverage
-  - status/reason (`active`, `missing_source`,
-    `excluded_below_coverage`, `excluded_low_variance`, or
-    `excluded_by_selection`)
-  - stale/schema-mismatch notes when current artifacts expose old field names
-- Added focused fixture coverage for the diagnostics loader using a synthetic
-  inference run, source training run, and target-date feature artifacts.
+- Regenerated the canonical optional-feature artifact window
+  `2026-04-18` through `2026-04-23`.
+- Hardened umpire ingest so it no longer mines postgame `feed/live` payloads
+  and then clamps `captured_at` to first pitch. A home-plate assignment is only
+  used when the source capture is at or before `commence_time`; otherwise the
+  row is emitted as explicit `missing_umpire_source`.
+- Hardened pitcher, lineup, and game-context `features_as_of` handling so
+  post-cutoff metadata timestamps from historical completed slates do not
+  propagate into regenerated feature rows.
+- Added current MLB venue-id aliases to the static park-factor CSV for:
+  - Sutter Health Park (`2529`)
+  - Nationals Park (`3309`)
+  - Target Field (`3312`)
+  - Yankee Stadium (`3313`)
+  - Globe Life Field (`5325`)
+- Regenerated `game_context_features.jsonl` with current schema names:
+  `park_k_factor`, `park_k_factor_vs_rhh`, `park_k_factor_vs_lhh`,
+  `weather_wind_speed_mph`, `weather_humidity_pct`,
+  `ump_called_strike_rate_30d`, and
+  `ump_k_per_9_delta_vs_league_30d`.
+- Did not train or compare an expanded-feature model, did not change
+  stage-gate status, and did not loosen optional-feature selection thresholds.
 
-## Current 2026-04-23 Diagnosis
+## Artifact Runs Produced
 
-Using canonical data at `/Users/dylanmccavitt/projects/nba-ml/data`:
+Canonical weather runs:
 
-- active inference run: `20260423T210236Z`
-- source training run: `20260422T202712Z`
-- encoded feature count: `11`
-- active optional feature count: `0`
-- split features: `excluded_below_coverage`
-  - source train coverage: `0/60 (0%)`
-  - source all-row coverage: `0/108 (0%)`
-  - target-date coverage: `0/18 (0%)`
-- lineup aggregate features: `missing_source`
-  - reason: `missing_pregame_lineup`
-  - source train coverage: `0/60 (0%)`
-  - source all-row coverage: `0/108 (0%)`
-  - target-date coverage: `0/18 (0%)`
-- park factors: `missing_source`
-  - reason: `missing_park_factor_source`
-  - schema note: `park_factor present; expected park_k_factor`
-- weather: `missing_source`
-  - reason: `target-date weather source artifact missing`
-  - schema note: `weather_wind_mph present; expected weather_wind_speed_mph`
-- umpire: `missing_source`
-  - reason: `target-date umpire source artifact missing`
+| Date | Weather run |
+| --- | --- |
+| 2026-04-18 | `20260424T142001Z` |
+| 2026-04-19 | `20260424T142008Z` |
+| 2026-04-20 | `20260424T142016Z` |
+| 2026-04-21 | `20260424T142021Z` |
+| 2026-04-22 | `20260424T142027Z` |
+| 2026-04-23 | `20260424T142035Z` |
 
-This confirms the dashboard can now answer why optional fields are absent from
-the active model without requiring artifact spelunking.
+Canonical umpire runs:
+
+| Date | Umpire run | OK games | Missing-source games |
+| --- | --- | ---: | ---: |
+| 2026-04-18 | `20260424T142046Z` | 0 | 15 |
+| 2026-04-19 | `20260424T142046Z` | 0 | 15 |
+| 2026-04-20 | `20260424T142046Z` | 0 | 10 |
+| 2026-04-21 | `20260424T142046Z` | 0 | 15 |
+| 2026-04-22 | `20260424T142047Z` | 3 | 12 |
+| 2026-04-23 | `20260424T142047Z` | 2 | 7 |
+
+Canonical Statcast feature runs after the park-factor alias fix:
+
+| Date | Statcast feature run | Rows |
+| --- | --- | ---: |
+| 2026-04-18 | `20260424T142511Z` | 30 |
+| 2026-04-19 | `20260424T142513Z` | 30 |
+| 2026-04-20 | `20260424T142514Z` | 20 |
+| 2026-04-21 | `20260424T142515Z` | 30 |
+| 2026-04-22 | `20260424T142517Z` | 30 |
+| 2026-04-23 | `20260424T142521Z` | 18 |
+
+## Coverage Delta
+
+Pre-regeneration `check-data-alignment` for `2026-04-18` through
+`2026-04-23` showed:
+
+- `wx_cov=0.0%` and `ump_cov=0.0%` on every date.
+- `2026-04-22` had `pitcher_feats=0`, `lineup_feats=0`, and
+  `context_feats=0`.
+- Existing game-context rows used stale keys such as `park_factor` and
+  `weather_wind_mph`.
+
+Post-regeneration `check-data-alignment` showed:
+
+- `feat_cov=100.0%` for every date in the window.
+- `wx_cov=100.0%` for every date in the window.
+- `ump_cov=20.0%` on `2026-04-22` and `22.2%` on `2026-04-23`; older dates
+  correctly remain explicit missing-source because no pregame-valid umpire
+  assignment capture exists.
+- Remaining alignment failures are known odds/outcome gaps:
+  - `2026-04-18` through `2026-04-21`: odds coverage is still `0.0%`.
+  - `2026-04-22`: outcome and odds coverage still fail.
+  - `2026-04-23`: outcome coverage still fails.
+
+Direct artifact inspection after regeneration showed:
+
+- No generated pitcher, lineup, or game-context feature row had
+  `features_as_of > commence_time`.
+- `game_context_features.jsonl` no longer includes old `park_factor` or
+  `weather_wind_mph` keys.
+- Park-factor coverage is now non-null for every regenerated game-context row.
+- Weather wind speed and humidity are non-null for every outdoor row; fixed-roof
+  games remain explicit neutral/missing weather-field rows.
+- Umpire assignment rows exist for 2026-04-22 and 2026-04-23, but rolling
+  umpire tendency fields remain null because there is not yet enough prior
+  timestamp-valid umpire history.
+- Lineup aggregate coverage remains limited:
+  - `2026-04-18` through `2026-04-21` have no pregame-valid lineup snapshots.
+  - `2026-04-22` has 24 non-missing lineup rows, but only 5 rows currently have
+    non-null projected lineup K-rate metrics.
+  - `2026-04-23` has projected lineup rows, but the current artifact has null
+    lineup aggregate rates.
 
 ## Files Changed
 
+- `data/static/park_factors/park_k_factors.csv`
 - `docs/NEXT_SESSION_HANDOFF.md`
-- `src/mlb_props_stack/dashboard/app.py`
-- `src/mlb_props_stack/dashboard/lib/data.py`
-- `src/mlb_props_stack/dashboard/screens/features.py`
-- `tests/test_dashboard_data.py`
+- `src/mlb_props_stack/ingest/game_context.py`
+- `src/mlb_props_stack/ingest/lineup_aggregation.py`
+- `src/mlb_props_stack/ingest/pitcher_features.py`
+- `src/mlb_props_stack/ingest/umpire.py`
+- `tests/test_park_factors.py`
+- `tests/test_statcast_feature_ingest.py`
+- `tests/test_umpire_ingest.py`
 
 ## Verification
 
-Commands run successfully:
+Commands run:
 
 ```bash
 uv sync --extra dev
-uv run pytest tests/test_dashboard_data.py tests/test_dashboard_app.py
-uv run pytest tests/test_modeling.py
+uv run python -m mlb_props_stack check-data-alignment --start-date 2026-04-18 --end-date 2026-04-23 --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+uv run python -m mlb_props_stack ingest-weather --date <date> --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+uv run python -m mlb_props_stack ingest-umpire --date <date> --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+uv run python -m mlb_props_stack ingest-statcast-features --date <date> --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+uv run pytest tests/test_umpire_ingest.py tests/test_statcast_feature_ingest.py
+uv run pytest tests/test_park_factors.py tests/test_statcast_feature_ingest.py tests/test_weather_ingest.py tests/test_umpire_ingest.py tests/test_data_alignment.py
 uv run pytest tests/test_runtime_smokes.py
-uv run python -m mlb_props_stack
 uv run pytest
 python3 -m compileall src tests
-MLB_PROPS_STACK_DATA_DIR=/Users/dylanmccavitt/projects/nba-ml/data uv run streamlit run src/mlb_props_stack/dashboard/app.py --server.port 8502 --server.headless true
+uv run python -m mlb_props_stack
 ```
 
-Observed results after rebasing on merged AGE-265:
+The `<date>` commands were run for each date from `2026-04-18` through
+`2026-04-23`.
 
-- dashboard/modeling/runtime suite passed: `19 passed`
-- `tests/test_modeling.py`: `5 passed`
-- `tests/test_runtime_smokes.py`: `4 passed`
-- full test suite: `195 passed`
+Observed results:
+
+- `tests/test_umpire_ingest.py tests/test_statcast_feature_ingest.py`:
+  `33 passed`
+- `tests/test_park_factors.py tests/test_statcast_feature_ingest.py
+  tests/test_weather_ingest.py tests/test_umpire_ingest.py
+  tests/test_data_alignment.py`: `71 passed`
+- `tests/test_runtime_smokes.py`: `4 passed` with existing third-party
+  MLflow/Pydantic warnings
+- Full suite: `198 passed` with the same existing third-party warnings
 - `python3 -m compileall src tests` completed successfully
 - `uv run python -m mlb_props_stack` printed the runtime configuration banner
-- Streamlit launched on `http://localhost:8502`
-- GitHub PR #39 `validate` check passed in CI after the AGE-265 rebase
-
-Browser verification:
-
-- Opened
-  `http://localhost:8502/?screen=features&board_date=2026-04-23`
-  in the Codex in-app browser after the AGE-265 rebase.
-- Verified the Feature Inspection screen shows:
-  - active run `20260423T210236Z`
-  - source run `20260422T202712Z`
-  - encoded features `11`
-  - active optional `0`
-  - weather as `missing source` with target-date coverage `0/18 (0%)`
-  - umpire as `missing source` with target-date coverage `0/18 (0%)`
-  - schema notes for `park_factor` and `weather_wind_mph`
-- Clicked Board and Backtest nav controls and confirmed query params updated
-  and the destination screens rendered.
-
-The test runs still show the existing third-party MLflow/Pydantic deprecation
-warnings.
+- `check-data-alignment` still exits nonzero because remaining odds/outcome
+  gaps are outside AGE-267 scope; the post-run output now makes weather and
+  umpire coverage visible.
 
 ## Recommended Next Issue
 
 Work:
 
-1. `AGE-267` - regenerate historical optional-feature artifacts with
-   timestamp-valid coverage
-   - Backfill/regenerate weather, umpire, park, handedness split, and lineup
-     aggregate artifacts so optional columns can reach training rows.
-2. `AGE-268` - train and compare expanded-feature baseline against core-only
+1. `AGE-268` - train and compare expanded-feature baseline against core-only
    model
-   - Run only after `AGE-267` proves optional feature coverage exists.
-3. `AGE-262` - run the first approved-wager evidence refresh and readiness
+   - Use the regenerated feature window from AGE-267 and confirm which optional
+     families survive coverage and variance selection.
+   - Do not treat null lineup/umpire rolling metrics as bugs unless the source
+     artifacts above should have made them available.
+2. `AGE-262` - run the first approved-wager evidence refresh and readiness
    report
-   - Use `evaluate-stage-gates` as the readiness report command.
-4. `AGE-263` - close the sample-size gap for live-use stage gates
+   - Use `evaluate-stage-gates` as the readiness report command after a coherent
+     expanded/core comparison exists.
+3. `AGE-263` - close the sample-size gap for live-use stage gates
    - Broader evidence collection after the first coherent refresh.
 
 Related but not on the critical path:
 
-- `AGE-209` - add per-pitcher and per-game exposure caps to Kelly sizing
-  - Keep queued unless grouped board work shows exposure/correlation sizing is
-    still materially distorting the wager card before `AGE-262`.
+- `AGE-209` - add per-pitcher and per-game exposure caps to Kelly sizing.
+  Keep queued unless grouped board work shows exposure/correlation sizing is
+  still materially distorting the wager card before `AGE-262`.
 
 ## Constraints And Notes
 
-- Keep the diagnostics read-only. This issue did not retrain, backfill, lower
-  thresholds, or change feature-selection behavior.
-- Use the canonical ignored data directory for live dashboard verification:
-  `/Users/dylanmccavitt/projects/nba-ml/data`
-- The active model remains core-only because the source training run did not
-  contain enough populated optional feature coverage.
-- The next data issue should improve timestamp-valid artifact coverage rather
-  than changing the dashboard to hide the missing-source state.
+- Use the canonical ignored data directory for live dashboard/model checks:
+  `/Users/dylanmccavitt/projects/nba-ml/data`.
+- Do not mine postgame `feed/live` umpire assignments as if they were pregame
+  captures.
+- Do not loosen optional feature coverage thresholds to make a family appear
+  active.
+- The active model remains core-only until AGE-268 trains and compares a new
+  baseline.

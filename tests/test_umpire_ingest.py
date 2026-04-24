@@ -303,9 +303,11 @@ def test_ingest_umpire_http_error_emits_sentinel(tmp_path: Path) -> None:
     assert "simulated feed/live timeout" in (snapshot["error_message"] or "")
 
 
-def test_ingest_umpire_enforces_captured_at_leakage_guard(tmp_path: Path) -> None:
-    # commence_time earlier than ``now`` → captured_at must be clamped to
-    # commence_time so downstream features cannot leak post-pitch data.
+def test_ingest_umpire_preserves_pregame_persisted_capture_after_commence(
+    tmp_path: Path,
+) -> None:
+    # A feed/live payload captured before first pitch remains timestamp-valid
+    # even when the backfill itself runs after the game starts.
     _seed_games(
         tmp_path,
         [
@@ -332,9 +334,94 @@ def test_ingest_umpire_enforces_captured_at_leakage_guard(tmp_path: Path) -> Non
     snapshot = json.loads(
         result.umpire_snapshots_path.read_text(encoding="utf-8").splitlines()[0]
     )
-    captured_at = datetime.fromisoformat(snapshot["captured_at"].replace("Z", "+00:00"))
-    commence_time = datetime.fromisoformat(snapshot["commence_time"].replace("Z", "+00:00"))
-    assert captured_at <= commence_time
+    assert snapshot["captured_at"] == "2026-04-21T17:05:00Z"
+    assert snapshot["umpire_status"] == UMPIRE_STATUS_OK
+
+
+def test_ingest_umpire_rejects_postgame_persisted_feed_live_payload(
+    tmp_path: Path,
+) -> None:
+    _seed_games(
+        tmp_path,
+        [
+            _build_game_row(
+                game_pk=824454,
+                commence_time="2026-04-21T18:00:00Z",
+            )
+        ],
+    )
+    _seed_persisted_feed_live(
+        tmp_path,
+        game_pk=824454,
+        officials=[_home_plate_official(umpire_id=427395, umpire_name="Ed Hickox")],
+        captured_at_stamp="20260421T220000Z",
+    )
+
+    client = _StubMLBStatsAPIClient()
+    result = ingest_umpire_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        client=client,
+        now=lambda: datetime(2026, 4, 21, 22, 30, tzinfo=UTC),
+    )
+
+    assert client.urls == []
+    assert result.ok_snapshot_count == 0
+    assert result.missing_source_count == 1
+    snapshot = json.loads(
+        result.umpire_snapshots_path.read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert snapshot["captured_at"] == "2026-04-21T18:00:00Z"
+    assert snapshot["umpire_status"] == UMPIRE_STATUS_MISSING_SOURCE
+    assert snapshot["umpire_id"] is None
+    assert "captured after commence_time" in (snapshot["error_message"] or "")
+
+
+def test_ingest_umpire_skips_fresh_fetch_after_commence_without_pregame_source(
+    tmp_path: Path,
+) -> None:
+    _seed_games(
+        tmp_path,
+        [
+            _build_game_row(
+                game_pk=824455,
+                commence_time="2026-04-21T18:00:00Z",
+            )
+        ],
+    )
+
+    client = _StubMLBStatsAPIClient(
+        payloads_by_game_pk={
+            824455: {
+                "liveData": {
+                    "boxscore": {
+                        "officials": [
+                            _home_plate_official(
+                                umpire_id=500001,
+                                umpire_name="Alfonso Marquez",
+                            ),
+                        ],
+                    }
+                }
+            }
+        }
+    )
+    result = ingest_umpire_for_date(
+        target_date=date(2026, 4, 21),
+        output_dir=tmp_path,
+        client=client,
+        now=lambda: datetime(2026, 4, 21, 22, 30, tzinfo=UTC),
+    )
+
+    assert client.urls == []
+    assert result.ok_snapshot_count == 0
+    assert result.missing_source_count == 1
+    snapshot = json.loads(
+        result.umpire_snapshots_path.read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert snapshot["captured_at"] == "2026-04-21T18:00:00Z"
+    assert snapshot["umpire_status"] == UMPIRE_STATUS_MISSING_SOURCE
+    assert "fetch skipped after commence_time" in (snapshot["error_message"] or "")
 
 
 def test_ingest_umpire_rejects_non_positive_history_days(tmp_path: Path) -> None:

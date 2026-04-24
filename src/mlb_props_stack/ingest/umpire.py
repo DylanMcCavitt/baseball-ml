@@ -256,6 +256,21 @@ def _latest_persisted_feed_live_path(
     return candidates[-1]
 
 
+def _captured_at_from_feed_live_path(path: Path) -> datetime | None:
+    """Parse ``captured_at=YYYYMMDDTHHMMSSZ`` from a feed/live artifact path."""
+
+    stem = path.stem
+    prefix = "captured_at="
+    if not stem.startswith(prefix):
+        return None
+    try:
+        return datetime.strptime(stem[len(prefix) :], "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=UTC
+        )
+    except ValueError:
+        return None
+
+
 def _extract_home_plate_umpire(
     officials: list[dict[str, Any]] | None,
 ) -> tuple[int | None, str | None]:
@@ -623,9 +638,37 @@ def ingest_umpire_for_date(
         )
         payload: dict[str, Any] | None = None
         fetch_captured_at = now().astimezone(UTC)
+        captured_at: datetime | None = None
         if persisted_path is not None:
+            persisted_captured_at = _captured_at_from_feed_live_path(persisted_path)
+            if persisted_captured_at is None:
+                assignments.append(
+                    _make_missing_assignment(
+                        game=game,
+                        captured_at=min(fetch_captured_at, game.commence_time),
+                        error_message=(
+                            "persisted feed/live path did not include a parseable "
+                            f"captured_at timestamp: {persisted_path}"
+                        ),
+                    )
+                )
+                continue
+            if persisted_captured_at > game.commence_time:
+                assignments.append(
+                    _make_missing_assignment(
+                        game=game,
+                        captured_at=game.commence_time,
+                        error_message=(
+                            "latest persisted feed/live payload was captured after "
+                            "commence_time and cannot be used as a pregame umpire "
+                            f"source: {persisted_path}"
+                        ),
+                    )
+                )
+                continue
             try:
                 payload = json.loads(persisted_path.read_text(encoding="utf-8"))
+                captured_at = persisted_captured_at
             except (OSError, json.JSONDecodeError) as exc:
                 assignments.append(
                     _make_missing_assignment(
@@ -640,6 +683,18 @@ def ingest_umpire_for_date(
                 continue
 
         if payload is None:
+            if fetch_captured_at > game.commence_time:
+                assignments.append(
+                    _make_missing_assignment(
+                        game=game,
+                        captured_at=game.commence_time,
+                        error_message=(
+                            "feed/live fetch skipped after commence_time; no "
+                            "timestamp-valid pregame umpire source was available"
+                        ),
+                    )
+                )
+                continue
             if client is None:
                 client = MLBStatsAPIClient()
             source_url = build_feed_live_url(game.game_pk)
@@ -654,8 +709,10 @@ def ingest_umpire_for_date(
                     )
                 )
                 continue
+            captured_at = fetch_captured_at
 
-        captured_at = min(fetch_captured_at, game.commence_time)
+        if captured_at is None:
+            captured_at = min(fetch_captured_at, game.commence_time)
         assignment = _make_assignment_from_payload(
             game=game, payload=payload, captured_at=captured_at
         )
