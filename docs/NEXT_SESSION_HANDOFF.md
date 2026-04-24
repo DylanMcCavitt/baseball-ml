@@ -10,10 +10,15 @@
   against core-only model
 - Merged PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/43>
 - Merge commit: `c08a355`
-- Status: AGE-268 is merged, CI passed, and the canonical local checkout is
-  synced to `origin/main`.
+- Status: AGE-268 is merged, CI passed, the canonical local checkout is synced
+  to `origin/main`, and the next Linear execution path has been rescoped around
+  a projection-first model rebuild.
 - Canonical ignored data directory used for live model checks:
   `/Users/dylanmccavitt/projects/nba-ml/data`
+- Active rebuild track: `AGE-285` - rebuild pitcher strikeout projection model
+  before betting layer.
+- First next issue: `AGE-286` - audit and freeze current strikeout baseline as
+  v0.
 
 ## What Changed In This Slice
 
@@ -118,6 +123,47 @@ The `invalid_projection` rows are timestamp guardrails doing their job:
 examples had `features_as_of` after the selected line `captured_at`, so those
 rows were rejected instead of scored.
 
+## Post-AGE-268 Rescope Cleanup
+
+Linear was cleaned up on 2026-04-24 so future Codex threads do not follow stale
+readiness or patch issues.
+
+New parent track:
+
+- `AGE-285` - Track: rebuild pitcher strikeout projection model before betting
+  layer.
+
+New model-first sequence:
+
+1. `AGE-286` - audit and freeze current strikeout baseline as v0.
+2. `AGE-287` - build 5-7 season starter-game strikeout training dataset.
+3. `AGE-288` - build pitcher skill and pitch arsenal feature set.
+4. `AGE-289` - build batter-by-batter lineup matchup feature set.
+5. `AGE-290` - build expected workload, leash, and injury-context features.
+6. `AGE-291` - train candidate strikeout model families with distribution
+   outputs.
+7. `AGE-292` - validate model-only strikeout projections with walk-forward
+   splits.
+8. `AGE-293` - fix scoreable historical market joins for strikeout prop
+   backtests.
+9. `AGE-294` - rebuild betting layer against calibrated strikeout distributions.
+10. `AGE-295` - reconnect dashboard and approved-wager UX after model gates
+    pass.
+
+Issues removed from the execution path:
+
+- `AGE-262` and `AGE-263` are canceled as superseded by `AGE-285`; do not run
+  approved-wager evidence refresh or live-readiness stage-gate work before the
+  model rebuild validates.
+- `AGE-207` and `AGE-208` are canceled as superseded by `AGE-291`; calibration
+  gating and negative-binomial dispersion should be evaluated inside the new
+  model-family training issue, not patched into the old baseline.
+- `AGE-209`, `AGE-210`, and `AGE-212` remain in Backlog but are explicitly
+  deferred behind the rebuild boundaries:
+  - `AGE-209` waits for `AGE-294`.
+  - `AGE-210` waits for `AGE-286` / `AGE-291`.
+  - `AGE-212` waits for `AGE-293` / `AGE-294`.
+
 ## Files Changed
 
 - `README.md`
@@ -166,25 +212,23 @@ Observed results:
 
 ## Recommended Next Issue
 
-1. `AGE-262` - run the first approved-wager evidence refresh and readiness
-   report.
-   - Use the AGE-268 comparison report above as the model-comparison input.
-   - Expect `research_only` unless the readiness command is intentionally
-     documenting the current zero-scoreable-row blocker.
-   - Do not promote the expanded model from AGE-268 evidence.
-2. Follow-up blocker to consider during or after `AGE-262`:
-   - The model can train with 155 rows and optional weather/park/pitcher split
-     features active, but the saved walk-forward window is still all-skipped.
-   - The dominant blocker is odds/join quality:
-     unmatched event mappings, late-only snapshots, missing projections, and
-     timestamp-invalid projection rows.
-3. `AGE-263` remains the broader sample-size and live-use stage-gate gap after
-   the stack can produce scoreable backtest rows and approved wager evidence.
+1. `AGE-286` - audit and freeze current strikeout baseline as v0.
+   - Read the `AGE-285` parent first.
+   - Treat the current ridge model as infrastructure/baseline-v0, not the
+     decision-grade betting model.
+   - Document why current features over-weight rest days, why injury/layoff
+     context cannot be treated as normal rest, and why the model needs a larger
+     multi-season training set before betting decisions resume.
+2. Then continue through `AGE-287` through `AGE-295` in dependency order.
+3. Do not reopen `AGE-262`, `AGE-263`, `AGE-207`, or `AGE-208` for active work;
+   they are preserved in Linear for history only.
 
 ## Constraints And Notes
 
 - Keep using `/Users/dylanmccavitt/projects/nba-ml/data` for canonical live
   dashboard/model checks.
+- Do not perform live-readiness, approved-wager, or dashboard reconnection work
+  until the projection-first rebuild and validation gates pass.
 - Do not loosen optional-feature coverage or variance thresholds to make sparse
   lineup or umpire families appear active.
 - Keep the active model core-only until an expanded comparison improves
