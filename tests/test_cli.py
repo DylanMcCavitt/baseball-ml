@@ -9,6 +9,7 @@ from mlb_props_stack.ingest import (
     StatcastFeatureIngestResult,
 )
 from mlb_props_stack.modeling import StarterStrikeoutBaselineTrainingResult
+from mlb_props_stack.model_comparison import StarterStrikeoutModelComparisonResult
 from mlb_props_stack.paper_tracking import DailyCandidateWorkflowResult
 from tests.stage_gate_fixtures import seed_stage_gate_artifacts
 
@@ -158,6 +159,7 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
         start_date=date(2026, 4, 1),
         end_date=date(2026, 4, 20),
         run_id="20260421T180000Z",
+        feature_set="expanded",
         mlflow_run_id="mlflow-training-run-1",
         mlflow_experiment_name="mlb-props-stack-starter-strikeout-training",
         row_count=48,
@@ -185,7 +187,7 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
 
     monkeypatch.setattr(
         "mlb_props_stack.cli.train_starter_strikeout_baseline",
-        lambda *, start_date, end_date, output_dir: result,
+        lambda *, start_date, end_date, output_dir, feature_set: result,
     )
 
     main(
@@ -203,6 +205,7 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
 
     assert "Starter strikeout baseline training complete for 2026-04-01 -> 2026-04-20" in output
     assert "mlflow_run_id=mlflow-training-run-1" in output
+    assert "feature_set=expanded" in output
     assert "mlflow_experiment_name=mlb-props-stack-starter-strikeout-training" in output
     assert "training_rows=48" in output
     assert "dispersion_alpha=0.183742" in output
@@ -218,6 +221,47 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
     assert "evaluation_summary_path=" in output
     assert "evaluation_summary_markdown_path=" in output
     assert "reproducibility_notes_path=" in output
+
+
+def test_model_comparison_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = StarterStrikeoutModelComparisonResult(
+        start_date=date(2026, 4, 18),
+        end_date=date(2026, 4, 23),
+        run_id="20260424T180000Z",
+        recommendation="keep_core_only",
+        core_training_run_id="20260424T180001Z",
+        expanded_training_run_id="20260424T180002Z",
+        core_backtest_run_id="20260424T180003Z",
+        expanded_backtest_run_id="20260424T180004Z",
+        comparison_path=tmp_path / "model_comparison.json",
+        comparison_markdown_path=tmp_path / "model_comparison.md",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.compare_starter_strikeout_baselines",
+        lambda **_: result,
+    )
+
+    main(
+        [
+            "compare-starter-strikeout-baselines",
+            "--start-date",
+            "2026-04-18",
+            "--end-date",
+            "2026-04-23",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Starter strikeout model comparison complete for 2026-04-18 -> 2026-04-23" in output
+    assert "recommendation=keep_core_only" in output
+    assert "core_training_run_id=20260424T180001Z" in output
+    assert "expanded_backtest_run_id=20260424T180004Z" in output
+    assert "comparison_path=" in output
+    assert "comparison_markdown_path=" in output
 
 
 def test_edge_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsys):

@@ -321,7 +321,8 @@ Train the baseline model on one date range:
 ```bash
 uv run python -m mlb_props_stack train-starter-strikeout-baseline \
   --start-date 2026-04-01 \
-  --end-date 2026-04-20
+  --end-date 2026-04-20 \
+  --feature-set expanded
 ```
 
 By default that writes:
@@ -363,8 +364,8 @@ The normalized outputs include:
   training run
 - `evaluation_summary.json`
   a compact machine-readable offline report with held-out benchmark-vs-model
-  metrics, top feature importance, MLflow run metadata, and same-window
-  previous-run deltas
+  metrics, feature-set and optional-feature selection diagnostics, top feature
+  importance, MLflow run metadata, and same-window previous-run deltas
 - `evaluation_summary.md`
   a human-readable markdown version of the same offline report for quick local
   review after each training run
@@ -384,6 +385,48 @@ The current baseline fit is intentionally conservative on short windows:
   and variable across the training dates
 - it drops categorical dummy fields from the early baseline so sparse,
   short-window runs do not overfit to team-side splits alone
+
+Use `--feature-set core` when a run must pin the dense pitcher/workload schema
+and exclude every optional family. Use `--feature-set expanded` when a run
+should admit optional fields that pass the configured coverage and variance
+gates; sparse or constant optional fields remain explicit exclusions in the
+saved feature schema instead of being silently ignored.
+
+## Starter Strikeout Model Variant Comparison
+
+`AGE-268` adds a reproducible same-window comparison command for the current
+core-only baseline versus the expanded optional-feature candidate.
+
+```bash
+uv run python -m mlb_props_stack compare-starter-strikeout-baselines \
+  --start-date 2026-04-18 \
+  --end-date 2026-04-23 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+```
+
+The command trains two model variants over the same feature/outcome window,
+then runs pinned walk-forward backtests for each saved model run:
+
+- `core`
+  dense pitcher/workload fields only
+- `expanded`
+  dense core plus optional features that pass coverage and variance gates
+
+By default it writes:
+
+- `model_comparison.json`
+  machine-readable metrics, optional-feature activation/exclusion diagnostics,
+  backtest row counts, CLV, ROI, edge-bucket rollups, final-gate approved wager
+  counts, timestamp-audit status, and the promotion recommendation
+- `model_comparison.md`
+  a readable report for dashboard/readiness follow-up
+- `reproducibility_notes.md`
+  the exact core/expanded training commands and pinned backtest commands
+
+The recommendation stays `keep_core_only` unless the expanded candidate has
+active optional features and improves held-out error without worsening
+calibration, decision coverage, final-gate approval counts, CLV/ROI metrics, or
+timestamp-safety audits.
 
 ## Edge Candidate Build
 

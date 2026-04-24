@@ -31,6 +31,9 @@ COUNT_DISTRIBUTION_NAME = "negative_binomial_global_dispersion_v1"
 COUNT_DISTRIBUTION_FIT_METHOD = "method_of_moments"
 PROBABILITY_CALIBRATOR_NAME = "isotonic_ladder_probability_calibrator_v1"
 PROBABILITY_CALIBRATOR_SOURCE = "out_of_fold_ladder_events"
+FEATURE_SET_CORE = "core"
+FEATURE_SET_EXPANDED = "expanded"
+FEATURE_SET_CHOICES = (FEATURE_SET_CORE, FEATURE_SET_EXPANDED)
 RIDGE_ALPHA = 10.0
 OUTCOME_QUERY_PADDING_DAYS = 1
 DISTRIBUTION_TAIL_TOLERANCE = 1e-9
@@ -198,6 +201,7 @@ class StarterStrikeoutBaselineTrainingResult:
     start_date: date
     end_date: date
     run_id: str
+    feature_set: str
     mlflow_run_id: str
     mlflow_experiment_name: str
     row_count: int
@@ -327,6 +331,15 @@ def _load_jsonl_rows(path: Path) -> list[dict[str, Any]]:
 
 def _path_run_id(run_dir: Path) -> str:
     return run_dir.name.split("=", 1)[-1]
+
+
+def _unique_timestamp_run_id(base_time: datetime, run_root: Path) -> str:
+    candidate_time = base_time.astimezone(UTC)
+    while True:
+        run_id = candidate_time.strftime("%Y%m%dT%H%M%SZ")
+        if not run_root.joinpath(f"run={run_id}").exists():
+            return run_id
+        candidate_time += timedelta(seconds=1)
 
 
 def _clip_probability(probability: float) -> float:
@@ -908,23 +921,98 @@ def _feature_categorical_value(row: StarterStrikeoutTrainingRow, field_name: str
     return str(value)
 
 
-def _selected_numeric_features(train_rows: list[StarterStrikeoutTrainingRow]) -> tuple[str, ...]:
-    selected_features = list(CORE_NUMERIC_FEATURES)
+def _validate_feature_set(feature_set: str) -> str:
+    if feature_set not in FEATURE_SET_CHOICES:
+        raise ValueError(
+            "feature_set must be one of: "
+            f"{', '.join(FEATURE_SET_CHOICES)}"
+        )
+    return feature_set
+
+
+def _optional_feature_selection_diagnostics(
+    train_rows: list[StarterStrikeoutTrainingRow],
+    *,
+    feature_set: str,
+) -> dict[str, Any]:
+    resolved_feature_set = _validate_feature_set(feature_set)
+    training_row_count = len(train_rows)
+    diagnostics: list[dict[str, Any]] = []
+    active_optional_features: list[str] = []
+    excluded_optional_features: list[dict[str, Any]] = []
+
     for feature_name in OPTIONAL_NUMERIC_FEATURES:
         values = [
             value
             for row in train_rows
             if (value := _feature_numeric_value(row, feature_name)) is not None
         ]
-        if len(values) / len(train_rows) < OPTIONAL_FEATURE_MIN_COVERAGE:
-            continue
-        if max(values) - min(values) <= MIN_FEATURE_VARIANCE:
-            continue
-        selected_features.append(feature_name)
+        non_null_count = len(values)
+        coverage = non_null_count / training_row_count if training_row_count else 0.0
+        min_value = min(values) if values else None
+        max_value = max(values) if values else None
+        value_range = (
+            max_value - min_value
+            if min_value is not None and max_value is not None
+            else None
+        )
+
+        if resolved_feature_set == FEATURE_SET_CORE:
+            status = "excluded_by_core_feature_set"
+        elif coverage < OPTIONAL_FEATURE_MIN_COVERAGE:
+            status = "excluded_low_coverage"
+        elif value_range is None or value_range <= MIN_FEATURE_VARIANCE:
+            status = "excluded_low_variance"
+        else:
+            status = "selected"
+            active_optional_features.append(feature_name)
+
+        diagnostic = {
+            "feature": feature_name,
+            "status": status,
+            "training_row_count": training_row_count,
+            "non_null_count": non_null_count,
+            "coverage": round(coverage, 6),
+            "min": None if min_value is None else round(min_value, 6),
+            "max": None if max_value is None else round(max_value, 6),
+            "range": None if value_range is None else round(value_range, 6),
+        }
+        diagnostics.append(diagnostic)
+        if status != "selected":
+            excluded_optional_features.append(diagnostic)
+
+    return {
+        "feature_set": resolved_feature_set,
+        "thresholds": {
+            "optional_feature_min_coverage": OPTIONAL_FEATURE_MIN_COVERAGE,
+            "min_feature_variance": MIN_FEATURE_VARIANCE,
+        },
+        "active_optional_features": active_optional_features,
+        "excluded_optional_features": excluded_optional_features,
+        "optional_feature_diagnostics": diagnostics,
+    }
+
+
+def _selected_numeric_features(
+    train_rows: list[StarterStrikeoutTrainingRow],
+    *,
+    feature_set: str,
+) -> tuple[str, ...]:
+    selected_features = list(CORE_NUMERIC_FEATURES)
+    selected_features.extend(
+        _optional_feature_selection_diagnostics(
+            train_rows,
+            feature_set=feature_set,
+        )["active_optional_features"]
+    )
     return tuple(selected_features)
 
 
-def _build_vectorizer(train_rows: list[StarterStrikeoutTrainingRow]) -> _FeatureVectorizer:
+def _build_vectorizer(
+    train_rows: list[StarterStrikeoutTrainingRow],
+    *,
+    feature_set: str,
+) -> _FeatureVectorizer:
     pitch_type_features = tuple(
         f"pitch_type_usage:{pitch_type}"
         for pitch_type in sorted(
@@ -936,7 +1024,12 @@ def _build_vectorizer(train_rows: list[StarterStrikeoutTrainingRow]) -> _Feature
             }
         )
     )
-    numeric_features = tuple((*_selected_numeric_features(train_rows), *pitch_type_features))
+    numeric_features = tuple(
+        (
+            *_selected_numeric_features(train_rows, feature_set=feature_set),
+            *pitch_type_features,
+        )
+    )
     numeric_means: dict[str, float] = {}
     numeric_stds: dict[str, float] = {}
     for feature_name in numeric_features:
@@ -1016,8 +1109,12 @@ def _encode_row(row: StarterStrikeoutTrainingRow, vectorizer: _FeatureVectorizer
     return encoded
 
 
-def _fit_ridge_regression(train_rows: list[StarterStrikeoutTrainingRow]) -> _LinearModel:
-    vectorizer = _build_vectorizer(train_rows)
+def _fit_ridge_regression(
+    train_rows: list[StarterStrikeoutTrainingRow],
+    *,
+    feature_set: str,
+) -> _LinearModel:
+    vectorizer = _build_vectorizer(train_rows, feature_set=feature_set)
     encoded_rows = [_encode_row(row, vectorizer) for row in train_rows]
     feature_count = len(vectorizer.encoded_feature_names)
     matrix_size = feature_count + 1
@@ -1353,6 +1450,7 @@ def _out_of_fold_probability_rows(
     rows: list[StarterStrikeoutTrainingRow],
     *,
     date_splits: dict[str, list[str]],
+    feature_set: str,
 ) -> list[dict[str, Any]]:
     unique_dates = sorted({row.official_date for row in rows})
     split_by_date = {
@@ -1368,7 +1466,7 @@ def _out_of_fold_probability_rows(
         prediction_rows = _rows_for_dates(rows, [prediction_date])
         if not prior_rows or not prediction_rows:
             continue
-        model = _fit_ridge_regression(prior_rows)
+        model = _fit_ridge_regression(prior_rows, feature_set=feature_set)
         prior_predictions = [_predict_mean(row, model) for row in prior_rows]
         dispersion_alpha = _fit_negative_binomial_dispersion_alpha(
             prior_rows,
@@ -1875,6 +1973,7 @@ def _evaluation_summary_payload(
             ],
             "beats_poisson": evaluation["count_distribution"]["held_out_beats_poisson"],
         },
+        "feature_schema": evaluation["feature_schema"],
         "top_feature_importance": evaluation["feature_importance"][:10],
         "previous_run_comparison": None,
     }
@@ -1992,6 +2091,7 @@ def _render_evaluation_summary_markdown(summary: dict[str, Any]) -> str:
     held_out = summary["held_out_performance"]
     calibration = summary["held_out_probability_calibration"]
     count_distribution = summary["held_out_count_distribution"]
+    feature_schema = summary["feature_schema"]
 
     lines = [
         "# Starter Strikeout Baseline Evaluation Summary",
@@ -2011,6 +2111,7 @@ def _render_evaluation_summary_markdown(summary: dict[str, Any]) -> str:
             f"test={row_counts['test']}, held_out={row_counts['held_out']}"
         ),
         f"- Held-out status: `{held_out['status']}`",
+        f"- Feature set: `{feature_schema['feature_set']}`",
         "",
         "## Held-Out Performance",
         "",
@@ -2073,6 +2174,36 @@ def _render_evaluation_summary_markdown(summary: dict[str, Any]) -> str:
         lines.append(
             f"| `{feature['feature']}` | {_format_value(feature['coefficient'])} | "
             f"{_format_value(feature['absolute_importance'])} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Optional Feature Selection",
+            "",
+            (
+                "- Active optional features: "
+                f"`{len(feature_schema['active_optional_features'])}`"
+            ),
+        ]
+    )
+    if feature_schema["active_optional_features"]:
+        for feature_name in feature_schema["active_optional_features"]:
+            lines.append(f"  - `{feature_name}`")
+    else:
+        lines.append("  - none")
+
+    lines.extend(
+        [
+            "",
+            "| Optional Feature | Status | Coverage | Range |",
+            "| --- | --- | ---: | ---: |",
+        ]
+    )
+    for item in feature_schema["optional_feature_diagnostics"]:
+        lines.append(
+            f"| `{item['feature']}` | `{item['status']}` | "
+            f"{_format_value(item['coverage'])} | {_format_value(item['range'])} |"
         )
 
     lines.extend(["", "## Comparison To Previous Run", ""])
@@ -2142,6 +2273,8 @@ def _model_artifact(
     model: _LinearModel,
     *,
     dispersion_alpha: float,
+    feature_set: str = FEATURE_SET_EXPANDED,
+    feature_selection: dict[str, Any] | None = None,
     probability_calibrator: _ProbabilityCalibrator | dict[str, Any] | None = None,
     tracking: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -2150,6 +2283,7 @@ def _model_artifact(
         calibrator_payload = _json_ready(_coerce_probability_calibrator(probability_calibrator))
     return {
         "model_version": MODEL_VERSION,
+        "feature_set": feature_set,
         "ridge_alpha": RIDGE_ALPHA,
         "count_distribution": {
             "name": COUNT_DISTRIBUTION_NAME,
@@ -2159,6 +2293,7 @@ def _model_artifact(
         },
         "intercept": round(model.intercept, 6),
         "encoded_feature_names": list(model.vectorizer.encoded_feature_names),
+        "feature_selection": feature_selection,
         "coefficients": {
             feature_name: round(coefficient, 6)
             for feature_name, coefficient in zip(
@@ -2187,12 +2322,14 @@ def _training_rerun_command(
     start_date: date,
     end_date: date,
     output_dir: Path | str,
+    feature_set: str,
 ) -> str:
     return (
         "uv run python -m mlb_props_stack train-starter-strikeout-baseline "
         f"--start-date {start_date.isoformat()} "
         f"--end-date {end_date.isoformat()} "
-        f"--output-dir {quote(str(output_dir))}"
+        f"--output-dir {quote(str(output_dir))} "
+        f"--feature-set {feature_set}"
     )
 
 
@@ -2244,10 +2381,12 @@ def _training_tracking_params(
     evaluation: dict[str, Any],
     held_out_status: str,
     min_sample_for_calibration: int,
+    feature_set: str,
 ) -> dict[str, Any]:
     return {
         "pipeline": "train_starter_strikeout_baseline",
         "model_version": MODEL_VERSION,
+        "feature_set": feature_set,
         "benchmark_name": BENCHMARK_NAME,
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -2485,8 +2624,10 @@ def train_starter_strikeout_baseline(
     client: StatcastSearchClient | None = None,
     now: Callable[[], datetime] = utc_now,
     tracking_config: TrackingConfig | None = None,
+    feature_set: str = FEATURE_SET_EXPANDED,
 ) -> StarterStrikeoutBaselineTrainingResult:
     """Train the first deterministic starter strikeout baseline model."""
+    resolved_feature_set = _validate_feature_set(feature_set)
     if client is None:
         client = StatcastSearchClient()
 
@@ -2523,7 +2664,11 @@ def train_starter_strikeout_baseline(
     if not train_rows or not validation_rows or not test_rows:
         raise ValueError("Date splits must leave at least one row in train, validation, and test.")
 
-    model = _fit_ridge_regression(train_rows)
+    model = _fit_ridge_regression(train_rows, feature_set=resolved_feature_set)
+    feature_selection = _optional_feature_selection_diagnostics(
+        train_rows,
+        feature_set=resolved_feature_set,
+    )
     train_model_predictions = [_predict_mean(row, model) for row in train_rows]
     dispersion_alpha = _fit_negative_binomial_dispersion_alpha(
         train_rows,
@@ -2537,6 +2682,7 @@ def train_starter_strikeout_baseline(
     oof_probability_rows = _out_of_fold_probability_rows(
         rows_with_outcomes,
         date_splits=date_splits,
+        feature_set=resolved_feature_set,
     )
     production_calibrator = _fit_probability_calibrator(
         probabilities=[
@@ -2560,12 +2706,23 @@ def train_starter_strikeout_baseline(
     }
     evaluation: dict[str, Any] = {
         "model_version": MODEL_VERSION,
+        "feature_set": resolved_feature_set,
         "benchmark_name": BENCHMARK_NAME,
         "date_splits": date_splits,
         "row_counts": {split_name: len(split_rows) for split_name, split_rows in evaluation_rows.items()},
         "feature_importance": _feature_importance(model),
         "feature_schema": {
+            "feature_set": resolved_feature_set,
             "encoded_feature_names": list(model.vectorizer.encoded_feature_names),
+            "numeric_feature_names": list(model.vectorizer.numeric_features),
+            "core_numeric_features": list(CORE_NUMERIC_FEATURES),
+            "optional_numeric_features": list(OPTIONAL_NUMERIC_FEATURES),
+            "active_optional_features": feature_selection["active_optional_features"],
+            "excluded_optional_features": feature_selection["excluded_optional_features"],
+            "optional_feature_diagnostics": feature_selection[
+                "optional_feature_diagnostics"
+            ],
+            "selection_thresholds": feature_selection["thresholds"],
             "prohibited_fields_checked": sorted(PROHIBITED_MODEL_FEATURE_FIELDS),
         },
         "benchmark": {},
@@ -2770,14 +2927,14 @@ def train_starter_strikeout_baseline(
             "pricing issue can inspect where reliability improved and where it did not."
         )
 
-    run_id = now().astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
-    normalized_root = (
+    run_root = (
         output_root
         / "normalized"
         / "starter_strikeout_baseline"
         / f"start={start_date.isoformat()}_end={end_date.isoformat()}"
-        / f"run={run_id}"
     )
+    run_id = _unique_timestamp_run_id(now().astimezone(UTC), run_root)
+    normalized_root = run_root / f"run={run_id}"
     dataset_path = normalized_root / "training_dataset.jsonl"
     outcomes_path = normalized_root / "starter_outcomes.jsonl"
     date_splits_path = normalized_root / "date_splits.json"
@@ -2799,6 +2956,7 @@ def train_starter_strikeout_baseline(
         start_date=start_date,
         end_date=end_date,
         output_dir=output_dir,
+        feature_set=resolved_feature_set,
     )
     run_name = (
         f"starter-strikeout-baseline-{start_date.isoformat()}-"
@@ -2844,6 +3002,8 @@ def train_starter_strikeout_baseline(
             model_path,
             _model_artifact(
                 model,
+                feature_set=resolved_feature_set,
+                feature_selection=feature_selection,
                 dispersion_alpha=dispersion_alpha,
                 probability_calibrator=production_calibrator,
                 tracking=tracking_payload,
@@ -2891,6 +3051,7 @@ def train_starter_strikeout_baseline(
                 evaluation=evaluation,
                 held_out_status=str(evaluation_summary["held_out_performance"]["status"]),
                 min_sample_for_calibration=config.min_sample_for_calibration,
+                feature_set=resolved_feature_set,
             )
         )
         log_run_metrics(
@@ -2904,6 +3065,7 @@ def train_starter_strikeout_baseline(
         start_date=start_date,
         end_date=end_date,
         run_id=run_id,
+        feature_set=resolved_feature_set,
         mlflow_run_id=tracking_run.run_id,
         mlflow_experiment_name=tracking_run.experiment_name,
         row_count=len(rows_with_outcomes),
