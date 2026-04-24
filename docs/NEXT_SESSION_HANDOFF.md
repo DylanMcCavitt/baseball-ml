@@ -96,6 +96,8 @@ Observed results:
     `?screen=pitcher&board_date=2026-04-23&pitcher_id=mlb-pitcher%3A594798`.
   - A layout issue where row-mode labels wrapped vertically was fixed by giving
     the mode control its own wider row area and moving search below it.
+  - A review pass moved the `GROUP` column next to `SOURCE` so hidden-row counts
+    are visible without horizontal scrolling.
 - PR #38 was opened as a draft after the branch was pushed.
 
 The test runs still show the existing third-party MLflow/Pydantic deprecation

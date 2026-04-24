@@ -86,6 +86,7 @@ def _board_table_html(
                 line_snapshot,
                 updated_at,
             )
+            + f"<td>{_line_group_cell(row)}</td>"
             + f"<td class='strike-num'>{float(row['line']):.1f}</td>"
             + "<td><span class='strike-side {}'>{}</span></td>".format(
                 side_class,
@@ -105,7 +106,6 @@ def _board_table_html(
                     "var(--accent)" if bool(row["cleared"]) else "var(--dim)",
                 )
             )
-            + f"<td>{_line_group_cell(row)}</td>"
             + f"<td>{escape(str(row['note']))}</td>"
             + "</tr>"
         )
@@ -119,6 +119,7 @@ def _board_table_html(
         "<th style='text-align:left'>PITCHER</th>"
         "<th style='text-align:left'>MATCH</th>"
         "<th style='text-align:left'>SOURCE</th>"
+        "<th style='text-align:left'>GROUP</th>"
         "<th>LINE</th>"
         "<th>SIDE</th>"
         "<th>P(MODEL)</th>"
@@ -127,7 +128,6 @@ def _board_table_html(
         "<th>EDGE</th>"
         "<th>KELLY</th>"
         "<th>CONF</th>"
-        "<th style='text-align:left'>GROUP</th>"
         "<th style='text-align:left'>NOTE</th>"
         "</tr></thead>"
         "<tbody>"
@@ -185,7 +185,7 @@ def render_board_screen(
         key="board_display_mode",
     )
     query = st.text_input(
-        "Pitcher or team",
+        "Pitcher, team, or book",
         value="",
         placeholder="filter pitcher/team...",
         key="board_query",
