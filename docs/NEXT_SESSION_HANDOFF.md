@@ -4,13 +4,14 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Current branch: `feat/age-268-expanded-feature-comparison`
-- Current branch base: `origin/main` at `d3be83d`
-- Active issue: `AGE-268` - train and compare expanded-feature baseline
+- Current branch: `main`
+- Current `main`: synced to `origin/main` after the AGE-268 merge
+- Last completed issue: `AGE-268` - train and compare expanded-feature baseline
   against core-only model
-- PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/43>
-- Status: implementation and local verification are complete; PR review/merge
-  closeout is still pending from this worktree.
+- Merged PR: <https://github.com/DylanMcCavitt/baseball-ml/pull/43>
+- Merge commit: `c08a355`
+- Status: AGE-268 is merged, CI passed, and the canonical local checkout is
+  synced to `origin/main`.
 - Canonical ignored data directory used for live model checks:
   `/Users/dylanmccavitt/projects/nba-ml/data`
 
