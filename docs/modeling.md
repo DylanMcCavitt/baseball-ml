@@ -254,6 +254,14 @@ approval gates to the backtest reporting rows, and writes
 `model_comparison.json` plus `model_comparison.md` under
 `data/normalized/starter_strikeout_model_comparison/...`.
 
+AGE-286 freezes this current path as `starter-strikeout-baseline-v0`. The
+freeze is an audit label, not a production promotion: the ridge baseline,
+global dispersion layer, calibrator, artifact layout, and comparison CLI remain
+useful infrastructure, but the projection itself is not trusted for live
+betting or readiness claims. See `docs/baseline_v0_audit.md` for the retained
+AGE-268 evidence, rest-days risk, optional-feature coverage gaps, and
+assumptions that must not carry into the rebuild.
+
 AGE-148 adds the first explicit count-distribution layer on top of that mean:
 
 - the ridge baseline still owns the expected strikeout mean
@@ -369,8 +377,10 @@ Current implementation path:
 - benchmark baseline:
   `pitcher_k_rate * expected_leash_batters_faced`
 - current trainable baseline:
-  deterministic ridge-style linear regression implemented in the standard
-  library so the repo stays dependency-light during bootstrap
+  `starter-strikeout-baseline-v0`, a deterministic ridge-style linear
+  regression implemented in the standard library so the repo stays
+  dependency-light during bootstrap; this is infrastructure-only and not a
+  production or live-use betting model
 - current count-distribution layer:
   a fitted global negative-binomial dispersion parameter with variance
   `mean + alpha * mean^2`, used to turn the ridge mean into over or under line

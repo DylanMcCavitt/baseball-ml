@@ -25,7 +25,7 @@ from .tracking import (
     start_experiment_run,
 )
 
-MODEL_VERSION = "starter-strikeout-baseline-v1"
+MODEL_VERSION = "starter-strikeout-baseline-v0"
 BENCHMARK_NAME = "pitcher_k_rate_x_expected_leash_batters_faced"
 COUNT_DISTRIBUTION_NAME = "negative_binomial_global_dispersion_v1"
 COUNT_DISTRIBUTION_FIT_METHOD = "method_of_moments"
