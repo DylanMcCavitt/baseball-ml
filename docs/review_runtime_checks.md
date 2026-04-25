@@ -81,6 +81,8 @@ Run the actual changed command, not just the module entrypoint:
 - `ingest-odds-api-lines`
 - `build-starter-strikeout-dataset`
 - `build-pitcher-skill-features`
+- `build-lineup-matchup-features`
+- `build-workload-leash-features`
 - `train-starter-strikeout-baseline`
 - `compare-starter-strikeout-baselines`
 - `build-edge-candidates`
@@ -129,6 +131,7 @@ For projection-rebuild feature layers, inspect:
 - `pitcher_skill_features.jsonl`
 - `lineup_matchup_features.jsonl`
 - `batter_matchup_features.jsonl`
+- `workload_leash_features.jsonl`
 - `feature_report.json`
 - `feature_report.md`
 - `reproducibility_notes.md`
@@ -137,6 +140,13 @@ For lineup matchup builds, confirm the report distinguishes no confirmed
 lineup, no projection, and incomplete batter history; confirm
 `leakage_policy.status` is `ok`; and spot-check that same-game batter IDs do
 not appear in the projected lineup when no pregame lineup snapshot exists.
+
+For workload/leash builds, confirm `rest_policy.raw_rest_days_primary_driver`
+is `false`, long-layoff rows are counted separately from standard rest, and
+`leakage_policy.status` is `ok`. Spot-check that expected pitch count and
+expected batters faced come from prior starts/team context, while IL, rehab,
+and role-change flags remain unknown/false unless a timestamp-valid source
+explicitly backs them.
 
 For model-variant comparison work, open:
 

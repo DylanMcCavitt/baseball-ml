@@ -47,6 +47,7 @@ modeling work must honor.
 | Starter-game dataset | `src/mlb_props_stack/starter_dataset.py` | build the standalone one-row-per-starter-game strikeout target dataset plus coverage, missing-target, schema-drift, timestamp-policy, and reproducibility artifacts for the projection rebuild |
 | Pitcher skill features | `src/mlb_props_stack/pitcher_skill_features.py` | build prior-only pitcher skill, pitch arsenal, shrinkage, recent-form, and capped rest-bucket features over the starter-game dataset |
 | Lineup matchup features | `src/mlb_props_stack/lineup_matchup_features.py` | build prior-only batter-by-batter and aggregate opponent-lineup matchup features over the starter-game dataset |
+| Workload and leash features | `src/mlb_props_stack/workload_leash_features.py` | build prior-only expected opportunity, pitch-count, batters-faced, rest-bucket, team-leash, and role-context features over the starter-game dataset |
 | Obsolete pre-rebuild modeling | `src/mlb_props_stack/modeling.py` | legacy v0 training path retained only until the rebuild replaces it; do not use `starter-strikeout-baseline-v0` as current performance evidence or as the rebuild benchmark |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, per-book and consensus devig, book hold, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
@@ -249,6 +250,28 @@ the rebuild dataset does not carry a pregame lineup snapshot, the fallback is
 the opponent team's most recent prior-game batting order, labeled
 `projected_from_prior_team_game`. Rows with no projection or incomplete batter
 history keep explicit status fields instead of zero-filled numeric features.
+
+AGE-290 adds the expected-opportunity workload and leash layer on top of the
+same starter-game artifact:
+
+- `data/normalized/workload_leash_features/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../workload_leash_features.jsonl`
+  one row per starter-game with prior-only recent pitch counts, recent batters
+  faced, season workload distributions, team starter leash tendency, expected
+  pitch count, expected batters faced, times-through-order threshold rates,
+  capped rest buckets, and source-backed opener/bulk role context
+- `feature_report.json` and `feature_report.md`
+  coverage, variance, top correlations by season, rest policy, role-context
+  source counts, leakage status, and artifact paths
+- `reproducibility_notes.md`
+  exact rerun command and the rule that same-game target outcomes are not
+  workload inputs
+
+This layer is intentionally separate from pitcher skill and lineup matchup
+features. It describes how many opportunities a starter is expected to receive,
+not how often the starter creates strikeouts per opportunity. Raw continuous
+`rest_days` is not emitted; long layoffs are separate from standard rest and
+stay labeled as unknown layoff context unless a timestamp-valid source
+explicitly labels IL, rehab, or role-change state.
 
 AGE-147 adds:
 
