@@ -4,148 +4,85 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Current checked-out branch: `main`
-- Current `main`: `7d25ce3` (`origin/main`, AGE-287 merged)
-- Last completed issue: `AGE-287` - build 5-7 season starter-game strikeout
-  training dataset
-- Merged PR: `https://github.com/DylanMcCavitt/baseball-ml/pull/45`
+- Current issue branch: `feat/age-288-pitcher-skill-arsenal`
+- Base state: `ef9e1e4` (`origin/main`, AGE-287 merged plus post-merge
+  handoff update)
+- Active issue: `AGE-288` - build pitcher skill and pitch arsenal feature set
 - Parent rebuild track: `AGE-285` - rebuild pitcher strikeout projection model
   before betting layer
-- Implementation state: AGE-287 code, docs, and canonical multi-season artifact
-  build are merged and the canonical checkout is synced to `origin/main`.
-- Next issue: `AGE-288` - pitcher skill and pitch arsenal features.
-- Canonical ignored data directory for future live model checks:
+- Implementation state: AGE-288 code, docs, tests, and a real canonical
+  artifact smoke are complete in this worktree.
+- Canonical ignored data directory for live model checks:
   `/Users/dylanmccavitt/projects/nba-ml/data`
 
-## What Changed In AGE-287
+## What Changed In AGE-288
 
-- Added `src/mlb_props_stack/starter_dataset.py`, a standalone dataset builder
-  for the projection rebuild.
+- Added `src/mlb_props_stack/pitcher_skill_features.py`, a standalone feature
+  builder over the AGE-287 starter-game dataset.
 - Added the CLI command:
 
 ```bash
-uv run python -m mlb_props_stack build-starter-strikeout-dataset \
+uv run python -m mlb_props_stack build-pitcher-skill-features \
   --start-date 2019-03-20 \
   --end-date 2026-04-24 \
   --output-dir /Users/dylanmccavitt/projects/nba-ml/data \
-  --chunk-days 3 \
-  --max-fetch-workers 4
+  --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
 ```
 
-- Source behavior:
-  - uses normalized Statcast feature runs when present
-  - falls back to direct regular-season Baseball Savant Statcast pitch-log
-    chunks when feature runs are absent
-  - direct mode infers actual starters from the first pitcher used by each
-    fielding team and counts same-game strikeout events only for the target
-    label
+- The builder reads `starter_game_training_dataset.jsonl` plus
+  `source_manifest.jsonl` raw Statcast CSV paths from the selected AGE-287 run.
+- Feature rows use only pitch rows whose `game_date` is before the starter-game
+  `official_date`; same-game `starter_strikeouts` is used only inside the
+  report correlation calculation and is not written into the feature table.
+- Added pitcher-centered feature families:
+  - K%, walk rate, K-BB%, strike rate, CSW%, SwStr%, whiff rate, called-strike
+    rate, and putaway rate
+  - career, season, recent 15-day, and last-3-start windows
+  - pitch-type usage plus pitch-type whiff and CSW rates
+  - velocity, spin, horizontal/vertical movement, release extension, and deltas
+    versus the pitcher's prior baseline
+  - sample-size-regressed pitcher skill priors recorded as shrinkage context,
+    not raw pitcher-id memorization
+  - capped rest context plus explicit rest buckets
+- Rest/layoff correction:
+  - raw continuous `rest_days` is not emitted as a primary model driver
+  - `rest_days_capped` is capped at `14`
+  - short rest, standard rest, extra rest, long layoff, and no-prior-start flags
+    are explicit
+  - generated reports assert long layoff has no unbounded positive numeric
+    contribution
 - The command writes:
-  - `starter_game_training_dataset.jsonl`
-  - `coverage_report.json`
-  - `coverage_report.md`
-  - `missing_targets.jsonl`
-  - `source_manifest.jsonl`
-  - `schema_drift_report.json`
-  - `timestamp_policy.md`
+  - `pitcher_skill_features.jsonl`
+  - `feature_report.json`
+  - `feature_report.md`
   - `reproducibility_notes.md`
-- Added fixture-backed tests that verify:
-  - rows are unique by `(official_date, game_pk, pitcher_id)`
-  - same-game Statcast target matching lands in `starter_strikeouts`
-  - missing targets are excluded and recorded
-  - row counts by season/team and timestamp-policy status land in coverage
-  - direct Statcast fallback works without feature-run artifacts
-  - missing source dates and source chunk cap warnings are reported
-- Updated README, modeling, architecture, and runtime-review docs with the new
-  dataset contract.
+- Updated README, modeling, architecture, runtime-review docs, CLI tests, and
+  focused feature tests with the new artifact contract.
 
-## Local AGE-287 Data Evidence
+## Local AGE-288 Data Evidence
 
-- Canonical data directory inspected:
-  `/Users/dylanmccavitt/projects/nba-ml/data`
-- Only tracked static data files are currently present there:
-  `data/static/park_factors/*` and `data/static/venues/*`.
-- Running the new command against the canonical data path for
-  `2026-04-18 -> 2026-04-23` produced an honest zero-row artifact because no
-  normalized Statcast feature runs exist in that directory after the AGE-268
-  cleanup.
-- Investigation result: the zero-row artifact happened because the first
-  implementation depended only on missing feature-run artifacts. Starter-game
-  target data was available from direct regular-season Statcast pitch-log
-  pulls.
-- The fixed direct-mode build completed successfully:
-
-```bash
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-starter-strikeout-dataset --start-date 2019-03-20 --end-date 2026-04-24 --output-dir /Users/dylanmccavitt/projects/nba-ml/data --chunk-days 3 --max-fetch-workers 4
-```
-
-- Canonical AGE-287 artifact:
+- Canonical AGE-287 dataset used for the smoke:
   `/Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z/`
-- Coverage:
-  - `source_mode=direct_statcast_pitch_log`
-  - `dataset_rows=31729`
-  - `source_starter_rows=31732`
-  - `missing_targets=3`
-  - `excluded_starts=3`
-  - `duplicate_source_rows=0`
-  - `timestamp_violations=0`
-  - `source_chunks=587`
-  - `cap_warning_count=0`
-  - `max_pitch_row_count=14358`, safely below the 25,000-row warning threshold
-  - seasons represented: `2019`, `2020`, `2021`, `2022`, `2023`, `2024`,
-    `2025`, `2026`
-  - row counts by season: `2019=4858`, `2020=1796`, `2021=4858`,
-    `2022=4859`, `2023=4860`, `2024=4856`, `2025=4860`, `2026=782`
-- Missing targets:
-  - `2022-05-22` STL away, Steven Matz
-  - `2024-06-05` DET away, Kenta Maeda
-  - `2024-08-27` CWS home, Garrett Crochet
-
-## Prior AGE-286 Context
-
-- Froze the current generated starter strikeout model label as
-  `starter-strikeout-baseline-v0`.
-- Added `docs/baseline_v0_audit.md`, which records:
-  - what the current ridge baseline, global dispersion layer, calibrator, and
-    artifact layout do
-  - the preserved AGE-268 run IDs, split behavior, comparison metrics, zero
-    scoreable rows, and zero approved wagers
-  - the exact retained optional-feature activation and exclusion evidence
-  - why `rest_days` is unsafe as a standalone continuous core feature for
-    injury return, long layoff, role-change, and pitch-limit context
-  - which old betting/readiness issues are blocked or superseded by the model
-    rebuild
-  - which v0 assumptions must not carry forward
-- Updated `README.md`, `docs/modeling.md`, and `docs/architecture.md` so the
-  current baseline is explicitly described as infrastructure-only, not the
-  production or live-use projection model.
-- Updated the seeded training runtime smoke expectation for the new generated
-  `starter-strikeout-baseline-v0` label.
-
-## AGE-268 Evidence Location
-
-The detailed AGE-268 comparison evidence now lives in
-`docs/baseline_v0_audit.md`. Important retained facts:
-
-- Comparison command:
+- Real AGE-288 smoke command:
 
 ```bash
-uv run python -m mlb_props_stack compare-starter-strikeout-baselines --start-date 2026-04-18 --end-date 2026-04-23 --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+/opt/homebrew/bin/uv run python -m mlb_props_stack build-pitcher-skill-features --start-date 2024-04-01 --end-date 2024-04-03 --output-dir /Users/dylanmccavitt/projects/nba-ml/data --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
 ```
 
-- Run IDs:
-  - Core training `20260424T164050Z`, core backtest `20260424T164112Z`
-  - Expanded training `20260424T164112Z`, expanded backtest `20260424T164113Z`
-- Current `_split_dates` behavior for the six-date window:
-  - train: `2026-04-18` through `2026-04-21`
-  - validation: `2026-04-22`
-  - test: `2026-04-23`
-- Preserved backtest counts:
-  - snapshot groups: `469` core, `469` expanded
-  - scoreable rows: `0` core, `0` expanded
-  - final-gate approved wagers: `0` core, `0` expanded
-- The generated AGE-268 files were intentionally deleted from the canonical
-  checkout on 2026-04-24. Do not guess deleted training-row counts; AGE-287
-  should persist durable multi-season row-count evidence.
+- Smoke artifact:
+  `/Users/dylanmccavitt/projects/nba-ml/data/normalized/pitcher_skill_features/start=2024-04-01_end=2024-04-03/run=20260425T180426Z/`
+- Smoke result:
+  - `dataset_rows=31729`
+  - `feature_rows=80`
+  - `pitch_rows=4684022`
+  - `pitchers=80`
+  - leakage policy status: `ok`
+  - rest policy: raw rest-days primary driver is `false`, cap is `14`, and
+    long layoff has no unbounded positive numeric feature
+- The smoke took about one minute because it reads all preserved raw Statcast
+  chunks from the full AGE-287 run. A future optimization can filter manifest
+  chunks by requested feature window plus required prior history, but the
+  current runtime is acceptable for the rebuild artifact path.
 
 ## Files Changed
 
@@ -155,9 +92,9 @@ uv run python -m mlb_props_stack compare-starter-strikeout-baselines --start-dat
 - `docs/modeling.md`
 - `docs/review_runtime_checks.md`
 - `src/mlb_props_stack/cli.py`
-- `src/mlb_props_stack/starter_dataset.py`
+- `src/mlb_props_stack/pitcher_skill_features.py`
 - `tests/test_cli.py`
-- `tests/test_starter_dataset.py`
+- `tests/test_pitcher_skill_features.py`
 
 ## Verification
 
@@ -165,15 +102,8 @@ Commands run:
 
 ```bash
 /opt/homebrew/bin/uv sync --extra dev
-/opt/homebrew/bin/uv run pytest tests/test_modeling.py
-/opt/homebrew/bin/uv run python -m mlb_props_stack train-starter-strikeout-baseline --start-date 2026-04-18 --end-date 2026-04-23 --output-dir /Users/dylanmccavitt/projects/nba-ml/data
-/opt/homebrew/bin/uv run pytest tests/test_starter_dataset.py
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-starter-strikeout-dataset --start-date 2026-04-18 --end-date 2026-04-23 --output-dir /Users/dylanmccavitt/projects/nba-ml/data
-/opt/homebrew/bin/uv run pytest tests/test_starter_dataset.py tests/test_cli.py
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-starter-strikeout-dataset --start-date 2024-04-01 --end-date 2024-04-01 --output-dir /Users/dylanmccavitt/projects/nba-ml/data --chunk-days 1 --max-fetch-workers 1
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-starter-strikeout-dataset --start-date 2025-04-01 --end-date 2025-04-01 --output-dir /Users/dylanmccavitt/projects/nba-ml/data --chunk-days 1 --max-fetch-workers 1
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-starter-strikeout-dataset --start-date 2026-04-01 --end-date 2026-04-01 --output-dir /Users/dylanmccavitt/projects/nba-ml/data --chunk-days 1 --max-fetch-workers 1
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-starter-strikeout-dataset --start-date 2019-03-20 --end-date 2026-04-24 --output-dir /Users/dylanmccavitt/projects/nba-ml/data --chunk-days 3 --max-fetch-workers 4
+/opt/homebrew/bin/uv run pytest tests/test_pitcher_skill_features.py tests/test_cli.py
+/opt/homebrew/bin/uv run python -m mlb_props_stack build-pitcher-skill-features --start-date 2024-04-01 --end-date 2024-04-03 --output-dir /Users/dylanmccavitt/projects/nba-ml/data --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
 python3 -m compileall src tests
 /opt/homebrew/bin/uv run pytest tests/test_runtime_smokes.py
 /opt/homebrew/bin/uv run pytest
@@ -182,37 +112,21 @@ python3 -m compileall src tests
 
 Observed results:
 
-- `uv sync --extra dev` succeeded using `/opt/homebrew/bin/uv`; plain `uv` was
-  not on PATH in this worktree shell.
-- Modeling tests before edits: `5 passed` with existing third-party
-  MLflow/Pydantic warnings.
-- Current training CLI against canonical data path failed with
-  `FileNotFoundError: No AGE-146 Statcast feature runs were found inside the
-  requested date range.` This is expected after AGE-268 artifact cleanup and is
-  the exact pre-change behavior AGE-287 needed to account for.
-- New starter dataset tests: `2 passed`.
-- New dataset CLI against canonical data path succeeded and wrote an honest
-  zero-row coverage artifact for `2026-04-18 -> 2026-04-23`: `requested_dates=6`,
-  `source_dates=0`, `dataset_rows=0`, `missing_targets=0`, `excluded_starts=0`.
-- One-day real direct-mode checks:
-  - `2024-04-01`: `dataset_rows=28`
-  - `2025-04-01`: `dataset_rows=26`
-  - `2026-04-01`: `dataset_rows=30`
-- Full direct-mode build for `2019-03-20 -> 2026-04-24` succeeded with
-  `dataset_rows=31729`, `source_chunks=587`, `cap_warning_count=0`, and
-  `timestamp_violations=0`.
-- Focused dataset and CLI tests after direct fallback: `14 passed`.
+- First focused pytest attempt failed before setup because the fresh worktree
+  did not have the dev extra installed; `uv sync --extra dev` fixed it.
+- Focused pitcher-feature and CLI tests: `14 passed`.
+- Real canonical AGE-288 CLI smoke succeeded and wrote the 2024-04-01 through
+  2024-04-03 feature artifact listed above.
 - `python3 -m compileall src tests` completed successfully.
 - Runtime smokes: `4 passed` with existing third-party MLflow/Pydantic
   warnings.
-- Full suite: `205 passed` with existing third-party MLflow/Pydantic warnings.
+- Full suite: `208 passed` with existing third-party MLflow/Pydantic warnings.
 - `python -m mlb_props_stack` printed the runtime configuration banner.
 
 ## Recommended Next Issue
 
-1. `AGE-288` - pitcher skill and pitch arsenal features.
+1. `AGE-289` - batter-by-batter lineup matchup features.
 2. Then continue through:
-   - `AGE-289` - batter-by-batter lineup matchup features
    - `AGE-290` - workload, leash, and injury-context features
    - `AGE-291` - candidate model families with distribution outputs
    - `AGE-292` - model-only walk-forward validation
@@ -224,21 +138,25 @@ Observed results:
 
 - Do not resume live-readiness, approved-wager evidence refresh, or dashboard
   reconnection work before the projection rebuild and validation gates pass.
+- Do not use same-game target rows as feature inputs. AGE-288 feature rows must
+  remain prior-games-only.
+- Do not reintroduce raw continuous `rest_days` as an unbounded primary driver.
+- Treat pitcher identity priors as shrinkage/context only, not a memorization
+  shortcut.
 - Do not loosen optional-feature coverage or variance gates to force sparse
   lineup or umpire fields active.
-- Do not use `rest_days` as a standalone health, workload, or return-from-layoff
-  proxy in the rebuild.
-- Treat scoreable backtest coverage as a hard blocker before any live-use claim.
+- Treat scoreable backtest coverage as a hard blocker before any live-use
+  claim.
 - Preserve timestamp ordering:
   `features_as_of <= generated_at <= captured_at`.
-- Keep v0 artifacts and code paths useful as infrastructure, but do not promote
-  v0 projection quality as decision-grade.
+- Treat v0 as obsolete historical residue. Do not use v0 artifacts, metrics,
+  feature assumptions, or code paths as current modeling evidence.
 
 ## Deferred Or Superseded Issues
 
 - `AGE-262` and `AGE-263` are canceled/superseded by `AGE-285`.
 - `AGE-207` and `AGE-208` are canceled/superseded by `AGE-291`.
 - `AGE-209` waits for `AGE-294`.
-- `AGE-210` has its AGE-286 audit dependency satisfied by this freeze but
-  still waits for `AGE-291`.
+- `AGE-210` has its AGE-286 audit dependency satisfied but still waits for
+  `AGE-291`.
 - `AGE-212` waits for `AGE-293` / `AGE-294`.

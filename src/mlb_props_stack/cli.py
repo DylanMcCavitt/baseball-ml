@@ -51,6 +51,10 @@ from .paper_tracking import (
     DailyCandidateWorkflowResult,
     build_daily_candidate_workflow,
 )
+from .pitcher_skill_features import (
+    PitcherSkillFeatureBuildResult,
+    build_pitcher_skill_features,
+)
 from .stage_gates import evaluate_stage_gates, render_stage_gate_summary
 from .starter_dataset import (
     DEFAULT_DIRECT_CHUNK_DAYS,
@@ -254,6 +258,26 @@ def render_starter_game_dataset_summary(result: StarterGameDatasetBuildResult) -
         f"source_manifest_path={result.source_manifest_path}",
         f"schema_drift_report_path={result.schema_drift_report_path}",
         f"timestamp_policy_path={result.timestamp_policy_path}",
+        f"reproducibility_notes_path={result.reproducibility_notes_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_pitcher_skill_feature_summary(result: PitcherSkillFeatureBuildResult) -> str:
+    """Return a human-readable summary for one pitcher skill feature build."""
+    lines = [
+        (
+            "Pitcher skill feature build complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"dataset_rows={result.dataset_row_count}",
+        f"feature_rows={result.feature_row_count}",
+        f"pitch_rows={result.pitch_row_count}",
+        f"pitchers={result.pitcher_count}",
+        f"feature_path={result.feature_path}",
+        f"feature_report_path={result.feature_report_path}",
+        f"feature_report_markdown_path={result.feature_report_markdown_path}",
         f"reproducibility_notes_path={result.reproducibility_notes_path}",
     ]
     return "\n".join(lines)
@@ -623,6 +647,37 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Maximum concurrent direct Statcast CSV fetches.",
     )
 
+    pitcher_skill_parser = subparsers.add_parser(
+        "build-pitcher-skill-features",
+        help=(
+            "Build timestamp-valid pitcher skill and pitch-arsenal features "
+            "from a starter-game dataset artifact."
+        ),
+    )
+    pitcher_skill_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the feature build.",
+    )
+    pitcher_skill_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the feature build.",
+    )
+    pitcher_skill_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where starter-game dataset and feature artifacts live.",
+    )
+    pitcher_skill_parser.add_argument(
+        "--dataset-run-dir",
+        default=None,
+        help=(
+            "Optional exact starter-game dataset run directory. Defaults to the "
+            "latest run under the requested start/end window."
+        ),
+    )
+
     comparison_parser = subparsers.add_parser(
         "compare-starter-strikeout-baselines",
         help=(
@@ -928,6 +983,16 @@ def main(argv: list[str] | None = None) -> int:
             max_fetch_workers=args.max_fetch_workers,
         )
         print(render_starter_game_dataset_summary(result))
+        return 0
+
+    if args.command == "build-pitcher-skill-features":
+        result = build_pitcher_skill_features(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            dataset_run_dir=args.dataset_run_dir,
+        )
+        print(render_pitcher_skill_feature_summary(result))
         return 0
 
     if args.command == "compare-starter-strikeout-baselines":

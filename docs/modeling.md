@@ -241,6 +241,38 @@ Key artifacts:
   the issue-local rule that pregame feature references remain features and
   same-game Statcast pulls are target labels only
 
+AGE-288 adds the pitcher skill and pitch arsenal feature layer over that
+starter-game artifact. It reads the preserved direct Statcast source manifest
+from the AGE-287 run and emits one row per starter-game under:
+
+`data/normalized/pitcher_skill_features/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+The feature row includes:
+
+- prior-only K%, walk rate, K-BB%, strike rate, CSW%, SwStr%, whiff rate,
+  called-strike rate, and putaway rate
+- season, career, recent 15-day, and last-3-start windows
+- pitch-type usage plus pitch-type whiff and CSW rates
+- velocity, spin, horizontal/vertical movement, release extension, and deltas
+  versus the pitcher's prior baseline
+- sample-size regression for pitcher identity priors, recorded as shrinkage
+  context rather than a raw pitcher-id memorization shortcut
+- capped rest context and explicit rest buckets
+
+The builder writes `feature_report.json` and `feature_report.md` with coverage,
+missingness, variance, top correlations by season, leakage status, and rest
+policy status. Same-game `starter_strikeouts` is used only for the report's
+correlation diagnostics; feature values only use pitch rows whose `game_date`
+is before the starter-game `official_date`.
+
+Rest/layoff correction for the rebuild starts here:
+
+- raw continuous `rest_days` is not emitted as a primary driver
+- `rest_days_capped` is capped at `14`
+- short rest, standard rest, extra rest, long layoff, and no-prior-start flags
+  are explicit
+- long layoff cannot create an unbounded positive numeric strikeout feature
+
 The landed AGE-287 canonical artifact lives at:
 
 `data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z/`
@@ -312,13 +344,11 @@ approval gates to the backtest reporting rows, and writes
 `model_comparison.json` plus `model_comparison.md` under
 `data/normalized/starter_strikeout_model_comparison/...`.
 
-AGE-286 freezes this current path as `starter-strikeout-baseline-v0`. The
-freeze is an audit label, not a production promotion: the ridge baseline,
-global dispersion layer, calibrator, artifact layout, and comparison CLI remain
-useful infrastructure, but the projection itself is not trusted for live
-betting or readiness claims. See `docs/baseline_v0_audit.md` for the retained
-AGE-268 evidence, rest-days risk, optional-feature coverage gaps, and
-assumptions that must not carry into the rebuild.
+AGE-286 freezes this old path as `starter-strikeout-baseline-v0`. The freeze is
+an obsolete historical boundary, not a production promotion, not a useful
+benchmark, and not current performance evidence. Do not use v0 projection
+quality, feature assumptions, or comparison output to judge the rebuild. See
+`docs/baseline_v0_audit.md` for the record of why v0 is out of scope.
 
 AGE-148 adds the first explicit count-distribution layer on top of that mean:
 
@@ -434,12 +464,11 @@ Current implementation path:
 
 - benchmark baseline:
   `pitcher_k_rate * expected_leash_batters_faced`
-- current trainable baseline:
+- obsolete pre-rebuild trainable path:
   `starter-strikeout-baseline-v0`, a deterministic ridge-style linear
-  regression implemented in the standard library so the repo stays
-  dependency-light during bootstrap; this is infrastructure-only and not a
-  production or live-use betting model
-- current count-distribution layer:
+  regression implemented during bootstrap; this is obsolete and must not be
+  used as a current benchmark or performance reference
+- obsolete pre-rebuild count-distribution layer:
   a fitted global negative-binomial dispersion parameter with variance
   `mean + alpha * mean^2`, used to turn the ridge mean into over or under line
   probabilities and adjacent ladder rungs
