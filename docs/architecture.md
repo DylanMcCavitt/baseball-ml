@@ -46,6 +46,7 @@ modeling work must honor.
 | Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py`, `src/mlb_props_stack/ingest/odds_api.py`, `src/mlb_props_stack/ingest/statcast_features.py` | fetch schedule, `feed/live`, sportsbook event-odds payloads, and targeted Statcast CSV pulls; preserve raw snapshots; normalize `games`, `probable_starters`, `lineup_snapshots`, `event_game_mappings`, `prop_line_snapshots`, `pitch_level_base`, `pitcher_daily_features`, `lineup_daily_features`, and `game_context_features` |
 | Starter-game dataset | `src/mlb_props_stack/starter_dataset.py` | build the standalone one-row-per-starter-game strikeout target dataset plus coverage, missing-target, schema-drift, timestamp-policy, and reproducibility artifacts for the projection rebuild |
 | Pitcher skill features | `src/mlb_props_stack/pitcher_skill_features.py` | build prior-only pitcher skill, pitch arsenal, shrinkage, recent-form, and capped rest-bucket features over the starter-game dataset |
+| Lineup matchup features | `src/mlb_props_stack/lineup_matchup_features.py` | build prior-only batter-by-batter and aggregate opponent-lineup matchup features over the starter-game dataset |
 | Obsolete pre-rebuild modeling | `src/mlb_props_stack/modeling.py` | legacy v0 training path retained only until the rebuild replaces it; do not use `starter-strikeout-baseline-v0` as current performance evidence or as the rebuild benchmark |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, per-book and consensus devig, book hold, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
@@ -224,6 +225,30 @@ starter-game artifact:
 Rest context in this layer is capped and bucketed. Raw continuous `rest_days`
 is not exposed as an unbounded primary driver; long layoffs, no prior starts,
 short rest, standard rest, and extra rest are explicit flags.
+
+AGE-289 adds the opponent-lineup matchup layer on top of the same starter-game
+artifact:
+
+- `data/normalized/lineup_matchup_features/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../lineup_matchup_features.jsonl`
+  one row per starter-game with explicit confirmed/projected/missing lineup
+  status, batter-history coverage, handedness-weighted lineup K vulnerability,
+  contact, chase, whiff, CSW, and pitcher-arsenal-weighted pitch-type weakness
+- `batter_matchup_features.jsonl`
+  one row per batting-order slot with prior-only batter K%, K/PA, handedness
+  splits, contact/chase/whiff/CSW rates, pitch-type weakness, and
+  sample-size-regressed K context
+- `feature_report.json` and `feature_report.md`
+  missingness, coverage, variance, season correlations, leakage status, and
+  artifact paths
+- `reproducibility_notes.md`
+  exact rerun command and the rule that same-game batting orders are not
+  pregame feature inputs
+
+Confirmed lineup features remain separate from projected lineup features. When
+the rebuild dataset does not carry a pregame lineup snapshot, the fallback is
+the opponent team's most recent prior-game batting order, labeled
+`projected_from_prior_team_game`. Rows with no projection or incomplete batter
+history keep explicit status fields instead of zero-filled numeric features.
 
 AGE-147 adds:
 

@@ -297,6 +297,45 @@ Raw continuous `rest_days` is not emitted as a primary driver. The feature table
 uses `rest_days_capped` plus short, standard, extra, long-layoff, and no-prior
 rest buckets so long rest cannot create an unbounded positive strikeout signal.
 
+## Lineup Matchup Features
+
+`AGE-289` builds the opponent-side matchup layer for the projection rebuild. It
+reads the same AGE-287 starter-game dataset and preserved Statcast source
+manifest, then emits both aggregate lineup rows and batter-by-batter rows using
+only history dated before each starter-game official date:
+
+```bash
+uv run python -m mlb_props_stack build-lineup-matchup-features \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data \
+  --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
+```
+
+The run writes under
+`data/normalized/lineup_matchup_features/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`:
+
+- `lineup_matchup_features.jsonl`
+  one row per starter-game with projected or confirmed lineup status, lineup
+  IDs, batter-history coverage, handedness-weighted K vulnerability, contact,
+  chase, whiff, CSW, and pitcher-arsenal-weighted pitch-type weakness fields
+- `batter_matchup_features.jsonl`
+  one row per batter slot with prior-only K%, K/PA, handedness split,
+  contact%, chase%, whiff%, CSW%, pitch-type weakness, sample-size-regressed
+  K context, and batting-order weight
+- `feature_report.json` and `feature_report.md`
+  coverage, missingness, variance, top correlations by season, and leakage
+  status; missingness explicitly separates no confirmed lineup, no projection,
+  and incomplete batter history
+- `reproducibility_notes.md`
+  exact rerun command and timestamp policy
+
+When a pregame confirmed lineup is unavailable in the starter-game artifact,
+the builder uses the opponent team's most recent prior-game batting order as an
+explicit `projected_from_prior_team_game` fallback. Same-game batting orders are
+not used as pregame features, and missing lineup coverage stays null/statused
+instead of becoming zero-valued input.
+
 The current feature build is intentionally explicit about missing inputs:
 
 - lineups captured after first pitch are treated as unavailable for pregame

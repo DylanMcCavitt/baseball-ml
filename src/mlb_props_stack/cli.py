@@ -62,6 +62,10 @@ from .starter_dataset import (
     build_starter_strikeout_dataset,
 )
 from .ingest.statcast_ingest import DEFAULT_MAX_FETCH_WORKERS
+from .lineup_matchup_features import (
+    LineupMatchupFeatureBuildResult,
+    build_lineup_matchup_features,
+)
 from .tracking import TrackingConfig
 from .wager_card import build_wager_card, render_wager_card_summary
 
@@ -276,6 +280,27 @@ def render_pitcher_skill_feature_summary(result: PitcherSkillFeatureBuildResult)
         f"pitch_rows={result.pitch_row_count}",
         f"pitchers={result.pitcher_count}",
         f"feature_path={result.feature_path}",
+        f"feature_report_path={result.feature_report_path}",
+        f"feature_report_markdown_path={result.feature_report_markdown_path}",
+        f"reproducibility_notes_path={result.reproducibility_notes_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_lineup_matchup_feature_summary(result: LineupMatchupFeatureBuildResult) -> str:
+    """Return a human-readable summary for one lineup matchup feature build."""
+    lines = [
+        (
+            "Lineup matchup feature build complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"dataset_rows={result.dataset_row_count}",
+        f"feature_rows={result.feature_row_count}",
+        f"batter_feature_rows={result.batter_feature_row_count}",
+        f"pitch_rows={result.pitch_row_count}",
+        f"feature_path={result.feature_path}",
+        f"batter_feature_path={result.batter_feature_path}",
         f"feature_report_path={result.feature_report_path}",
         f"feature_report_markdown_path={result.feature_report_markdown_path}",
         f"reproducibility_notes_path={result.reproducibility_notes_path}",
@@ -678,6 +703,37 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    lineup_matchup_parser = subparsers.add_parser(
+        "build-lineup-matchup-features",
+        help=(
+            "Build timestamp-valid batter-by-batter and aggregate opponent-lineup "
+            "matchup features from a starter-game dataset artifact."
+        ),
+    )
+    lineup_matchup_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the feature build.",
+    )
+    lineup_matchup_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the feature build.",
+    )
+    lineup_matchup_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where starter-game dataset and feature artifacts live.",
+    )
+    lineup_matchup_parser.add_argument(
+        "--dataset-run-dir",
+        default=None,
+        help=(
+            "Optional exact starter-game dataset run directory. Defaults to the "
+            "latest run under the requested start/end window."
+        ),
+    )
+
     comparison_parser = subparsers.add_parser(
         "compare-starter-strikeout-baselines",
         help=(
@@ -993,6 +1049,16 @@ def main(argv: list[str] | None = None) -> int:
             dataset_run_dir=args.dataset_run_dir,
         )
         print(render_pitcher_skill_feature_summary(result))
+        return 0
+
+    if args.command == "build-lineup-matchup-features":
+        result = build_lineup_matchup_features(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            dataset_run_dir=args.dataset_run_dir,
+        )
+        print(render_lineup_matchup_feature_summary(result))
         return 0
 
     if args.command == "compare-starter-strikeout-baselines":
