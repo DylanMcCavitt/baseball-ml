@@ -259,6 +259,42 @@ The feature row includes:
   context rather than a raw pitcher-id memorization shortcut
 - capped rest context and explicit rest buckets
 
+AGE-289 adds the opposing-lineup matchup layer over the same starter-game
+artifact. It emits aggregate lineup features plus batter-by-batter slot rows
+under:
+
+`data/normalized/lineup_matchup_features/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+The feature rows include:
+
+- projected or confirmed batting-order IDs with `lineup_status` separating
+  `confirmed`, `projected_snapshot`, `projected_from_prior_team_game`, and
+  `no_projection`
+- batter K%, K/PA, handedness split versus pitcher throwing hand, contact%,
+  chase%, whiff%, and CSW%
+- sample-size-regressed K vulnerability so sparse batter histories stay
+  contextual instead of acting like hard player-ID memorization
+- batting-order weights that make top-of-order K vulnerability matter more
+  than the bottom of the lineup
+- pitch-type weakness by batter and an aggregate lineup matchup against the
+  starter's prior pitch-type usage
+- missingness fields for no confirmed lineup, no projected lineup, and
+  incomplete batter history
+
+These matchup features are expected to carry more signal than rest days because
+strikeout props are fundamentally batter-event probabilities repeated across a
+specific opponent order. Rest context can flag fatigue or layoff risk, but it
+does not describe whether the expected first 18-24 plate appearances are
+strikeout-prone, contact-heavy, chase-heavy, or vulnerable to the starter's
+actual arsenal. The model rebuild should therefore treat lineup matchup fields
+as primary opponent-skill inputs and rest buckets as context/risk controls.
+
+The timestamp rule stays strict: confirmed lineup snapshots are used only when
+the starter-game artifact already carries them as pregame references; otherwise
+the fallback projection is the opponent team's most recent prior-game batting
+order from preserved Statcast history. Same-game batting orders and target
+strikeout totals are never used as feature inputs.
+
 The builder writes `feature_report.json` and `feature_report.md` with coverage,
 missingness, variance, top correlations by season, leakage status, and rest
 policy status. Same-game `starter_strikeouts` is used only for the report's

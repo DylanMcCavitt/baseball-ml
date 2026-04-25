@@ -8,6 +8,7 @@ from mlb_props_stack.ingest import (
     OddsAPIIngestResult,
     StatcastFeatureIngestResult,
 )
+from mlb_props_stack.lineup_matchup_features import LineupMatchupFeatureBuildResult
 from mlb_props_stack.modeling import StarterStrikeoutBaselineTrainingResult
 from mlb_props_stack.model_comparison import StarterStrikeoutModelComparisonResult
 from mlb_props_stack.paper_tracking import DailyCandidateWorkflowResult
@@ -310,6 +311,46 @@ def test_pitcher_skill_feature_cli_renders_output_summary(monkeypatch, tmp_path,
     assert "dataset_rows=31729" in output
     assert "feature_rows=31729" in output
     assert "feature_report_path=" in output
+
+
+def test_lineup_matchup_feature_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = LineupMatchupFeatureBuildResult(
+        start_date=date(2019, 3, 20),
+        end_date=date(2026, 4, 24),
+        run_id="20260425T183000Z",
+        dataset_row_count=31729,
+        feature_row_count=31729,
+        batter_feature_row_count=281000,
+        pitch_row_count=1200000,
+        feature_path=tmp_path / "lineup_matchup_features.jsonl",
+        batter_feature_path=tmp_path / "batter_matchup_features.jsonl",
+        feature_report_path=tmp_path / "feature_report.json",
+        feature_report_markdown_path=tmp_path / "feature_report.md",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.build_lineup_matchup_features",
+        lambda *, start_date, end_date, output_dir, dataset_run_dir: result,
+    )
+
+    main(
+        [
+            "build-lineup-matchup-features",
+            "--start-date",
+            "2019-03-20",
+            "--end-date",
+            "2026-04-24",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Lineup matchup feature build complete for 2019-03-20 -> 2026-04-24" in output
+    assert "dataset_rows=31729" in output
+    assert "batter_feature_rows=281000" in output
+    assert "batter_feature_path=" in output
 
 
 def test_model_comparison_cli_renders_output_summary(monkeypatch, tmp_path, capsys):

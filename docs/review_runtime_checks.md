@@ -124,6 +124,20 @@ For starter-game dataset builds, confirm:
 - `missing_targets.jsonl` contains only known starter edge cases
 - `timestamp_policy.status` is `ok`
 
+For projection-rebuild feature layers, inspect:
+
+- `pitcher_skill_features.jsonl`
+- `lineup_matchup_features.jsonl`
+- `batter_matchup_features.jsonl`
+- `feature_report.json`
+- `feature_report.md`
+- `reproducibility_notes.md`
+
+For lineup matchup builds, confirm the report distinguishes no confirmed
+lineup, no projection, and incomplete batter history; confirm
+`leakage_policy.status` is `ok`; and spot-check that same-game batter IDs do
+not appear in the projected lineup when no pregame lineup snapshot exists.
+
 For model-variant comparison work, open:
 
 - `model_comparison.json`
