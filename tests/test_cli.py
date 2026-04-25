@@ -11,6 +11,7 @@ from mlb_props_stack.ingest import (
 from mlb_props_stack.modeling import StarterStrikeoutBaselineTrainingResult
 from mlb_props_stack.model_comparison import StarterStrikeoutModelComparisonResult
 from mlb_props_stack.paper_tracking import DailyCandidateWorkflowResult
+from mlb_props_stack.pitcher_skill_features import PitcherSkillFeatureBuildResult
 from mlb_props_stack.starter_dataset import StarterGameDatasetBuildResult
 from tests.stage_gate_fixtures import seed_stage_gate_artifacts
 
@@ -270,6 +271,45 @@ def test_starter_game_dataset_cli_renders_output_summary(monkeypatch, tmp_path, 
     assert "coverage_report_path=" in output
     assert "source_manifest_path=" in output
     assert "timestamp_policy_path=" in output
+
+
+def test_pitcher_skill_feature_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = PitcherSkillFeatureBuildResult(
+        start_date=date(2019, 3, 20),
+        end_date=date(2026, 4, 24),
+        run_id="20260425T170000Z",
+        dataset_row_count=31729,
+        feature_row_count=31729,
+        pitch_row_count=1200000,
+        pitcher_count=812,
+        feature_path=tmp_path / "pitcher_skill_features.jsonl",
+        feature_report_path=tmp_path / "feature_report.json",
+        feature_report_markdown_path=tmp_path / "feature_report.md",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.build_pitcher_skill_features",
+        lambda *, start_date, end_date, output_dir, dataset_run_dir: result,
+    )
+
+    main(
+        [
+            "build-pitcher-skill-features",
+            "--start-date",
+            "2019-03-20",
+            "--end-date",
+            "2026-04-24",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Pitcher skill feature build complete for 2019-03-20 -> 2026-04-24" in output
+    assert "dataset_rows=31729" in output
+    assert "feature_rows=31729" in output
+    assert "feature_report_path=" in output
 
 
 def test_model_comparison_cli_renders_output_summary(monkeypatch, tmp_path, capsys):

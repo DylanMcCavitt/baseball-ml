@@ -54,10 +54,13 @@ That is a math-and-process problem first, and a betting problem second.
   feature tables for one slate date.
 - `src/mlb_props_stack/modeling.py`
   Date-split starter strikeout dataset assembly, naive benchmark, and the
-  frozen `starter-strikeout-baseline-v0` infrastructure model.
+  obsolete pre-rebuild `starter-strikeout-baseline-v0` path.
 - `src/mlb_props_stack/starter_dataset.py`
   Standalone starter-game strikeout training dataset and coverage-report build
   for the projection rebuild.
+- `src/mlb_props_stack/pitcher_skill_features.py`
+  Timestamp-valid pitcher skill, pitch arsenal, shrinkage, and rest-bucket
+  features over the starter-game dataset.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
 - `src/mlb_props_stack/paper_tracking.py`
@@ -262,6 +265,38 @@ That run produced `31,729` dataset rows across 2019-2025 full seasons plus
 2026 season-to-date, with `0` chunk cap warnings, `0` timestamp violations, and
 `3` excluded missing-target starts recorded in `missing_targets.jsonl`.
 
+## Pitcher Skill And Arsenal Features
+
+`AGE-288` builds pitcher-centered predictors from the AGE-287 starter-game
+artifact. It reads the starter-game dataset plus the preserved direct Statcast
+source manifest, then emits one feature row per starter-game using only pitch
+rows dated before that starter's official date:
+
+```bash
+uv run python -m mlb_props_stack build-pitcher-skill-features \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data \
+  --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
+```
+
+The run writes under
+`data/normalized/pitcher_skill_features/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`:
+
+- `pitcher_skill_features.jsonl`
+  prior-only K%, K-BB%, strike, CSW, SwStr, whiff, called-strike, putaway,
+  pitch-type usage, pitch-type whiff/CSW, velocity, spin, movement, extension,
+  recent-form, and shrinkage-context fields
+- `feature_report.json` and `feature_report.md`
+  coverage, missingness, variance, top correlations by season, leakage status,
+  and rest-policy status
+- `reproducibility_notes.md`
+  exact rerun command and timestamp policy
+
+Raw continuous `rest_days` is not emitted as a primary driver. The feature table
+uses `rest_days_capped` plus short, standard, extra, long-layoff, and no-prior
+rest buckets so long rest cannot create an unbounded positive strikeout signal.
+
 The current feature build is intentionally explicit about missing inputs:
 
 - lineups captured after first pitch are treated as unavailable for pregame
@@ -434,9 +469,9 @@ gates; sparse or constant optional fields remain explicit exclusions in the
 saved feature schema instead of being silently ignored.
 
 AGE-286 freezes this path as `starter-strikeout-baseline-v0`. That label is an
-audit boundary, not a live-use promotion: the ridge baseline, global dispersion,
-calibration, and artifact layout remain useful infrastructure, but the current
-projection is not trusted for betting decisions or readiness reporting. The
+obsolete historical boundary, not a live-use promotion, not a useful benchmark,
+and not a source of current performance metrics. Do not use v0 projection
+quality, feature assumptions, or comparison output to judge the rebuild. The
 limitations are recorded in `docs/baseline_v0_audit.md`.
 
 ## Starter Strikeout Model Variant Comparison

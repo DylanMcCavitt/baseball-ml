@@ -45,7 +45,8 @@ modeling work must honor.
 | Prop and projection contracts | `src/mlb_props_stack/markets.py` | `PropLine`, `PropProjection`, `EdgeDecision`, `PropSelectionKey`, `ProjectionInputRef` |
 | Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py`, `src/mlb_props_stack/ingest/odds_api.py`, `src/mlb_props_stack/ingest/statcast_features.py` | fetch schedule, `feed/live`, sportsbook event-odds payloads, and targeted Statcast CSV pulls; preserve raw snapshots; normalize `games`, `probable_starters`, `lineup_snapshots`, `event_game_mappings`, `prop_line_snapshots`, `pitch_level_base`, `pitcher_daily_features`, `lineup_daily_features`, and `game_context_features` |
 | Starter-game dataset | `src/mlb_props_stack/starter_dataset.py` | build the standalone one-row-per-starter-game strikeout target dataset plus coverage, missing-target, schema-drift, timestamp-policy, and reproducibility artifacts for the projection rebuild |
-| Baseline modeling | `src/mlb_props_stack/modeling.py` | join AGE-146 feature tables into a date-keyed training dataset, derive official starter strikeout labels from same-day Statcast pulls, fit the frozen `starter-strikeout-baseline-v0` infrastructure expectation model, fit a global strikeout-count distribution on top of that mean, and save explicit date splits plus evaluation artifacts |
+| Pitcher skill features | `src/mlb_props_stack/pitcher_skill_features.py` | build prior-only pitcher skill, pitch arsenal, shrinkage, recent-form, and capped rest-bucket features over the starter-game dataset |
+| Obsolete pre-rebuild modeling | `src/mlb_props_stack/modeling.py` | legacy v0 training path retained only until the rebuild replaces it; do not use `starter-strikeout-baseline-v0` as current performance evidence or as the rebuild benchmark |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, per-book and consensus devig, book hold, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
 | Evaluation guardrails | `src/mlb_props_stack/backtest.py` | cutoff-safe snapshot selection, walk-forward backtest joins, join-audit artifacts, chart-ready reporting tables, and the baseline honesty checklist |
@@ -69,7 +70,7 @@ normalized contract records
         ->
 feature row + lineup snapshot references
         ->
-starter strikeout training dataset + expectation baseline
+starter strikeout training dataset + pitcher skill feature layer + expectation baseline
         ->
 prop projection
         ->
@@ -204,6 +205,25 @@ AGE-287 adds the standalone projection-rebuild dataset artifact:
   pregame features
 - `reproducibility_notes.md`
   deterministic rerun command for the requested date window
+
+AGE-288 adds the first projection-rebuild feature layer on top of the
+starter-game artifact:
+
+- `data/normalized/pitcher_skill_features/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../pitcher_skill_features.jsonl`
+  one row per starter-game with only prior-game pitcher skill and arsenal
+  fields: K%, K-BB%, walk, strike, CSW, SwStr, whiff, called-strike, putaway,
+  pitch-type usage, pitch-type whiff/CSW, velocity, spin, movement, release
+  extension, recent-form windows, and shrinkage-context fields
+- `feature_report.json` and `feature_report.md`
+  coverage, missingness, variance, top correlations by season, leakage-policy
+  status, and rest-policy status
+- `reproducibility_notes.md`
+  exact rerun command and the rule that same-game target rows are not feature
+  inputs
+
+Rest context in this layer is capped and bucketed. Raw continuous `rest_days`
+is not exposed as an unbounded primary driver; long layoffs, no prior starts,
+short rest, standard rest, and extra rest are explicit flags.
 
 AGE-147 adds:
 

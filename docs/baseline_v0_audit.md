@@ -2,14 +2,14 @@
 
 Issue: `AGE-286`
 
-Status: the current starter strikeout model is frozen as
-`starter-strikeout-baseline-v0`. It is infrastructure and audit scaffolding, not
-a production or live-use betting model.
+Status: the pre-rebuild starter strikeout model is frozen as
+`starter-strikeout-baseline-v0`. It is obsolete historical residue, not
+infrastructure to preserve, not a benchmark, and not a production or live-use
+betting model.
 
 This issue does not train a new model, loosen wager gates, or report readiness
-as trusted. It records what the existing baseline does, which evidence from the
-latest AGE-268 run was preserved, and which assumptions must not carry into the
-projection rebuild.
+as trusted. It records what the obsolete baseline did and why it must not carry
+forward into the projection rebuild.
 
 ## What v0 Does
 
@@ -27,24 +27,14 @@ The v0 path in `src/mlb_props_stack/modeling.py`:
 - persists auditable feature schema, split, calibration, and reproducibility
   artifacts
 
-Useful artifacts and modules to keep from v0:
-
-- `training_dataset.jsonl`, `starter_outcomes.jsonl`, `date_splits.json`,
-  `baseline_model.json`, `evaluation.json`, `evaluation_summary.json`,
-  `evaluation_summary.md`, `ladder_probabilities.jsonl`,
-  `probability_calibrator.json`, `raw_vs_calibrated_probabilities.jsonl`,
-  `calibration_summary.json`, and `reproducibility_notes.md`
-- `compare-starter-strikeout-baselines` and its comparison reports
-- timestamp-valid joins, skip reasons, and final-wager-gate reporting
-- the pricing, edge, backtest, paper-tracking, and dashboard seams that consume
-  versioned model outputs
-
-These are infrastructure wins. They do not make the v0 projection itself
-decision-grade.
+Do not preserve v0 as a modeling baseline or performance reference. Its
+artifacts, metrics, and feature assumptions should not be used to judge the
+rebuild. Any future modeling path should be evaluated from the rebuilt
+starter-game dataset and rebuilt feature families only.
 
 ## AGE-268 Preserved Evidence
 
-The latest v0 evidence came from this AGE-268 command:
+The latest obsolete v0 evidence came from this AGE-268 command:
 
 ```bash
 uv run python -m mlb_props_stack compare-starter-strikeout-baselines --start-date 2026-04-18 --end-date 2026-04-23 --output-dir /Users/dylanmccavitt/projects/nba-ml/data
@@ -52,7 +42,8 @@ uv run python -m mlb_props_stack compare-starter-strikeout-baselines --start-dat
 
 The generated files were intentionally deleted from the canonical checkout on
 2026-04-24 to prevent stale artifact drift. The preserved handoff evidence is
-the source of truth for this audit.
+only useful for explaining why v0 is out of scope; it is not current performance
+evidence.
 
 Run IDs:
 

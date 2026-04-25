@@ -80,6 +80,7 @@ Run the actual changed command, not just the module entrypoint:
 - `ingest-statcast-features`
 - `ingest-odds-api-lines`
 - `build-starter-strikeout-dataset`
+- `build-pitcher-skill-features`
 - `train-starter-strikeout-baseline`
 - `compare-starter-strikeout-baselines`
 - `build-edge-candidates`
