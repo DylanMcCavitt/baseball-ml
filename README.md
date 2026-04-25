@@ -55,6 +55,9 @@ That is a math-and-process problem first, and a betting problem second.
 - `src/mlb_props_stack/modeling.py`
   Date-split starter strikeout dataset assembly, naive benchmark, and the
   frozen `starter-strikeout-baseline-v0` infrastructure model.
+- `src/mlb_props_stack/starter_dataset.py`
+  Standalone starter-game strikeout training dataset and coverage-report build
+  for the projection rebuild.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
 - `src/mlb_props_stack/paper_tracking.py`
@@ -220,6 +223,44 @@ By default that writes:
 - `pitcher_daily_features.jsonl`
 - `lineup_daily_features.jsonl`
 - `game_context_features.jsonl`
+
+## Starter-Game Strikeout Dataset
+
+`AGE-287` adds a standalone dataset build for the projection rebuild. It uses
+existing normalized Statcast feature runs when they are present; otherwise it
+falls back to direct regular-season Baseball Savant Statcast pitch-log chunks.
+Direct mode derives actual starters from the first pitcher used by each
+fielding team and counts same-game strikeout events only for the target label.
+It writes one row per `(official_date, gamePk, pitcher_id)` starter-game:
+
+```bash
+uv run python -m mlb_props_stack build-starter-strikeout-dataset \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data \
+  --chunk-days 3 \
+  --max-fetch-workers 4
+```
+
+The run writes under
+`data/normalized/starter_strikeout_training_dataset/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`:
+
+- `starter_game_training_dataset.jsonl`
+- `coverage_report.json`
+- `coverage_report.md`
+- `missing_targets.jsonl`
+- `source_manifest.jsonl`
+- `schema_drift_report.json`
+- `timestamp_policy.md`
+- `reproducibility_notes.md`
+
+The landed AGE-287 canonical run is:
+
+`data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z/`
+
+That run produced `31,729` dataset rows across 2019-2025 full seasons plus
+2026 season-to-date, with `0` chunk cap warnings, `0` timestamp violations, and
+`3` excluded missing-target starts recorded in `missing_targets.jsonl`.
 
 The current feature build is intentionally explicit about missing inputs:
 

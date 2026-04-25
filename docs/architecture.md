@@ -44,6 +44,7 @@ modeling work must honor.
 | Runtime defaults | `src/mlb_props_stack/config.py` | market name, edge threshold, Kelly fraction, bankroll cap, timezone, devig mode (`per_book` / `tightest_book` / `consensus`) |
 | Prop and projection contracts | `src/mlb_props_stack/markets.py` | `PropLine`, `PropProjection`, `EdgeDecision`, `PropSelectionKey`, `ProjectionInputRef` |
 | Source adapters | `src/mlb_props_stack/ingest/mlb_stats_api.py`, `src/mlb_props_stack/ingest/odds_api.py`, `src/mlb_props_stack/ingest/statcast_features.py` | fetch schedule, `feed/live`, sportsbook event-odds payloads, and targeted Statcast CSV pulls; preserve raw snapshots; normalize `games`, `probable_starters`, `lineup_snapshots`, `event_game_mappings`, `prop_line_snapshots`, `pitch_level_base`, `pitcher_daily_features`, `lineup_daily_features`, and `game_context_features` |
+| Starter-game dataset | `src/mlb_props_stack/starter_dataset.py` | build the standalone one-row-per-starter-game strikeout target dataset plus coverage, missing-target, schema-drift, timestamp-policy, and reproducibility artifacts for the projection rebuild |
 | Baseline modeling | `src/mlb_props_stack/modeling.py` | join AGE-146 feature tables into a date-keyed training dataset, derive official starter strikeout labels from same-day Statcast pulls, fit the frozen `starter-strikeout-baseline-v0` infrastructure expectation model, fit a global strikeout-count distribution on top of that mean, and save explicit date splits plus evaluation artifacts |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, per-book and consensus devig, book hold, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
@@ -177,6 +178,32 @@ The normalized Statcast feature files are:
 - `game_context_features.jsonl`
   one row per probable starter with venue, rest, expected leash proxies, and
   explicit missing-value markers for unsourced park-factor and weather fields
+
+AGE-287 adds the standalone projection-rebuild dataset artifact:
+
+- `data/normalized/starter_strikeout_training_dataset/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../starter_game_training_dataset.jsonl`
+  one row per `(official_date, gamePk, pitcher_id)` starter-game with target
+  strikeouts, starter role review fields, source references, season/month,
+  pitch-clock era, and league environment fields. The builder uses feature-run
+  references when available and otherwise falls back to direct regular-season
+  Statcast pitch-log chunks.
+- `coverage_report.json` and `coverage_report.md`
+  row counts by season/month/team, source dates without pitch rows, missing
+  targets, excluded starts, short-start role edge cases, source freshness, cap
+  warnings, and timestamp-policy status
+- `missing_targets.jsonl`
+  source starter rows excluded because same-game Statcast outcomes could not
+  derive the target label
+- `source_manifest.jsonl`
+  direct Statcast chunk source URLs, raw paths, pitch-row counts, dataset-row
+  counts, missing-target counts, and cap-warning status
+- `schema_drift_report.json`
+  field-level non-null coverage for the built dataset
+- `timestamp_policy.md`
+  explicit rule that outcome pulls supply labels only and must not feed
+  pregame features
+- `reproducibility_notes.md`
+  deterministic rerun command for the requested date window
 
 AGE-147 adds:
 

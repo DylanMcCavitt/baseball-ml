@@ -199,8 +199,66 @@ explicitly replace them:
 - weather and park factor currently remain null with explicit status fields
   until a timestamp-valid source is added
 
-AGE-147 now builds the first reproducible starter strikeout training dataset on
-top of those feature tables.
+AGE-287 adds the standalone starter-game strikeout dataset build that the
+projection rebuild should use before model fitting. It uses existing normalized
+feature runs when available; when the canonical data directory has no feature
+runs, it falls back to direct regular-season Baseball Savant Statcast pitch-log
+chunks. Direct mode infers actual starters from the first pitcher used by each
+fielding team, counts same-game strikeout events only for the
+`starter_strikeouts` target label, and writes durable coverage artifacts:
+
+```bash
+uv run python -m mlb_props_stack build-starter-strikeout-dataset \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data \
+  --chunk-days 3 \
+  --max-fetch-workers 4
+```
+
+Output path:
+
+`data/normalized/starter_strikeout_training_dataset/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+Key artifacts:
+
+- `starter_game_training_dataset.jsonl`
+  one row per `(official_date, gamePk, pitcher_id)` starter-game with pitcher,
+  team/opponent, home/away, target strikeouts, starter role review fields,
+  source references, season/month, pitch-clock era, and league environment
+- `coverage_report.json` and `coverage_report.md`
+  row counts by season/month/team, source dates without pitch rows, missing
+  targets, excluded starts, starter role edge cases, source freshness, chunk cap
+  warnings, and timestamp violations
+- `schema_drift_report.json`
+  field-level non-null coverage for the built artifact
+- `missing_targets.jsonl`
+  source starter rows excluded because a same-game target could not be derived
+- `source_manifest.jsonl`
+  one row per direct Statcast chunk with source URL, raw path, pitch-row count,
+  dataset-row count, missing-target count, and cap-warning status
+- `timestamp_policy.md`
+  the issue-local rule that pregame feature references remain features and
+  same-game Statcast pulls are target labels only
+
+The landed AGE-287 canonical artifact lives at:
+
+`data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z/`
+
+Coverage summary:
+
+- `31,729` dataset rows
+- seasons represented: `2019`, `2020`, `2021`, `2022`, `2023`, `2024`, `2025`, `2026`
+- row counts: `4858`, `1796`, `4858`, `4859`, `4860`, `4856`, `4860`, `782`
+- `587` source chunks
+- `0` source chunks at the 25,000-row cap-warning threshold
+- `3` missing-target exclusions
+- `0` duplicate source rows
+- `0` timestamp violations
+
+AGE-147 still builds the original reproducible starter strikeout training
+dataset as a side effect of fitting the frozen v0 baseline on top of those
+feature tables.
 
 Training command:
 

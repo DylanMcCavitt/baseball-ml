@@ -52,6 +52,12 @@ from .paper_tracking import (
     build_daily_candidate_workflow,
 )
 from .stage_gates import evaluate_stage_gates, render_stage_gate_summary
+from .starter_dataset import (
+    DEFAULT_DIRECT_CHUNK_DAYS,
+    StarterGameDatasetBuildResult,
+    build_starter_strikeout_dataset,
+)
+from .ingest.statcast_ingest import DEFAULT_MAX_FETCH_WORKERS
 from .tracking import TrackingConfig
 from .wager_card import build_wager_card, render_wager_card_summary
 
@@ -221,6 +227,33 @@ def render_starter_strikeout_training_summary(
         f"calibration_summary_path={result.calibration_summary_path}",
         f"evaluation_summary_path={result.evaluation_summary_path}",
         f"evaluation_summary_markdown_path={result.evaluation_summary_markdown_path}",
+        f"reproducibility_notes_path={result.reproducibility_notes_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_starter_game_dataset_summary(result: StarterGameDatasetBuildResult) -> str:
+    """Return a human-readable summary for one starter-game dataset build."""
+    lines = [
+        (
+            "Starter-game strikeout dataset build complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"source_mode={result.source_mode}",
+        f"requested_dates={result.requested_date_count}",
+        f"source_dates={result.source_date_count}",
+        f"dataset_rows={result.row_count}",
+        f"missing_targets={result.missing_target_count}",
+        f"excluded_starts={result.excluded_start_count}",
+        f"seasons={result.season_count}",
+        f"dataset_path={result.dataset_path}",
+        f"coverage_report_path={result.coverage_report_path}",
+        f"coverage_report_markdown_path={result.coverage_report_markdown_path}",
+        f"missing_targets_path={result.missing_targets_path}",
+        f"source_manifest_path={result.source_manifest_path}",
+        f"schema_drift_report_path={result.schema_drift_report_path}",
+        f"timestamp_policy_path={result.timestamp_policy_path}",
         f"reproducibility_notes_path={result.reproducibility_notes_path}",
     ]
     return "\n".join(lines)
@@ -552,6 +585,44 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    starter_dataset_parser = subparsers.add_parser(
+        "build-starter-strikeout-dataset",
+        help=(
+            "Build the standalone starter-game strikeout training dataset and "
+            "coverage reports from feature runs or direct Statcast pitch logs."
+        ),
+    )
+    starter_dataset_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the dataset window.",
+    )
+    starter_dataset_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the dataset window.",
+    )
+    starter_dataset_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where feature inputs and dataset artifacts live.",
+    )
+    starter_dataset_parser.add_argument(
+        "--chunk-days",
+        type=int,
+        default=DEFAULT_DIRECT_CHUNK_DAYS,
+        help=(
+            "Number of calendar dates per direct Statcast pitch-log pull when "
+            "normalized feature runs are absent."
+        ),
+    )
+    starter_dataset_parser.add_argument(
+        "--max-fetch-workers",
+        type=int,
+        default=DEFAULT_MAX_FETCH_WORKERS,
+        help="Maximum concurrent direct Statcast CSV fetches.",
+    )
+
     comparison_parser = subparsers.add_parser(
         "compare-starter-strikeout-baselines",
         help=(
@@ -846,6 +917,17 @@ def main(argv: list[str] | None = None) -> int:
             feature_set=args.feature_set,
         )
         print(render_starter_strikeout_training_summary(result))
+        return 0
+
+    if args.command == "build-starter-strikeout-dataset":
+        result = build_starter_strikeout_dataset(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            chunk_days=args.chunk_days,
+            max_fetch_workers=args.max_fetch_workers,
+        )
+        print(render_starter_game_dataset_summary(result))
         return 0
 
     if args.command == "compare-starter-strikeout-baselines":

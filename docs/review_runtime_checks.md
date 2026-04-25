@@ -79,6 +79,7 @@ Run the actual changed command, not just the module entrypoint:
 - `ingest-mlb-metadata`
 - `ingest-statcast-features`
 - `ingest-odds-api-lines`
+- `build-starter-strikeout-dataset`
 - `train-starter-strikeout-baseline`
 - `compare-starter-strikeout-baselines`
 - `build-edge-candidates`
@@ -101,12 +102,26 @@ Do not stop at process exit code. Inspect the outputs.
 
 For training and calibration work, open:
 
+- `starter_game_training_dataset.jsonl`
+- `coverage_report.json`
+- `coverage_report.md`
+- `missing_targets.jsonl`
+- `source_manifest.jsonl`
+- `schema_drift_report.json`
+- `timestamp_policy.md`
 - `evaluation.json`
 - `evaluation_summary.json`
 - `evaluation_summary.md`
 - `calibration_summary.json`
 - `raw_vs_calibrated_probabilities.jsonl`
 - `ladder_probabilities.jsonl`
+
+For starter-game dataset builds, confirm:
+
+- row counts by season include the intended multi-season window
+- `source_chunks.cap_warning_count` is `0` or every warning is explained
+- `missing_targets.jsonl` contains only known starter edge cases
+- `timestamp_policy.status` is `ok`
 
 For model-variant comparison work, open:
 
