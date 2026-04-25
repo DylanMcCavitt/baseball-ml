@@ -11,6 +11,7 @@ from mlb_props_stack.ingest import (
 from mlb_props_stack.modeling import StarterStrikeoutBaselineTrainingResult
 from mlb_props_stack.model_comparison import StarterStrikeoutModelComparisonResult
 from mlb_props_stack.paper_tracking import DailyCandidateWorkflowResult
+from mlb_props_stack.starter_dataset import StarterGameDatasetBuildResult
 from tests.stage_gate_fixtures import seed_stage_gate_artifacts
 
 
@@ -221,6 +222,54 @@ def test_starter_strikeout_training_cli_renders_output_summary(monkeypatch, tmp_
     assert "evaluation_summary_path=" in output
     assert "evaluation_summary_markdown_path=" in output
     assert "reproducibility_notes_path=" in output
+
+
+def test_starter_game_dataset_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = StarterGameDatasetBuildResult(
+        start_date=date(2019, 3, 28),
+        end_date=date(2025, 9, 28),
+        run_id="20260425T140000Z",
+        source_mode="direct_statcast_pitch_log",
+        requested_date_count=2377,
+        source_date_count=2370,
+        row_count=29120,
+        missing_target_count=12,
+        excluded_start_count=12,
+        season_count=7,
+        dataset_path=tmp_path / "starter_game_training_dataset.jsonl",
+        coverage_report_path=tmp_path / "coverage_report.json",
+        coverage_report_markdown_path=tmp_path / "coverage_report.md",
+        missing_targets_path=tmp_path / "missing_targets.jsonl",
+        source_manifest_path=tmp_path / "source_manifest.jsonl",
+        schema_drift_report_path=tmp_path / "schema_drift_report.json",
+        timestamp_policy_path=tmp_path / "timestamp_policy.md",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.build_starter_strikeout_dataset",
+        lambda *, start_date, end_date, output_dir, chunk_days, max_fetch_workers: result,
+    )
+
+    main(
+        [
+            "build-starter-strikeout-dataset",
+            "--start-date",
+            "2019-03-28",
+            "--end-date",
+            "2025-09-28",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Starter-game strikeout dataset build complete for 2019-03-28 -> 2025-09-28" in output
+    assert "source_mode=direct_statcast_pitch_log" in output
+    assert "dataset_rows=29120" in output
+    assert "coverage_report_path=" in output
+    assert "source_manifest_path=" in output
+    assert "timestamp_policy_path=" in output
 
 
 def test_model_comparison_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
