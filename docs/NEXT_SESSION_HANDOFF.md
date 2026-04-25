@@ -4,14 +4,16 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Current working branch: `feat/age-287-starter-game-dataset`
-- Branch started from: `495e2b4` (`origin/main`, AGE-286 merged baseline v0
-  audit)
-- Current issue: `AGE-287` - build 5-7 season starter-game strikeout training dataset
+- Current checked-out branch: `main`
+- Current `main`: `7d25ce3` (`origin/main`, AGE-287 merged)
+- Last completed issue: `AGE-287` - build 5-7 season starter-game strikeout
+  training dataset
+- Merged PR: `https://github.com/DylanMcCavitt/baseball-ml/pull/45`
 - Parent rebuild track: `AGE-285` - rebuild pitcher strikeout projection model
   before betting layer
 - Implementation state: AGE-287 code, docs, and canonical multi-season artifact
-  build are complete locally; ready for PR review/merge.
+  build are merged and the canonical checkout is synced to `origin/main`.
+- Next issue: `AGE-288` - pitcher skill and pitch arsenal features.
 - Canonical ignored data directory for future live model checks:
   `/Users/dylanmccavitt/projects/nba-ml/data`
 
