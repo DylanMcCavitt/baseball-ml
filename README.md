@@ -61,6 +61,9 @@ That is a math-and-process problem first, and a betting problem second.
 - `src/mlb_props_stack/pitcher_skill_features.py`
   Timestamp-valid pitcher skill, pitch arsenal, shrinkage, and rest-bucket
   features over the starter-game dataset.
+- `src/mlb_props_stack/workload_leash_features.py`
+  Timestamp-valid expected workload, leash, rest, and role-context features
+  over the starter-game dataset.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
 - `src/mlb_props_stack/paper_tracking.py`
@@ -335,6 +338,40 @@ the builder uses the opponent team's most recent prior-game batting order as an
 explicit `projected_from_prior_team_game` fallback. Same-game batting orders are
 not used as pregame features, and missing lineup coverage stays null/statused
 instead of becoming zero-valued input.
+
+## Workload And Leash Features
+
+`AGE-290` builds the expected-opportunity feature layer for the projection
+rebuild. It reads the same AGE-287 starter-game dataset and preserved Statcast
+source manifest, then emits one feature row per starter-game using only prior
+games for workload and role context:
+
+```bash
+uv run python -m mlb_props_stack build-workload-leash-features \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data \
+  --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
+```
+
+The run writes under
+`data/normalized/workload_leash_features/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`:
+
+- `workload_leash_features.jsonl`
+  one row per starter-game with recent pitch-count and batters-faced means,
+  season pitch-count and batters-faced distributions, team leash tendency,
+  times-through-order threshold rates, expected pitch count, expected batters
+  faced, capped rest buckets, and source-backed opener/bulk role flags
+- `feature_report.json` and `feature_report.md`
+  coverage, variance, top correlations by season, rest policy, role-context
+  source counts, leakage status, and artifact paths
+- `reproducibility_notes.md`
+  exact rerun command and timestamp policy
+
+This layer describes expected opportunity volume, not pitcher strikeout skill.
+Raw continuous `rest_days` is not emitted. Long layoffs stay labeled as
+`unknown_long_layoff` unless a later timestamp-valid source explicitly labels
+IL, rehab, or role-change context.
 
 The current feature build is intentionally explicit about missing inputs:
 

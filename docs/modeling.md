@@ -309,6 +309,38 @@ Rest/layoff correction for the rebuild starts here:
   are explicit
 - long layoff cannot create an unbounded positive numeric strikeout feature
 
+AGE-290 adds the workload, leash, and role-context layer over the same
+starter-game artifact. It emits one expected-opportunity row per starter-game
+under:
+
+`data/normalized/workload_leash_features/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+The feature rows include:
+
+- recent 15-day and last-3-start pitch-count and batters-faced means
+- season pitch-count and batters-faced distributions for the pitcher
+- team prior-starter leash tendency for the same season
+- times-through-order threshold rates based on reaching 18, 22, and 27 batters
+  faced
+- expected pitch count and expected batters faced as an opportunity-volume
+  group
+- capped rest context and explicit rest buckets
+- source-backed opener/bulk role flags from prior short-workload patterns
+- explicit unknown status for long layoffs, IL return, rehab return, and role
+  changes when no timestamp-valid source labels those states
+
+This layer is separate from pitcher skill and matchup features. Workload fields
+are intended to feed opportunity volume, while pitcher skill and lineup matchup
+fields estimate strikeout probability per opportunity. Raw continuous
+`rest_days` is not emitted as a primary model driver; long-layoff rows are
+classified separately from standard rest and are not guessed into injury labels.
+
+The builder writes `feature_report.json` and `feature_report.md` with coverage,
+variance, top correlations by season, rest policy, role-context source counts,
+leakage status, and artifact paths. Same-game `starter_strikeouts` is used only
+for report correlations; feature values use games before each starter-game
+`official_date`.
+
 The landed AGE-287 canonical artifact lives at:
 
 `data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z/`
