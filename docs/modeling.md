@@ -361,6 +361,52 @@ distribution diagnostics and RMSE as tie-breakers. Test and held-out metrics are
 reported for audit only; they are not used to choose the candidate. The command
 does not produce betting decisions.
 
+AGE-292 adds model-only walk-forward validation for the rebuilt projection
+track:
+
+```bash
+uv run python -m mlb_props_stack validate-model-only-strikeouts \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+```
+
+Headline metrics are rolling season walk-forward splits, never random row
+splits. The default design starts validation at 2023 and uses prior seasons as
+training data with a six-season cap, yielding the intended shapes:
+
+- train 2019-2022, validate 2023
+- train 2019-2023, validate 2024
+- train 2019-2024, validate 2025
+- train 2020-2025, validate 2026-to-date when available
+
+Artifacts land under:
+
+`data/normalized/model_only_walk_forward_validation/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+Key artifacts:
+
+- `validation_report.json` and `validation_report.md`
+  model-only MAE/RMSE, count-distribution log loss, common-line log loss and
+  Brier scores, calibration by line bucket and confidence bucket, bias by
+  pitcher tier, handedness matchup, workload bucket, rest/layoff bucket,
+  season, and rule environment, recency sensitivity, observed calibration-based
+  threshold proposals, and go/no-go recommendation
+- `validation_predictions.jsonl`
+  one held-out starter-game projection row with common-line probabilities and
+  analysis buckets
+- `reproducibility_notes.md`
+  exact rerun command and the projection-only scope guardrail
+
+When joined pitcher-skill, lineup-matchup, or workload/leash feature artifacts
+are unavailable, the report records that feature coverage gap and keeps
+betting-layer work blocked. Pitcher-tier and rest/layoff bias summaries then
+fall back to prior-only starter-game history for diagnostics, but that fallback
+does not replace full feature-layer validation.
+
+No wagering, CLV, ROI, edge-candidate, approval-gate, or stake-sizing metrics
+belong in this validation layer.
+
 AGE-290 adds the workload, leash, and role-context layer over the same
 starter-game artifact. It emits one expected-opportunity row per starter-game
 under:

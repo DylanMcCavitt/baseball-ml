@@ -84,6 +84,7 @@ Run the actual changed command, not just the module entrypoint:
 - `build-lineup-matchup-features`
 - `build-workload-leash-features`
 - `train-candidate-strikeout-models`
+- `validate-model-only-strikeouts`
 - `train-starter-strikeout-baseline`
 - `compare-starter-strikeout-baselines`
 - `build-edge-candidates`
@@ -178,6 +179,21 @@ diagnostics, and feature-group contribution summaries. Spot-check
 over/under probability support from the count distribution, and uncertainty
 intervals. Confirm the command did not emit edge candidates, wager approval
 rows, or betting decisions.
+
+For model-only walk-forward validation work, open:
+
+- `validation_report.json`
+- `validation_report.md`
+- `validation_predictions.jsonl`
+- `reproducibility_notes.md`
+
+Confirm headline metrics use rolling walk-forward season splits rather than
+random row splits. Check that MAE/RMSE, count-distribution log loss, common-line
+log loss and Brier, calibration by line bucket and confidence bucket, bias by
+pitcher tier, handedness, workload, rest/layoff, season, and rule environment,
+recency sensitivity, observed calibration-derived threshold proposals, and the
+go/no-go recommendation are present. Confirm the report did not emit wagering,
+CLV, ROI, edge-candidate, approval, or stake-sizing metrics.
 
 For odds, edge, or daily candidate work, inspect:
 

@@ -49,6 +49,7 @@ modeling work must honor.
 | Lineup matchup features | `src/mlb_props_stack/lineup_matchup_features.py` | build prior-only batter-by-batter and aggregate opponent-lineup matchup features over the starter-game dataset |
 | Workload and leash features | `src/mlb_props_stack/workload_leash_features.py` | build prior-only expected opportunity, pitch-count, batters-faced, rest-bucket, team-leash, and role-context features over the starter-game dataset |
 | Candidate projection models | `src/mlb_props_stack/candidate_models.py` | train comparable time-aware strikeout model families, distribution outputs, calibration diagnostics, feature-group summaries, and a reusable selected-model artifact |
+| Model-only validation | `src/mlb_props_stack/model_validation.py` | validate rebuilt strikeout projections with rolling season walk-forward splits, line/confidence calibration, bias buckets, recency sensitivity, and go/no-go reporting before betting-layer work resumes |
 | Obsolete pre-rebuild modeling | `src/mlb_props_stack/modeling.py` | legacy v0 training path retained only until the rebuild replaces it; do not use `starter-strikeout-baseline-v0` as current performance evidence or as the rebuild benchmark |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, per-book and consensus devig, book hold, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
@@ -295,6 +296,28 @@ This layer is projection-only. It does not score sportsbook prices, size wagers,
 or imply live readiness. The selected candidate is chosen by validation
 common-line log loss, with test and held-out metrics reported for audit rather
 than selection.
+
+AGE-292 adds model-only walk-forward validation on top of those candidate
+families:
+
+- `data/normalized/model_only_walk_forward_validation/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../validation_report.json`
+  rolling season split metrics, count-distribution log loss, common-line Brier
+  and log loss, calibration by line bucket and confidence bucket, bias by
+  pitcher tier, handedness, workload, rest/layoff, season, and rule environment,
+  recency-window sensitivity, observed calibration-derived threshold proposals,
+  and go/no-go recommendation
+- `validation_report.md`
+  readable model-only validation summary
+- `validation_predictions.jsonl`
+  one held-out projection row per starter-game with common-line probabilities
+  and analysis buckets
+- `reproducibility_notes.md`
+  exact rerun command and explicit no-betting scope guardrail
+
+This layer is the rebuild gate before betting-layer work. It does not compute
+CLV, ROI, edge candidates, wager approvals, or stake sizes. If the report is
+weak, unstable, or missing required feature-layer coverage, downstream betting
+work remains blocked.
 
 AGE-147 adds:
 
