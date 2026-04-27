@@ -16,6 +16,10 @@ from .backtest import (
     WalkForwardBacktestResult,
     build_walk_forward_backtest,
 )
+from .candidate_models import (
+    CandidateStrikeoutModelTrainingResult,
+    train_candidate_strikeout_models,
+)
 from .config import StackConfig
 from .data_alignment import (
     DEFAULT_COVERAGE_THRESHOLD,
@@ -345,6 +349,27 @@ def render_starter_strikeout_inference_summary(
         f"feature_run_dir={result.feature_run_dir}",
         f"model_path={result.model_path}",
         f"ladder_probabilities_path={result.ladder_probabilities_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_candidate_strikeout_model_summary(
+    result: CandidateStrikeoutModelTrainingResult,
+) -> str:
+    """Return a human-readable summary for one candidate-family model run."""
+    lines = [
+        (
+            "Candidate strikeout model training complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"selected_candidate={result.selected_candidate}",
+        f"rows={result.row_count}",
+        f"model_comparison_path={result.report_path}",
+        f"model_comparison_markdown_path={result.report_markdown_path}",
+        f"selected_model_path={result.selected_model_path}",
+        f"model_outputs_path={result.model_outputs_path}",
+        f"reproducibility_notes_path={result.reproducibility_notes_path}",
     ]
     return "\n".join(lines)
 
@@ -818,6 +843,52 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Latest allowed odds snapshot timestamp before scheduled first pitch.",
     )
 
+    candidate_models_parser = subparsers.add_parser(
+        "train-candidate-strikeout-models",
+        help=(
+            "Train comparable candidate starter strikeout model families and "
+            "write distribution-output reports without betting decisions."
+        ),
+    )
+    candidate_models_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the candidate training window.",
+    )
+    candidate_models_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the candidate training window.",
+    )
+    candidate_models_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where starter, feature, and model artifacts live.",
+    )
+    candidate_models_parser.add_argument(
+        "--dataset-run-dir",
+        default=None,
+        help=(
+            "Optional exact starter-game dataset run directory. Defaults to the "
+            "latest matching run, then latest available run."
+        ),
+    )
+    candidate_models_parser.add_argument(
+        "--pitcher-skill-run-dir",
+        default=None,
+        help="Optional exact pitcher-skill feature run directory.",
+    )
+    candidate_models_parser.add_argument(
+        "--lineup-matchup-run-dir",
+        default=None,
+        help="Optional exact lineup-matchup feature run directory.",
+    )
+    candidate_models_parser.add_argument(
+        "--workload-leash-run-dir",
+        default=None,
+        help="Optional exact workload/leash feature run directory.",
+    )
+
     daily_candidates_parser = subparsers.add_parser(
         "build-daily-candidates",
         help=(
@@ -1134,6 +1205,19 @@ def main(argv: list[str] | None = None) -> int:
             cutoff_minutes_before_first_pitch=args.cutoff_minutes_before_first_pitch,
         )
         print(render_model_comparison_summary(result))
+        return 0
+
+    if args.command == "train-candidate-strikeout-models":
+        result = train_candidate_strikeout_models(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            dataset_run_dir=args.dataset_run_dir,
+            pitcher_skill_run_dir=args.pitcher_skill_run_dir,
+            lineup_matchup_run_dir=args.lineup_matchup_run_dir,
+            workload_leash_run_dir=args.workload_leash_run_dir,
+        )
+        print(render_candidate_strikeout_model_summary(result))
         return 0
 
     if args.command == "build-daily-candidates":

@@ -1,6 +1,7 @@
 from datetime import date
 
 from mlb_props_stack.backtest import WalkForwardBacktestResult
+from mlb_props_stack.candidate_models import CandidateStrikeoutModelTrainingResult
 from mlb_props_stack.cli import main, render_runtime_summary
 from mlb_props_stack.edge import EdgeCandidateBuildResult
 from mlb_props_stack.ingest import (
@@ -432,6 +433,46 @@ def test_model_comparison_cli_renders_output_summary(monkeypatch, tmp_path, caps
     assert "expanded_backtest_run_id=20260424T180004Z" in output
     assert "comparison_path=" in output
     assert "comparison_markdown_path=" in output
+
+
+def test_candidate_strikeout_models_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = CandidateStrikeoutModelTrainingResult(
+        start_date=date(2019, 3, 20),
+        end_date=date(2026, 4, 24),
+        run_id="20260426T180000Z",
+        selected_candidate="negative_binomial_glm_count_baseline",
+        row_count=31729,
+        report_path=tmp_path / "model_comparison.json",
+        report_markdown_path=tmp_path / "model_comparison.md",
+        selected_model_path=tmp_path / "selected_model.json",
+        model_outputs_path=tmp_path / "model_outputs.jsonl",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.train_candidate_strikeout_models",
+        lambda **_: result,
+    )
+
+    main(
+        [
+            "train-candidate-strikeout-models",
+            "--start-date",
+            "2019-03-20",
+            "--end-date",
+            "2026-04-24",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Candidate strikeout model training complete for 2019-03-20 -> 2026-04-24" in output
+    assert "selected_candidate=negative_binomial_glm_count_baseline" in output
+    assert "rows=31729" in output
+    assert "model_comparison_path=" in output
+    assert "selected_model_path=" in output
+    assert "model_outputs_path=" in output
 
 
 def test_edge_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsys):

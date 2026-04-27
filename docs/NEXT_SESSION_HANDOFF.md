@@ -4,79 +4,99 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Current issue branch: `feat/age-290-workload-leash-features`
-- Base state: `f15c732` (`origin/main`, AGE-289 merged)
-- Active issue: `AGE-290` - build expected workload, leash, and injury-context
-  features
-- Parent rebuild track: `AGE-285` - rebuild pitcher strikeout projection model
-  before betting layer
-- Implementation state: AGE-290 code, docs, tests, and a real canonical
-  artifact smoke are complete in this worktree.
-- Canonical ignored data directory for live model checks:
-  `/Users/dylanmccavitt/projects/nba-ml/data`
+- Active issue: `AGE-291` - train candidate strikeout model families with
+  distribution outputs
+- Current issue branch:
+  `dylanmccavitt2015/age-291-train-candidate-strikeout-model-families-with-distribution`
+- Base state: `56d1425` (`origin/main`, AGE-290 merged)
+- Linear status was moved from `Todo` to `In Progress` at issue start.
+- Implementation state: AGE-291 code, docs, focused tests, full tests, and real
+  artifact smoke checks are complete in this worktree. The branch is ready for
+  PR review after the latest verification pass, commit, and push.
 
-## What Changed In AGE-290
+## What Changed In AGE-291
 
-- Added `src/mlb_props_stack/workload_leash_features.py`, a standalone
-  expected-opportunity feature builder over the AGE-287 starter-game dataset.
+- Added `src/mlb_props_stack/candidate_models.py`, a projection-only candidate
+  model-family trainer over the AGE-287 starter-game dataset and optional
+  AGE-288/289/290 feature layers.
 - Added the CLI command:
 
 ```bash
-uv run python -m mlb_props_stack build-workload-leash-features \
+uv run python -m mlb_props_stack train-candidate-strikeout-models \
   --start-date 2019-03-20 \
   --end-date 2026-04-24 \
-  --output-dir /Users/dylanmccavitt/projects/nba-ml/data \
-  --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
+  --output-dir data
 ```
 
-- The builder reads `starter_game_training_dataset.jsonl` plus the preserved
-  AGE-287 direct Statcast `source_manifest.jsonl`.
-- Feature rows are restricted to the requested date window while the source
-  dataset count still records the full selected dataset run.
-- Added workload and leash features:
-  - recent 15-day and last-3-start pitch-count and batters-faced means
-  - pitcher season pitch-count and batters-faced distributions
-  - team season prior-starter leash tendency
-  - times-through-order threshold rates for 18, 22, and 27 batters faced
-  - expected pitch count and expected batters faced
-- Added rest and role context:
-  - short, standard, extra, long-layoff, and no-prior-start buckets
-  - capped `rest_days_capped`, with no raw continuous `rest_days`
-  - long-layoff unknown status separate from standard rest
-  - IL and rehab return flags default false until a timestamp-valid source
-    explicitly backs them
-  - opener/bulk flags from prior short-start workload patterns when available
-- Timestamp policy:
-  - workload and role inputs use only games before each starter-game
-    `official_date`
-  - same-game `starter_strikeouts` is used only for report correlations
-  - source pitch rows are reduced to inferred starting-pitcher appearances by
-    first pitcher for the fielding team/game, so relief appearances do not
-    contaminate starter leash
-- Updated README, modeling docs, architecture docs, runtime-review docs, CLI
-  tests, and focused workload/leash tests.
+- Candidate families now trained or explicitly represented in one comparable
+  report:
+  - Poisson count GLM baseline
+  - negative-binomial count GLM baseline
+  - plate-appearance logistic K-rate model by expected batters faced
+  - repo-approved tree ensemble equivalent using deterministic boosted decision
+    stumps
+  - validation-selected top-two mean blend
+  - neural/sequence challenger recorded as skipped until sequence-shaped inputs
+    and dependency/architecture approval exist
+- Added distribution-output artifacts:
+  - `model_comparison.json`
+  - `model_comparison.md`
+  - `selected_model.json`
+  - `model_outputs.jsonl`
+  - `reproducibility_notes.md`
+- `model_outputs.jsonl` writes one selected-model row per starter-game with:
+  - point strikeout projection
+  - full strikeout-count probability distribution
+  - over/under probabilities for common half-strikeout lines
+  - an explicit arbitrary-line probability contract backed by the full count
+    distribution
+  - predictive standard deviation and central 80% interval
+- Selection is validation-evidence based:
+  - primary metric is validation common-line mean log loss
+  - validation distribution diagnostics and RMSE are tie-breakers
+  - test and held-out metrics are reported for audit only
+- Feature group contribution summaries are grouped as:
+  - pitcher skill
+  - matchup
+  - workload
+  - context
+- No betting decisions, edge candidates, wager approval rows, dashboard changes,
+  or pricing-layer behavior were added.
 
-## Local AGE-290 Data Evidence
+## Local AGE-291 Data Evidence
 
-- Canonical AGE-287 dataset used for the smoke:
-  `/Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z/`
-- Real AGE-290 smoke command:
+Real starter-dataset-only smoke:
 
 ```bash
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-workload-leash-features --start-date 2019-03-20 --end-date 2019-03-22 --output-dir /Users/dylanmccavitt/projects/nba-ml/data --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
+rm -rf /tmp/age291-candidate-smoke && UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run python -m mlb_props_stack train-candidate-strikeout-models --start-date 2019-03-20 --end-date 2019-03-28 --output-dir /tmp/age291-candidate-smoke --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
 ```
 
-- Smoke artifact:
-  `/Users/dylanmccavitt/projects/nba-ml/data/normalized/workload_leash_features/start=2019-03-20_end=2019-03-22/run=20260425T200939Z/`
-- Smoke result:
-  - `dataset_rows=31729`
-  - `feature_rows=4`
-  - `pitch_rows=689`
-  - `pitchers=4`
-  - long layoff rows: `0`
-  - opener/bulk role rows: `0`
-  - leakage policy status: `ok`
-  - raw rest-days primary driver: `False`
+Result:
+
+- run: `/tmp/age291-candidate-smoke/normalized/candidate_strikeout_models/start=2019-03-20_end=2019-03-28/run=20260427T221839Z/`
+- rows: `34`
+- selected candidate: `negative_binomial_glm_count_baseline`
+- inspected `model_comparison.json`, `model_comparison.md`, and
+  `model_outputs.jsonl`
+- first output row had a non-empty count distribution, common line probabilities
+  starting at `2.5`, arbitrary-line probability support, and confidence
+  interval `[1, 6]`
+
+Real canonical pitcher-skill join smoke:
+
+```bash
+rm -rf /tmp/age291-candidate-skill-smoke && UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run python -m mlb_props_stack train-candidate-strikeout-models --start-date 2024-04-01 --end-date 2024-04-03 --output-dir /tmp/age291-candidate-skill-smoke --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z --pitcher-skill-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/pitcher_skill_features/start=2024-04-01_end=2024-04-03/run=20260425T180426Z
+```
+
+Result:
+
+- run: `/tmp/age291-candidate-skill-smoke/normalized/candidate_strikeout_models/start=2024-04-01_end=2024-04-03/run=20260427T221847Z/`
+- rows: `80`
+- pitcher-skill feature matches: `80`
+- selected candidate: `boosted_stump_tree_ensemble`
+- selected model contribution share: `pitcher_skill=1.0`
+- inspected `model_comparison.json` and `model_outputs.jsonl`; line
+  probabilities and count distributions were non-empty
 
 ## Files Changed
 
@@ -85,66 +105,76 @@ uv run python -m mlb_props_stack build-workload-leash-features \
 - `docs/architecture.md`
 - `docs/modeling.md`
 - `docs/review_runtime_checks.md`
+- `src/mlb_props_stack/candidate_models.py`
 - `src/mlb_props_stack/cli.py`
-- `src/mlb_props_stack/workload_leash_features.py`
+- `tests/test_candidate_models.py`
 - `tests/test_cli.py`
-- `tests/test_workload_leash_features.py`
+- `tests/test_runtime_smokes.py`
 
 ## Verification
 
 Commands run:
 
 ```bash
-/opt/homebrew/bin/uv sync --extra dev
-/opt/homebrew/bin/uv run pytest tests/test_workload_leash_features.py tests/test_cli.py -q
-python3 -m compileall src tests
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-workload-leash-features --start-date 2019-03-20 --end-date 2019-03-22 --output-dir /Users/dylanmccavitt/projects/nba-ml/data --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
-/opt/homebrew/bin/uv run pytest
-/opt/homebrew/bin/uv run python -m mlb_props_stack
+UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run pytest tests/test_candidate_models.py tests/test_cli.py tests/test_runtime_smokes.py -q
+PYTHONPYCACHEPREFIX=/tmp/age291-pycache python3 -m compileall src tests
+UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv sync --extra dev
+UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run pytest
+UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run python -m mlb_props_stack
+rm -rf /tmp/age291-candidate-smoke && UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run python -m mlb_props_stack train-candidate-strikeout-models --start-date 2019-03-20 --end-date 2019-03-28 --output-dir /tmp/age291-candidate-smoke --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
+rm -rf /tmp/age291-candidate-skill-smoke && UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run python -m mlb_props_stack train-candidate-strikeout-models --start-date 2024-04-01 --end-date 2024-04-03 --output-dir /tmp/age291-candidate-skill-smoke --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z --pitcher-skill-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/pitcher_skill_features/start=2024-04-01_end=2024-04-03/run=20260425T180426Z
 ```
 
 Observed results:
 
-- First focused pytest attempt failed before setup because the fresh worktree
-  did not have the dev extra installed; `/opt/homebrew/bin/uv sync --extra dev`
-  fixed it.
-- Focused workload/CLI tests: `17 passed`.
-- `python3 -m compileall src tests` completed successfully.
-- Real canonical AGE-290 CLI smoke succeeded and wrote the 2019-03-20 through
-  2019-03-22 feature artifact listed above.
-- Full suite: `216 passed` with existing third-party MLflow/Pydantic warnings.
+- Candidate/CLI/runtime smoke tests: `22 passed` with existing third-party
+  MLflow/Pydantic warnings.
+- `python3 -m compileall src tests` completed successfully with
+  `PYTHONPYCACHEPREFIX=/tmp/age291-pycache`.
+- `uv sync --extra dev` completed successfully with `UV_CACHE_DIR=/tmp/uv-cache`.
+- Full suite: `220 passed` with existing third-party MLflow/Pydantic warnings.
 - `python -m mlb_props_stack` printed the runtime configuration banner.
+- Starter-dataset-only artifact smoke succeeded, selected
+  `negative_binomial_glm_count_baseline`, and verified the model comparison,
+  distribution output, arbitrary-line contract, and confidence interval.
+- Pitcher-skill join artifact smoke succeeded, selected
+  `boosted_stump_tree_ensemble`, matched `80` pitcher-skill rows, and verified
+  selected feature-group contributions.
 
-## Recommended Next Issue
+## Closeout State
 
-1. `AGE-291` - candidate model families with distribution outputs.
+- Git metadata writes are working in this resumed Symphony worktree.
+- The AGE-291 branch was created from `origin/main` at `56d1425`.
+- No existing PR was found for the branch before closeout.
+- Remaining closeout steps for this session: commit, push, open the PR, link it
+  in Linear, and move `AGE-291` to `In Review`.
+
+## Recommended Next Issue After AGE-291
+
+1. `AGE-292` - model-only walk-forward validation.
 2. Then continue through:
-   - `AGE-292` - model-only walk-forward validation
    - `AGE-293` - scoreable historical market joins
    - `AGE-294` - rebuilt betting layer
    - `AGE-295` - dashboard and approved-wager UX reconnection
 
 ## Constraints And Risks
 
+- The current candidate command is projection-only. Do not treat its output as
+  betting-ready.
 - Do not resume live-readiness, approved-wager evidence refresh, or dashboard
-  reconnection work before the projection rebuild and validation gates pass.
-- Do not use same-game target rows, same-game batting orders, or same-game
-  workload outcomes as feature inputs.
-- Keep workload/leash fields separate from pitcher skill and lineup matchup
-  fields; this layer represents opportunity volume, not strikeout ability.
-- Do not emit raw continuous `rest_days` as a primary model driver.
-- Do not infer IL return, rehab return, or injury context from rest alone.
-  Long layoffs remain unknown long-layoff context unless a timestamp-valid
-  source explicitly labels the state.
-- Keep opener/bulk flags source-backed. The landed builder uses prior
-  short-start workload patterns only.
-- Do not loosen optional-feature coverage or variance gates to force sparse
-  lineup, workload, or umpire fields active.
-- Treat scoreable backtest coverage as a hard blocker before any live-use claim.
-- Preserve timestamp ordering:
-  `features_as_of <= generated_at <= captured_at`.
-- Treat v0 as obsolete historical residue. Do not use v0 artifacts, metrics,
-  feature assumptions, or code paths as current modeling evidence.
+  reconnection work before projection validation gates pass.
+- The tree ensemble is a standard-library boosted-stump equivalent, not
+  LightGBM/XGBoost/CatBoost; adding those dependencies remains a separate repo
+  approval decision.
+- The neural challenger is skipped because the current artifacts are tabular
+  aggregate rows, not sequence-shaped pitch or batter inputs.
+- Preserve timestamp ordering and feature boundaries:
+  - starter-game outcomes are target labels only
+  - pitcher skill is strikeout ability
+  - lineup matchup is opponent K vulnerability
+  - workload/leash is opportunity volume
+- Do not use v0 artifacts, metrics, feature assumptions, or code paths as
+  current modeling evidence.
 
 ## Deferred Or Superseded Issues
 

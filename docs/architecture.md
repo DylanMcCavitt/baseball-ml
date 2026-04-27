@@ -48,6 +48,7 @@ modeling work must honor.
 | Pitcher skill features | `src/mlb_props_stack/pitcher_skill_features.py` | build prior-only pitcher skill, pitch arsenal, shrinkage, recent-form, and capped rest-bucket features over the starter-game dataset |
 | Lineup matchup features | `src/mlb_props_stack/lineup_matchup_features.py` | build prior-only batter-by-batter and aggregate opponent-lineup matchup features over the starter-game dataset |
 | Workload and leash features | `src/mlb_props_stack/workload_leash_features.py` | build prior-only expected opportunity, pitch-count, batters-faced, rest-bucket, team-leash, and role-context features over the starter-game dataset |
+| Candidate projection models | `src/mlb_props_stack/candidate_models.py` | train comparable time-aware strikeout model families, distribution outputs, calibration diagnostics, feature-group summaries, and a reusable selected-model artifact |
 | Obsolete pre-rebuild modeling | `src/mlb_props_stack/modeling.py` | legacy v0 training path retained only until the rebuild replaces it; do not use `starter-strikeout-baseline-v0` as current performance evidence or as the rebuild benchmark |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, per-book and consensus devig, book hold, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
 | Decision layer | `src/mlb_props_stack/edge.py` | match line and projection contracts, enforce timestamp order, score no-vig edges, and write replayable `edge_candidates` rows |
@@ -272,6 +273,28 @@ not how often the starter creates strikeouts per opportunity. Raw continuous
 `rest_days` is not emitted; long layoffs are separate from standard rest and
 stay labeled as unknown layoff context unless a timestamp-valid source
 explicitly labels IL, rehab, or role-change state.
+
+AGE-291 adds candidate projection-model training on top of the starter-game
+dataset and feature layers:
+
+- `data/normalized/candidate_strikeout_models/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../model_comparison.json`
+  comparable validation/test/held-out metrics for Poisson GLM, negative-binomial
+  GLM, plate-appearance logistic, a repo-approved boosted-stump tree ensemble,
+  the validation-selected blend, and the neural challenger decision
+- `model_comparison.md`
+  readable model-family comparison and selection rationale
+- `selected_model.json`
+  reusable selected-candidate artifact with feature schema, distribution
+  settings, feature-group contribution summaries, and source-artifact references
+- `model_outputs.jsonl`
+  one selected-model output row per starter-game with point projection, full
+  strikeout-count distribution, common over/under probabilities, and uncertainty
+  intervals
+
+This layer is projection-only. It does not score sportsbook prices, size wagers,
+or imply live readiness. The selected candidate is chosen by validation
+common-line log loss, with test and held-out metrics reported for audit rather
+than selection.
 
 AGE-147 adds:
 
