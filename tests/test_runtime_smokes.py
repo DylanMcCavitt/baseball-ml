@@ -8,6 +8,7 @@ from pathlib import Path
 from types import ModuleType
 
 from mlb_props_stack.cli import main
+from mlb_props_stack.candidate_models import train_candidate_strikeout_models
 from mlb_props_stack.ingest import ingest_statcast_features_for_date
 from mlb_props_stack.modeling import train_starter_strikeout_baseline
 from mlb_props_stack.tracking import TrackingConfig
@@ -17,6 +18,7 @@ from tests.test_statcast_feature_ingest import (
     seed_postlock_mlb_metadata,
 )
 from tests.stage_gate_fixtures import seed_stage_gate_artifacts
+from tests.test_candidate_models import _seed_candidate_training_window
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
@@ -460,6 +462,64 @@ def test_training_cli_smoke_writes_seeded_baseline_artifacts(
     assert evaluation["model_version"] == "starter-strikeout-baseline-v0"
     assert "Starter strikeout baseline training complete" in output
     assert f"evaluation_path={result.evaluation_path}" in output
+
+
+def test_candidate_model_cli_smoke_writes_distribution_artifacts(
+    monkeypatch,
+    tmp_path,
+    capsys,
+) -> None:
+    (
+        start_date,
+        end_date,
+        dataset_run_dir,
+        pitcher_run_dir,
+        lineup_run_dir,
+        workload_run_dir,
+    ) = _seed_candidate_training_window(tmp_path)
+    captured: dict[str, object] = {}
+    fixed_now = lambda: datetime(2026, 4, 26, 18, 0, tzinfo=UTC)
+
+    def _run_candidate_training(**kwargs):
+        result = train_candidate_strikeout_models(
+            **kwargs,
+            now=fixed_now,
+        )
+        captured["result"] = result
+        return result
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.train_candidate_strikeout_models",
+        _run_candidate_training,
+    )
+
+    main(
+        [
+            "train-candidate-strikeout-models",
+            "--start-date",
+            start_date.isoformat(),
+            "--end-date",
+            end_date.isoformat(),
+            "--output-dir",
+            str(tmp_path),
+            "--dataset-run-dir",
+            str(dataset_run_dir),
+            "--pitcher-skill-run-dir",
+            str(pitcher_run_dir),
+            "--lineup-matchup-run-dir",
+            str(lineup_run_dir),
+            "--workload-leash-run-dir",
+            str(workload_run_dir),
+        ]
+    )
+    output = capsys.readouterr().out
+    result = captured["result"]
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+
+    assert result.model_outputs_path.exists()
+    assert report["selection"]["selected_candidate"] == result.selected_candidate
+    assert "Candidate strikeout model training complete" in output
+    assert f"model_outputs_path={result.model_outputs_path}" in output
 
 
 def test_stage_gate_cli_smoke_writes_readiness_report(tmp_path, capsys) -> None:

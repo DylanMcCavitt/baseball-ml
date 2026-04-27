@@ -83,6 +83,7 @@ Run the actual changed command, not just the module entrypoint:
 - `build-pitcher-skill-features`
 - `build-lineup-matchup-features`
 - `build-workload-leash-features`
+- `train-candidate-strikeout-models`
 - `train-starter-strikeout-baseline`
 - `compare-starter-strikeout-baselines`
 - `build-edge-candidates`
@@ -160,6 +161,23 @@ For model-variant comparison work, open:
 Confirm that both variants use the same date window and cutoff, that optional
 features are listed as active or explicitly excluded, and that final-gate
 approved wager counts are reported separately from edge-rule placed bets.
+
+For candidate strikeout model-family work, open:
+
+- `model_comparison.json`
+- `model_comparison.md`
+- `selected_model.json`
+- `model_outputs.jsonl`
+- `reproducibility_notes.md`
+
+Confirm that every trained family used the same date split, the selected
+candidate was chosen by validation evidence, the report includes MAE/RMSE,
+common-line log-loss and Brier scores, calibration curves, distribution
+diagnostics, and feature-group contribution summaries. Spot-check
+`model_outputs.jsonl` for a full count distribution, arbitrary line
+over/under probability support from the count distribution, and uncertainty
+intervals. Confirm the command did not emit edge candidates, wager approval
+rows, or betting decisions.
 
 For odds, edge, or daily candidate work, inspect:
 

@@ -64,6 +64,9 @@ That is a math-and-process problem first, and a betting problem second.
 - `src/mlb_props_stack/workload_leash_features.py`
   Timestamp-valid expected workload, leash, rest, and role-context features
   over the starter-game dataset.
+- `src/mlb_props_stack/candidate_models.py`
+  Candidate starter strikeout model-family training and distribution-output
+  comparison over the rebuild dataset and feature layers.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
 - `src/mlb_props_stack/paper_tracking.py`

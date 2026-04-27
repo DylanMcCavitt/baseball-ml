@@ -309,6 +309,58 @@ Rest/layoff correction for the rebuild starts here:
   are explicit
 - long layoff cannot create an unbounded positive numeric strikeout feature
 
+AGE-291 adds the first current candidate-model comparison for the projection
+rebuild:
+
+```bash
+uv run python -m mlb_props_stack train-candidate-strikeout-models \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+```
+
+The command joins the starter-game dataset with available pitcher-skill,
+lineup-matchup, and workload/leash feature runs by `training_row_id`. It trains
+all trained families on the same date-based train/validation/test split:
+
+- Poisson count GLM baseline
+- negative-binomial count GLM baseline
+- plate-appearance logistic K-rate model multiplied by expected batters faced
+- repo-approved tree ensemble equivalent using deterministic boosted decision
+  stumps
+- validation-selected mean blend of the top two trained candidates
+
+The neural or sequence challenger is represented in the report but skipped
+until the repo carries sequence-shaped pitch or batter inputs and an approved
+dependency/architecture path. It must not be selected unless it is actually
+trained and beats simpler candidates on walk-forward accuracy and calibration.
+
+Artifacts land under:
+
+`data/normalized/candidate_strikeout_models/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+Key artifacts:
+
+- `model_comparison.json` and `model_comparison.md`
+  candidate-family MAE/RMSE, common-line log-loss and Brier scores,
+  calibration curves, count-distribution diagnostics, source-artifact coverage,
+  and validation-based selection rationale
+- `selected_model.json`
+  reusable selected-candidate metadata, feature schema/statistics,
+  distribution settings, and feature-group contribution summaries grouped as
+  pitcher skill, matchup, workload, and context
+- `model_outputs.jsonl`
+  point strikeout projections, full strikeout-count distributions, common
+  over/under probabilities, a reusable arbitrary-line probability contract, and
+  uncertainty summaries for each starter-game row
+- `reproducibility_notes.md`
+  exact rerun command and the projection-only scope guardrail
+
+Selection uses validation common-line log loss first, then validation
+distribution diagnostics and RMSE as tie-breakers. Test and held-out metrics are
+reported for audit only; they are not used to choose the candidate. The command
+does not produce betting decisions.
+
 AGE-290 adds the workload, leash, and role-context layer over the same
 starter-game artifact. It emits one expected-opportunity row per starter-game
 under:
