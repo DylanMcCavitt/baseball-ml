@@ -12,6 +12,7 @@ from mlb_props_stack.ingest import (
 from mlb_props_stack.lineup_matchup_features import LineupMatchupFeatureBuildResult
 from mlb_props_stack.modeling import StarterStrikeoutBaselineTrainingResult
 from mlb_props_stack.model_comparison import StarterStrikeoutModelComparisonResult
+from mlb_props_stack.model_validation import ModelOnlyWalkForwardValidationResult
 from mlb_props_stack.paper_tracking import DailyCandidateWorkflowResult
 from mlb_props_stack.pitcher_skill_features import PitcherSkillFeatureBuildResult
 from mlb_props_stack.starter_dataset import StarterGameDatasetBuildResult
@@ -473,6 +474,46 @@ def test_candidate_strikeout_models_cli_renders_output_summary(monkeypatch, tmp_
     assert "model_comparison_path=" in output
     assert "selected_model_path=" in output
     assert "model_outputs_path=" in output
+
+
+def test_model_only_validation_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = ModelOnlyWalkForwardValidationResult(
+        start_date=date(2019, 3, 20),
+        end_date=date(2026, 4, 24),
+        run_id="20260427T180000Z",
+        split_count=4,
+        prediction_count=12500,
+        recommendation="no_go_betting_layer_still_blocked",
+        report_path=tmp_path / "validation_report.json",
+        report_markdown_path=tmp_path / "validation_report.md",
+        predictions_path=tmp_path / "validation_predictions.jsonl",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.validate_model_only_strikeouts_walk_forward",
+        lambda **_: result,
+    )
+
+    main(
+        [
+            "validate-model-only-strikeouts",
+            "--start-date",
+            "2019-03-20",
+            "--end-date",
+            "2026-04-24",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Model-only strikeout walk-forward validation complete for 2019-03-20 -> 2026-04-24" in output
+    assert "splits=4" in output
+    assert "predictions=12500" in output
+    assert "recommendation=no_go_betting_layer_still_blocked" in output
+    assert "validation_report_path=" in output
+    assert "validation_predictions_path=" in output
 
 
 def test_edge_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsys):

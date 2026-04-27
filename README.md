@@ -67,6 +67,10 @@ That is a math-and-process problem first, and a betting problem second.
 - `src/mlb_props_stack/candidate_models.py`
   Candidate starter strikeout model-family training and distribution-output
   comparison over the rebuild dataset and feature layers.
+- `src/mlb_props_stack/model_validation.py`
+  Model-only rolling walk-forward validation for rebuilt strikeout projections,
+  including calibration, bias, stability, and go/no-go reporting before any
+  betting layer consumes the model.
 - `src/mlb_props_stack/edge.py`
   Edge detection and candidate ranking.
 - `src/mlb_props_stack/paper_tracking.py`
@@ -552,6 +556,57 @@ obsolete historical boundary, not a live-use promotion, not a useful benchmark,
 and not a source of current performance metrics. Do not use v0 projection
 quality, feature assumptions, or comparison output to judge the rebuild. The
 limitations are recorded in `docs/baseline_v0_audit.md`.
+
+## Candidate Strikeout Models
+
+Train the current projection-only candidate families:
+
+```bash
+uv run python -m mlb_props_stack train-candidate-strikeout-models \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+```
+
+The candidate command compares Poisson, negative-binomial, plate-appearance
+rate, boosted-stump tree-equivalent, and validation-selected blend families.
+It writes count distributions and common-line probabilities only; it does not
+price sportsbook lines, rank edges, approve wagers, or imply live readiness.
+
+## Model-Only Walk-Forward Validation
+
+`AGE-292` adds the projection validation gate that must pass before rebuilt
+betting work resumes:
+
+```bash
+uv run python -m mlb_props_stack validate-model-only-strikeouts \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /Users/dylanmccavitt/projects/nba-ml/data
+```
+
+The default headline design uses rolling season splits rather than random row
+splits: train prior seasons, validate one held-out season, and cap the latest
+training window at six seasons so 2026-to-date trains from 2020-2025 when that
+season exists. The report includes MAE/RMSE, count-distribution log loss,
+common-line log loss and Brier scores, calibration by line and confidence
+bucket, bias by pitcher tier, handedness, workload, rest/layoff, season, and
+rule environment, plus recency-window sensitivity checks.
+
+Artifacts land under
+`data/normalized/model_only_walk_forward_validation/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`:
+
+- `validation_report.json` and `validation_report.md`
+  model-only metrics, bias/stability summaries, observed calibration-derived
+  threshold candidates for later approval gates, and go/no-go recommendation
+- `validation_predictions.jsonl`
+  one row per held-out starter-game projection with common-line probabilities
+  and analysis buckets
+- `reproducibility_notes.md`
+  exact rerun command and scope guardrail
+
+This command intentionally excludes wagering, CLV, ROI, edge ranking, and stake
+sizing metrics.
 
 ## Starter Strikeout Model Variant Comparison
 

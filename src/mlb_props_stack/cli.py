@@ -47,6 +47,12 @@ from .modeling import (
     StarterStrikeoutBaselineTrainingResult,
     train_starter_strikeout_baseline,
 )
+from .model_validation import (
+    DEFAULT_FIRST_VALIDATION_SEASON,
+    DEFAULT_MAX_TRAINING_SEASONS,
+    ModelOnlyWalkForwardValidationResult,
+    validate_model_only_strikeouts_walk_forward,
+)
 from .model_comparison import (
     compare_starter_strikeout_baselines,
     render_model_comparison_summary,
@@ -369,6 +375,27 @@ def render_candidate_strikeout_model_summary(
         f"model_comparison_markdown_path={result.report_markdown_path}",
         f"selected_model_path={result.selected_model_path}",
         f"model_outputs_path={result.model_outputs_path}",
+        f"reproducibility_notes_path={result.reproducibility_notes_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_model_only_validation_summary(
+    result: ModelOnlyWalkForwardValidationResult,
+) -> str:
+    """Return a human-readable summary for one model-only validation run."""
+    lines = [
+        (
+            "Model-only strikeout walk-forward validation complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"splits={result.split_count}",
+        f"predictions={result.prediction_count}",
+        f"recommendation={result.recommendation}",
+        f"validation_report_path={result.report_path}",
+        f"validation_report_markdown_path={result.report_markdown_path}",
+        f"validation_predictions_path={result.predictions_path}",
         f"reproducibility_notes_path={result.reproducibility_notes_path}",
     ]
     return "\n".join(lines)
@@ -889,6 +916,70 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Optional exact workload/leash feature run directory.",
     )
 
+    model_validation_parser = subparsers.add_parser(
+        "validate-model-only-strikeouts",
+        help=(
+            "Run model-only walk-forward validation for starter strikeout "
+            "projections without betting, CLV, or ROI metrics."
+        ),
+    )
+    model_validation_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the validation source window.",
+    )
+    model_validation_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the validation source window.",
+    )
+    model_validation_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where starter, feature, and validation artifacts live.",
+    )
+    model_validation_parser.add_argument(
+        "--dataset-run-dir",
+        default=None,
+        help=(
+            "Optional exact starter-game dataset run directory. Defaults to the "
+            "latest matching run, then latest available run."
+        ),
+    )
+    model_validation_parser.add_argument(
+        "--pitcher-skill-run-dir",
+        default=None,
+        help="Optional exact pitcher-skill feature run directory.",
+    )
+    model_validation_parser.add_argument(
+        "--lineup-matchup-run-dir",
+        default=None,
+        help="Optional exact lineup-matchup feature run directory.",
+    )
+    model_validation_parser.add_argument(
+        "--workload-leash-run-dir",
+        default=None,
+        help="Optional exact workload/leash feature run directory.",
+    )
+    model_validation_parser.add_argument(
+        "--first-validation-season",
+        type=int,
+        default=DEFAULT_FIRST_VALIDATION_SEASON,
+        help=(
+            "First season to score as a held-out validation season. Defaults "
+            f"to {DEFAULT_FIRST_VALIDATION_SEASON}."
+        ),
+    )
+    model_validation_parser.add_argument(
+        "--max-training-seasons",
+        type=int,
+        default=DEFAULT_MAX_TRAINING_SEASONS,
+        help=(
+            "Maximum prior seasons in the headline rolling training window. "
+            f"Defaults to {DEFAULT_MAX_TRAINING_SEASONS}."
+        ),
+    )
+
     daily_candidates_parser = subparsers.add_parser(
         "build-daily-candidates",
         help=(
@@ -1218,6 +1309,21 @@ def main(argv: list[str] | None = None) -> int:
             workload_leash_run_dir=args.workload_leash_run_dir,
         )
         print(render_candidate_strikeout_model_summary(result))
+        return 0
+
+    if args.command == "validate-model-only-strikeouts":
+        result = validate_model_only_strikeouts_walk_forward(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            dataset_run_dir=args.dataset_run_dir,
+            pitcher_skill_run_dir=args.pitcher_skill_run_dir,
+            lineup_matchup_run_dir=args.lineup_matchup_run_dir,
+            workload_leash_run_dir=args.workload_leash_run_dir,
+            first_validation_season=args.first_validation_season,
+            max_training_seasons=args.max_training_seasons,
+        )
+        print(render_model_only_validation_summary(result))
         return 0
 
     if args.command == "build-daily-candidates":
