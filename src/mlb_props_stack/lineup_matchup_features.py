@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -39,6 +40,15 @@ class LineupMatchupFeatureBuildResult:
     feature_report_path: Path
     feature_report_markdown_path: Path
     reproducibility_notes_path: Path
+
+
+@dataclass(frozen=True)
+class _DatedPitchRows:
+    rows: tuple[StatcastPitchRecord, ...]
+    dates: tuple[date, ...]
+
+
+_EMPTY_DATED_PITCH_ROWS = _DatedPitchRows(rows=(), dates=())
 
 
 def _json_ready(value: Any) -> Any:
@@ -210,18 +220,27 @@ def _lineup_from_starter_row(starter_row: dict[str, Any]) -> tuple[tuple[int, ..
     return (), "no_projection", False, None
 
 
+def _prior_rows(index: _DatedPitchRows, *, target_date: date) -> tuple[StatcastPitchRecord, ...]:
+    return index.rows[: bisect_left(index.dates, target_date)]
+
+
+def _prior_rows_since(
+    index: _DatedPitchRows,
+    *,
+    start_date: date,
+    target_date: date,
+) -> tuple[StatcastPitchRecord, ...]:
+    start_index = bisect_left(index.dates, start_date)
+    end_index = bisect_left(index.dates, target_date)
+    return index.rows[start_index:end_index]
+
+
 def _pitcher_hand_from_history(
-    pitcher_rows: list[StatcastPitchRecord], *, target_date: date
+    pitcher_rows: tuple[StatcastPitchRecord, ...],
 ) -> str | None:
-    for row in sorted(
-        (
-            row
-            for row in pitcher_rows
-            if _row_date(row) < target_date and row.p_throws
-        ),
-        key=lambda row: (row.game_date, row.game_pk, row.at_bat_number, row.pitch_number),
-        reverse=True,
-    ):
+    for row in reversed(pitcher_rows):
+        if not row.p_throws:
+            continue
         return row.p_throws
     return None
 
@@ -231,23 +250,38 @@ def _plate_appearance_rows(rows: list[StatcastPitchRecord]) -> list[StatcastPitc
 
 
 def _counts(rows: list[StatcastPitchRecord], *, pitcher_hand: str | None = None) -> dict[str, int]:
-    selected = rows
-    if pitcher_hand is not None:
-        selected = [row for row in rows if row.p_throws == pitcher_hand]
-    final_rows = _plate_appearance_rows(selected)
-    swing_rows = [row for row in selected if row.is_swing]
-    out_of_zone_rows = [row for row in selected if row.is_out_of_zone is True]
-    return {
-        "pitch_count": len(selected),
-        "plate_appearance_count": len(final_rows),
-        "strikeout_count": sum(1 for row in final_rows if row.is_strikeout_event),
-        "whiff_count": sum(1 for row in selected if row.is_whiff),
-        "csw_count": sum(1 for row in selected if row.is_whiff or row.is_called_strike),
-        "swing_count": len(swing_rows),
-        "contact_count": sum(1 for row in swing_rows if row.is_contact),
-        "out_of_zone_count": len(out_of_zone_rows),
-        "chase_count": sum(1 for row in out_of_zone_rows if row.is_chase_swing is True),
+    counts = {
+        "pitch_count": 0,
+        "plate_appearance_count": 0,
+        "strikeout_count": 0,
+        "whiff_count": 0,
+        "csw_count": 0,
+        "swing_count": 0,
+        "contact_count": 0,
+        "out_of_zone_count": 0,
+        "chase_count": 0,
     }
+    for row in rows:
+        if pitcher_hand is not None and row.p_throws != pitcher_hand:
+            continue
+        counts["pitch_count"] += 1
+        if row.is_plate_appearance_final_pitch:
+            counts["plate_appearance_count"] += 1
+            if row.is_strikeout_event:
+                counts["strikeout_count"] += 1
+        if row.is_whiff:
+            counts["whiff_count"] += 1
+        if row.is_whiff or row.is_called_strike:
+            counts["csw_count"] += 1
+        if row.is_swing:
+            counts["swing_count"] += 1
+            if row.is_contact:
+                counts["contact_count"] += 1
+        if row.is_out_of_zone is True:
+            counts["out_of_zone_count"] += 1
+            if row.is_chase_swing is True:
+                counts["chase_count"] += 1
+    return counts
 
 
 def _metric_bundle(
@@ -310,12 +344,12 @@ def _pitch_type_weakness(rows: list[StatcastPitchRecord]) -> dict[str, dict[str,
 
 
 def _pitcher_pitch_type_usage(
-    pitcher_rows: list[StatcastPitchRecord], *, target_date: date
+    pitcher_rows: tuple[StatcastPitchRecord, ...],
 ) -> dict[str, float]:
     counts: Counter[str] = Counter(
         row.pitch_type
         for row in pitcher_rows
-        if _row_date(row) < target_date and row.pitch_type
+        if row.pitch_type
     )
     total = sum(counts.values())
     if total <= 0:
@@ -353,32 +387,40 @@ def _league_k_priors_by_date(
 
 def _batter_index(
     rows: list[StatcastPitchRecord],
-) -> dict[int, list[StatcastPitchRecord]]:
+) -> dict[int, _DatedPitchRows]:
     indexed: dict[int, list[StatcastPitchRecord]] = defaultdict(list)
     for row in rows:
         indexed[row.batter_id].append(row)
-    return {
-        batter_id: sorted(
+    result: dict[int, _DatedPitchRows] = {}
+    for batter_id, batter_rows in indexed.items():
+        sorted_rows = tuple(sorted(
             batter_rows,
             key=lambda row: (row.game_date, row.game_pk, row.at_bat_number, row.pitch_number),
+        ))
+        result[batter_id] = _DatedPitchRows(
+            rows=sorted_rows,
+            dates=tuple(_row_date(row) for row in sorted_rows),
         )
-        for batter_id, batter_rows in indexed.items()
-    }
+    return result
 
 
 def _pitcher_index(
     rows: list[StatcastPitchRecord],
-) -> dict[int, list[StatcastPitchRecord]]:
+) -> dict[int, _DatedPitchRows]:
     indexed: dict[int, list[StatcastPitchRecord]] = defaultdict(list)
     for row in rows:
         indexed[row.pitcher_id].append(row)
-    return {
-        pitcher_id: sorted(
+    result: dict[int, _DatedPitchRows] = {}
+    for pitcher_id, pitcher_rows in indexed.items():
+        sorted_rows = tuple(sorted(
             pitcher_rows,
             key=lambda row: (row.game_date, row.game_pk, row.at_bat_number, row.pitch_number),
+        ))
+        result[pitcher_id] = _DatedPitchRows(
+            rows=sorted_rows,
+            dates=tuple(_row_date(row) for row in sorted_rows),
         )
-        for pitcher_id, pitcher_rows in indexed.items()
-    }
+    return result
 
 
 def _team_lineup_index(
@@ -476,8 +518,8 @@ def _batter_feature_row(
 def _lineup_feature_row(
     *,
     starter_row: dict[str, Any],
-    batter_rows_by_id: dict[int, list[StatcastPitchRecord]],
-    pitcher_rows_by_id: dict[int, list[StatcastPitchRecord]],
+    batter_rows_by_id: dict[int, _DatedPitchRows],
+    pitcher_rows_by_id: dict[int, _DatedPitchRows],
     team_lineups: dict[str, list[tuple[date, int, tuple[int, ...]]]],
     prior_k_rate: float | None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -493,26 +535,28 @@ def _lineup_feature_row(
             lineup_ids = projected
             lineup_status = "projected_from_prior_team_game"
     pitcher_id = int(starter_row["pitcher_id"])
-    pitcher_rows = pitcher_rows_by_id.get(pitcher_id, [])
+    pitcher_rows = _prior_rows(
+        pitcher_rows_by_id.get(pitcher_id, _EMPTY_DATED_PITCH_ROWS),
+        target_date=target_date,
+    )
     pitcher_hand = starter_row.get("pitcher_hand") or _pitcher_hand_from_history(
-        pitcher_rows, target_date=target_date
+        pitcher_rows
     )
-    pitcher_usage = _pitcher_pitch_type_usage(
-        pitcher_rows, target_date=target_date
-    )
+    pitcher_usage = _pitcher_pitch_type_usage(pitcher_rows)
     batter_feature_rows: list[dict[str, Any]] = []
     lineup_size = len(lineup_ids)
     recent_cutoff = target_date - timedelta(days=RECENT_FORM_DAYS)
     for slot_index, batter_id in enumerate(lineup_ids):
-        batter_rows = sorted(
-            (
-                row
-                for row in batter_rows_by_id.get(batter_id, [])
-                if _row_date(row) < target_date
-            ),
-            key=lambda row: (row.game_date, row.game_pk, row.at_bat_number, row.pitch_number),
+        batter_index = batter_rows_by_id.get(batter_id, _EMPTY_DATED_PITCH_ROWS)
+        batter_rows = _prior_rows(
+            batter_index,
+            target_date=target_date,
         )
-        recent_rows = [row for row in batter_rows if _row_date(row) >= recent_cutoff]
+        recent_rows = _prior_rows_since(
+            batter_index,
+            start_date=recent_cutoff,
+            target_date=target_date,
+        )
         batter_feature_rows.append(
             _batter_feature_row(
                 starter_row=starter_row,
