@@ -8,8 +8,8 @@
 - Current issue branch:
   `dylanmccavitt2015/age-312-vertical-slice-sportsbook-walk-forward-backtest-report`
 - PR: https://github.com/DylanMcCavitt/baseball-ml/pull/56
-- Current state: Needs-fixes follow-up code is implemented and verified in the
-  issue worktree. Push/PR update still needs to happen after this handoff.
+- Current state: Needs-fixes follow-up code is implemented, verified, committed,
+  and pushed to the PR branch.
 
 ## What Changed In AGE-312
 
