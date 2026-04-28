@@ -1,167 +1,46 @@
 # AGENTS.md
 
-This file is the repo-local operating guide for agents working in this project.
-It supplements the shared workflow in `~/.agent-workflow-kit/README.md`.
-If this file conflicts with generic guidance, follow this file for work in this
-repository.
+This repository is the clean reboot of the MLB pitcher strikeout props project.
+The product goal is an end-to-end, reviewable decision system:
 
-## Project Identity
+1. build timestamp-valid pitcher strikeout training data
+2. train and evaluate a strikeout distribution model
+3. compare model probabilities to sportsbook pitcher strikeout prices
+4. produce paper recommendations until evidence gates justify live use
+5. make every step visually reviewable through report artifacts and dashboards
 
-- The folder is named `nba-ml`, but the current codebase and product scope are
-  `mlb-props-stack`.
-- This repository is a Python 3.11+ MLB props modeling scaffold focused on
-  narrow, measurable sportsbook markets.
-- V1 is intentionally limited to `pitcher strikeout props`.
+## Workflow
 
-## Project Scope
+- One issue = one branch = one worktree = one PR.
+- Start from the Linear issue and the current `WORKFLOW.md`.
+- Keep issue progress in the Linear `## Codex Workpad`.
+- Do not expand scope when a better idea appears; create a follow-up issue.
+- Before `Human Review`, provide a PR, checks, report paths, and reviewer-facing evidence.
 
-The goal of this repo is to build an honest MLB prop evaluation system that:
-
-- estimates event probabilities
-- compares those probabilities to sportsbook prices
-- ranks edges after vig and sizing logic
-- backtests only with information that would have existed at bet time
-
-Current in-scope work includes:
-
-- prop, projection, pricing, and backtest contracts
-- modeling inputs and feature definitions for pitcher strikeout markets
-- edge detection and candidate ranking
-- walk-forward evaluation
-- clean seams for future experiment tracking and dashboarding
-
-Current non-goals unless the issue explicitly says otherwise:
-
-- full-game sides or totals
-- same-game parlay optimization
-- live betting or execution bots
-- reinforcement learning for the initial prediction layer
-- broad multi-sport expansion
-- dependency sprawl during bootstrap slices
-
-## Primary Repo Sources
-
-Read these before changing architecture or issue sequencing:
-
-- `README.md`
-- `docs/architecture.md`
-- `docs/modeling.md`
-- `docs/NEXT_SESSION_HANDOFF.md`
-
-## Required Workflow Rules
-
-- One issue -> one worktree -> one branch -> one PR.
-- Start each issue from an explicit issue packet or equivalent scope with:
-  scope, non-goals, acceptance criteria, constraints, and verification commands.
-- Non-UI and backend-heavy slices default to Codex. UI-heavy dashboard work can
-  go to Claude if the user wants that routing.
-- Keep PRs reviewable. Target small, focused slices instead of broad mixed work.
-- Never merge unless the branch is up to date with `main` and CI is green.
-
-## Handoff Requirement For Every New Issue
-
-At each new worktree or issue start, there must already be a handoff document in
-place from the last issue.
-
-- The required artifact in this repo is `docs/NEXT_SESSION_HANDOFF.md`.
-- If that handoff is missing, stale, or clearly does not reflect the last
-  completed issue, stop and update it before starting new implementation work.
-- Do not treat chat context alone as sufficient continuity. The repo must carry
-  the handoff artifact forward.
-- New work should begin by reading the handoff, then the relevant issue packet,
-  then the touched code and tests.
-
-## End-Of-Issue Handoff Rules
-
-Before considering an issue complete, update `docs/NEXT_SESSION_HANDOFF.md`
-with:
-
-- current repo and branch state
-- what was completed in the issue
-- files or modules that changed
-- verification commands that were run and their outcome
-- the recommended next issue
-- open questions, blockers, or constraints the next worktree must respect
-
-If a worktree closes without a useful handoff document, the issue is not fully
-handed off.
-
-## Repo Guardrails
-
-- Preserve the standard-library-first baseline unless the issue explicitly
-  requires new dependencies.
-- Keep `python -m mlb_props_stack` working.
-- Keep tests runnable with the documented repo command set.
-- Preserve the reserved future seams:
-  - `src/mlb_props_stack/tracking.py` for tracking configuration
-  - `src/mlb_props_stack/dashboard/app.py` for the future dashboard entrypoint
-- Do not add MLflow, Streamlit, Plotly, ingestion systems, schedulers, or
-  storage layers casually. Add them only when the issue scope actually requires
-  them.
-
-## Modeling And Backtest Guardrails
-
-- Favor honest, timestamp-valid modeling over feature breadth.
-- Do not use information that would not have been available at bet time.
-- Keep pricing logic, calibration, and evaluation explicit rather than implied.
-- Treat CLV and ROI as separate signals.
-- Avoid vague "predict baseball" framing. This repo is about a narrow decision
-  system for pitcher strikeout props.
-
-## Code Map
-
-- `src/mlb_props_stack/config.py`
-  Runtime settings and model defaults.
-- `src/mlb_props_stack/tracking.py`
-  Reserved tracking seam.
-- `src/mlb_props_stack/pricing.py`
-  Odds conversion, devig, expected value, fair odds, and Kelly helpers.
-- `src/mlb_props_stack/markets.py`
-  Core data contracts for props, projections, and decisions.
-- `src/mlb_props_stack/edge.py`
-  Edge detection and ranking.
-- `src/mlb_props_stack/backtest.py`
-  Backtest policy and evaluation rules.
-- `src/mlb_props_stack/dashboard/app.py`
-  Placeholder dashboard entrypoint.
-- `tests/`
-  Keep behavior locked with targeted, issue-scoped tests.
-
-## Verification
-
-Preferred commands:
+## Commands
 
 ```bash
 uv sync --extra dev
 uv run pytest
-uv run python -m mlb_props_stack
+uv run ruff check
+uv run python -m mlb_props_lab feature-registry validate
+uv run python -m mlb_props_lab report features --issue FEATURE-RESEARCH
+uv run python -m mlb_props_lab dashboard
 ```
 
-Fallback if using a virtualenv instead of `uv`:
+## Feature Rules
 
-```bash
-.venv/bin/python -m pytest
-.venv/bin/python -m mlb_props_stack
-```
+- Every model feature must be registered before model training consumes it.
+- Every registered feature needs source fields, formula, timestamp cutoff,
+  missing-value policy, leakage risk, and a required visual.
+- Use only information available before the game or odds snapshot being scored.
+- Source-backed does not mean model-approved. Features must survive walk-forward
+  validation, ablation, calibration checks, and out-of-time stability checks.
 
-If you change contracts, pricing logic, CLI behavior, or backtest rules, add or
-update focused tests in the same issue.
+## Definition Of Done
 
-If you change contracts, pricing logic, CLI behavior, backtest rules, ingest
-logic, modeling paths, paper tracking, or dashboard behavior:
-
-- run the baseline repo checks above
-- run the affected runtime checks from `docs/review_runtime_checks.md`
-- verify the produced artifacts or the loaded UI, not just the process exit
-  code
-
-Do not mark an issue or PR as verified based only on `uv run pytest` and
-`uv run python -m mlb_props_stack` when the changed code lives behind a
-different runtime entrypoint.
-
-## Documentation Expectations
-
-- Keep docs operational and specific.
-- When scope changes, update the relevant docs in the same issue.
-- Avoid aspirational architecture text that is not connected to the current
-  roadmap or issue sequence.
+- Tests and lint pass for touched code.
+- Report commands touched by the issue run successfully.
+- Any changed feature family has visual evidence in a generated report.
+- PR description links to the report path and summarizes limitations.
+- No real-money betting language is used before evidence gates are passed.
