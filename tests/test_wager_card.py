@@ -186,3 +186,122 @@ def test_wager_card_approved_count_matches_dashboard_board_count(tmp_path: Path)
 
     assert source == "daily_candidates"
     assert result.approved_count == current_slate_metrics(board)["plays_cleared"]
+
+
+def test_wager_card_reads_rebuilt_edge_candidates_when_daily_sheet_absent(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    edge_run = (
+        tmp_path
+        / "normalized"
+        / "edge_candidates"
+        / "date=2026-04-20"
+        / "run=20260420T170000Z"
+    )
+    distribution = [
+        {"strikeouts": 6, "probability": 0.4},
+        {"strikeouts": 7, "probability": 0.6},
+    ]
+    _write_jsonl(
+        edge_run / "edge_candidates.jsonl",
+        [
+            {
+                "candidate_id": "line-approved|candidate-v1",
+                "official_date": "2026-04-20",
+                "approval_status": "approved",
+                "approval_allowed": True,
+                "approval_reason": "Approved by model-only validation evidence and market edge gates.",
+                "research_readiness_status": "research_only",
+                "validation_recommendation": "conditional_go_for_betting_layer_rebuild",
+                "validation_threshold_status": "thresholds_observed_from_calibration",
+                "line_snapshot_id": "line-approved",
+                "player_id": "mlb-pitcher:700001",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Distribution Arm",
+                "game_pk": 9001,
+                "odds_matchup_key": "2026-04-20|AAA|BBB|2026-04-20T23:10:00Z",
+                "line": 6.5,
+                "selected_side": "over",
+                "selected_odds": -110,
+                "selected_model_probability": 0.60,
+                "selected_market_probability": 0.50,
+                "market_over_probability": 0.50,
+                "edge_pct": 0.10,
+                "expected_value_pct": 0.145,
+                "stake_fraction": 0.02,
+                "model_projection": 6.9,
+                "model_confidence": 0.60,
+                "model_confidence_bucket": "0.6_to_0.7",
+                "model_run_id": "20260420T150000Z",
+                "model_version": "starter-strikeout-candidate-v1",
+                "sportsbook": "draftkings",
+                "sportsbook_title": "DraftKings",
+                "probability_distribution": distribution,
+                "feature_group_contributions": [
+                    {"feature_group": "pitcher_skill", "absolute_contribution": 1.2, "share": 0.4}
+                ],
+                "correlation_group_key": "2026-04-20|9001|700001|6.500000",
+                "correlation_group_size": 1,
+                "correlation_group_rank": 1,
+                "captured_at": "2026-04-20T16:00:00Z",
+            },
+            {
+                "candidate_id": "line-rejected|candidate-v1",
+                "official_date": "2026-04-20",
+                "approval_status": "rejected",
+                "approval_allowed": False,
+                "approval_reason": "No model-only validation report was found.",
+                "line_snapshot_id": "line-rejected",
+                "player_id": "mlb-pitcher:700002",
+                "pitcher_mlb_id": 700002,
+                "player_name": "Rejected Arm",
+                "game_pk": 9002,
+                "line": 5.5,
+                "selected_side": "under",
+                "selected_odds": 120,
+                "selected_model_probability": 0.58,
+                "selected_market_probability": 0.50,
+                "edge_pct": 0.08,
+                "expected_value_pct": 0.12,
+                "stake_fraction": 0.01,
+                "sportsbook": "fanduel",
+                "sportsbook_title": "FanDuel",
+            },
+        ],
+    )
+
+    result = build_wager_card(
+        target_date=date(2026, 4, 20),
+        output_dir=tmp_path,
+        include_rejected=True,
+        now=lambda: datetime(2026, 4, 20, 18, 30, tzinfo=UTC),
+    )
+    artifact_rows = _load_jsonl(result.wager_card_path)
+
+    assert result.source_artifact_kind == "edge_candidates"
+    assert result.approved_count == 1
+    assert result.blocked_count == 1
+    assert [row["status"] for row in artifact_rows] == ["approved", "blocked"]
+    assert artifact_rows[0]["model_projection"] == 6.9
+    assert artifact_rows[0]["probability_distribution"] == distribution
+    assert artifact_rows[0]["research_readiness_status"] == "research_only"
+    summary = render_wager_card_summary(result)
+    assert "source_artifact_kind=edge_candidates" in summary
+    assert "Distribution Arm" in summary
+    assert "Rejected Arm" in summary
+
+    exit_code = main(
+        [
+            "build-wager-card",
+            "--date",
+            "2026-04-20",
+            "--output-dir",
+            str(tmp_path),
+            "--include-rejected",
+        ]
+    )
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "source_artifact_kind=edge_candidates" in output
+    assert "approved_wagers=1" in output

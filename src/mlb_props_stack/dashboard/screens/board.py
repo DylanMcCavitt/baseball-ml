@@ -66,6 +66,8 @@ def _board_table_html(
         odds_label = "n/a" if pd.isna(odds) else f"{int(odds):+d}"
         edge = row["edge"]
         edge_label = "n/a" if pd.isna(edge) else f"{edge:+.1%}"
+        projection = row.get("model_projection")
+        projection_label = "n/a" if pd.isna(projection) else f"{float(projection):.2f}"
         sportsbook = escape(str(row.get("sportsbook") or "n/a"))
         source_event = escape(_short_cell_id(row.get("source_event_id")))
         line_snapshot = escape(line_snapshot_display_id(row.get("line_snapshot_id")))
@@ -88,6 +90,7 @@ def _board_table_html(
             )
             + f"<td>{_line_group_cell(row)}</td>"
             + f"<td class='strike-num'>{float(row['line']):.1f}</td>"
+            + f"<td class='strike-num'>{escape(projection_label)}</td>"
             + "<td><span class='strike-side {}'>{}</span></td>".format(
                 side_class,
                 escape(str(row["side"]).upper()),
@@ -121,6 +124,7 @@ def _board_table_html(
         "<th style='text-align:left'>SOURCE</th>"
         "<th style='text-align:left'>GROUP</th>"
         "<th>LINE</th>"
+        "<th>K PROJ</th>"
         "<th>SIDE</th>"
         "<th>P(MODEL)</th>"
         "<th>P(MKT)</th>"
@@ -174,7 +178,7 @@ def render_board_screen(
     )
     show_rejected = filter_columns[1].toggle(
         "Show rejected",
-        value=False,
+        value=True,
         key="board_show_rejected",
     )
     display_mode = filter_columns[2].radio(

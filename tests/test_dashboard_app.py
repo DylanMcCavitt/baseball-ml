@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 
 import pandas as pd
 
-from mlb_props_stack.dashboard.app import _render_nav_controls
+from mlb_props_stack.dashboard.app import _query_params_dict, _render_nav_controls
 from mlb_props_stack.dashboard.screens.board import _board_table_html
 
 
@@ -72,6 +72,21 @@ def test_nav_controls_keep_pitcher_context_for_pitcher_screen() -> None:
         "pitcher_id": "mlb-pitcher:594798",
     }
     assert fake_streamlit.rerun_called is True
+
+
+def test_query_params_dict_handles_list_values_from_browser_runtime() -> None:
+    class FakeStreamlit:
+        query_params = {
+            "screen": ["pitcher"],
+            "board_date": ["2026-04-20"],
+            "pitcher_id": ["mlb-pitcher:700001"],
+        }
+
+    assert _query_params_dict(FakeStreamlit()) == {
+        "screen": "pitcher",
+        "board_date": "2026-04-20",
+        "pitcher_id": "mlb-pitcher:700001",
+    }
 
 
 def test_board_table_renders_sportsbook_provenance_and_group_summary() -> None:

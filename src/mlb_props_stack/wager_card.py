@@ -28,6 +28,7 @@ class WagerCardResult:
     included_count: int
     include_rejected: bool
     rows: list[dict[str, Any]]
+    source_artifact_kind: str = "daily_candidates"
 
 
 def _json_ready(value: Any) -> Any:
@@ -108,6 +109,62 @@ def _latest_daily_candidate_run_dir(
     return resolved_date, run_dirs[-1]
 
 
+def _latest_edge_candidate_run_dir(
+    output_root: Path,
+    *,
+    target_date: date | None,
+) -> tuple[date, Path]:
+    edge_root = output_root / "normalized" / "edge_candidates"
+    if not edge_root.exists():
+        raise FileNotFoundError(f"No edge candidate runs were found under {edge_root}.")
+
+    date_dirs = sorted(path for path in edge_root.glob("date=*") if path.is_dir())
+    if target_date is not None:
+        date_dirs = [
+            path
+            for path in date_dirs
+            if path.name.split("=", 1)[-1] == target_date.isoformat()
+        ]
+    if not date_dirs:
+        target_label = target_date.isoformat() if target_date is not None else "latest"
+        raise FileNotFoundError(f"No edge candidate run was found for {target_label}.")
+
+    selected_date_dir = date_dirs[-1]
+    run_dirs = sorted(
+        path
+        for path in selected_date_dir.glob("run=*")
+        if path.is_dir() and path.joinpath("edge_candidates.jsonl").exists()
+    )
+    if not run_dirs:
+        raise FileNotFoundError(
+            f"No edge_candidates.jsonl artifact was found under {selected_date_dir}."
+        )
+    resolved_date = date.fromisoformat(selected_date_dir.name.split("=", 1)[-1])
+    return resolved_date, run_dirs[-1]
+
+
+def _latest_candidate_run_dir(
+    output_root: Path,
+    *,
+    target_date: date | None,
+) -> tuple[date, Path, str, str]:
+    try:
+        resolved_date, run_dir = _latest_daily_candidate_run_dir(
+            output_root,
+            target_date=target_date,
+        )
+        return resolved_date, run_dir, "daily_candidates", "daily_candidates.jsonl"
+    except FileNotFoundError as daily_error:
+        try:
+            resolved_date, run_dir = _latest_edge_candidate_run_dir(
+                output_root,
+                target_date=target_date,
+            )
+            return resolved_date, run_dir, "edge_candidates", "edge_candidates.jsonl"
+        except FileNotFoundError:
+            raise daily_error
+
+
 def _coerce_float(value: Any) -> float | None:
     if value is None or value == "":
         return None
@@ -156,6 +213,34 @@ def _start_time(row: dict[str, Any]) -> str | None:
 def _approval_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if all("wager_approved" in row for row in rows):
         return [dict(row) for row in rows]
+    if all("approval_status" in row for row in rows):
+        approved_rows: list[dict[str, Any]] = []
+        for row in rows:
+            approved = (
+                str(row.get("approval_status")) == "approved"
+                and row.get("approval_allowed") is True
+            )
+            approved_rows.append(
+                {
+                    **row,
+                    "wager_approved": approved,
+                    "wager_gate_status": "approved" if approved else "blocked",
+                    "wager_blocked_reason": (
+                        "approved"
+                        if approved
+                        else str(row.get("approval_reason") or "rejected by rebuilt wager gates")
+                    ),
+                    "wager_gate_notes": (
+                        []
+                        if approved
+                        else [str(row.get("approval_reason") or "rejected by rebuilt wager gates")]
+                    ),
+                    "approved_rank": (
+                        row.get("correlation_group_rank") if approved else None
+                    ),
+                }
+            )
+        return approved_rows
     return annotate_wager_approval_rows(
         [dict(row) for row in rows],
         settings=WagerApprovalSettings(),
@@ -183,6 +268,8 @@ def _card_row(row: dict[str, Any], *, source_run_id: str, card_run_id: str) -> d
     rank = row.get("approved_rank") if approved else row.get("slate_rank")
     stake_units = _first_float(row, "kelly_units")
     stake_fraction = _first_float(row, "stake_fraction")
+    if stake_units is None and stake_fraction is not None:
+        stake_units = round(stake_fraction * WagerApprovalSettings().bankroll_units, 4)
     notes = _notes_for_row(row)
     return {
         "wager_card_run_id": card_run_id,
@@ -207,10 +294,31 @@ def _card_row(row: dict[str, Any], *, source_run_id: str, card_run_id: str) -> d
         "odds": _first_int(row, "selected_odds"),
         "model_probability": _first_float(row, "selected_model_probability", "conf"),
         "market_probability": _first_float(row, "selected_market_probability"),
+        "model_projection": _first_float(row, "model_projection", "model_mean"),
+        "model_over_probability": _first_float(row, "model_over_probability"),
+        "model_under_probability": _first_float(row, "model_under_probability"),
+        "model_confidence": _first_float(row, "model_confidence"),
+        "model_confidence_bucket": str(row.get("model_confidence_bucket") or ""),
         "edge": _first_float(row, "edge_pct", "edge"),
         "expected_value": _first_float(row, "expected_value_pct"),
         "stake_units": stake_units,
         "stake_fraction": stake_fraction,
+        "market_over_probability": _first_float(row, "market_over_probability"),
+        "market_under_probability": _first_float(row, "market_under_probability"),
+        "no_vig_market_probability": _first_float(row, "selected_market_probability"),
+        "approval_reason": str(row.get("approval_reason") or ""),
+        "validation_recommendation": str(row.get("validation_recommendation") or ""),
+        "validation_threshold_status": str(row.get("validation_threshold_status") or ""),
+        "correlation_group_key": str(row.get("correlation_group_key") or ""),
+        "correlation_group_size": row.get("correlation_group_size"),
+        "correlation_group_rank": row.get("correlation_group_rank"),
+        "research_readiness_status": str(row.get("research_readiness_status") or "research_only"),
+        "probability_distribution": row.get("probability_distribution")
+        or row.get("count_distribution")
+        or [],
+        "feature_group_contributions": row.get("feature_group_contributions") or [],
+        "clv_context": row.get("clv_context") or row.get("clv_outcome"),
+        "roi_context": row.get("roi_context") or row.get("paper_result"),
         "notes": notes,
         "note": " | ".join(notes),
         "wager_gate_details": row.get("wager_gate_details") or {},
@@ -234,13 +342,18 @@ def build_wager_card(
     include_rejected: bool = False,
     now: Callable[[], datetime] = utc_now,
 ) -> WagerCardResult:
-    """Build an approved wager card from the latest daily candidate sheet."""
+    """Build an approved wager card from the latest daily or rebuilt edge sheet."""
     output_root = Path(output_dir)
-    resolved_target_date, source_run_dir = _latest_daily_candidate_run_dir(
+    (
+        resolved_target_date,
+        source_run_dir,
+        source_artifact_kind,
+        source_artifact_name,
+    ) = _latest_candidate_run_dir(
         output_root,
         target_date=target_date,
     )
-    source_path = source_run_dir / "daily_candidates.jsonl"
+    source_path = source_run_dir / source_artifact_name
     source_rows = _approval_rows(_load_jsonl_rows(source_path))
     source_run_id = _run_id_from_dir(source_run_dir)
     run_id = now().astimezone(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -271,6 +384,7 @@ def build_wager_card(
             "official_date": resolved_target_date.isoformat(),
             "source_daily_candidate_run_id": source_run_id,
             "source_daily_candidates_path": source_path,
+            "source_artifact_kind": source_artifact_kind,
             "include_rejected": include_rejected,
             "total_candidate_count": len(source_rows),
             "approved_count": approved_count,
@@ -292,6 +406,7 @@ def build_wager_card(
         included_count=len(card_rows),
         include_rejected=include_rejected,
         rows=card_rows,
+        source_artifact_kind=source_artifact_kind,
     )
 
 
@@ -362,7 +477,8 @@ def render_wager_card_summary(result: WagerCardResult) -> str:
     lines = [
         f"Approved wager card for {result.target_date.isoformat()}",
         f"run_id={result.run_id}",
-        f"source_daily_candidate_run_id={result.source_daily_candidate_run_id}",
+        f"source_artifact_kind={result.source_artifact_kind}",
+        f"source_candidate_run_id={result.source_daily_candidate_run_id}",
         f"total_candidates={result.total_candidate_count}",
         f"approved_wagers={result.approved_count}",
         f"blocked_candidates={result.blocked_count}",

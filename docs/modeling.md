@@ -424,6 +424,19 @@ available:
   the minimum edge cannot be lower than the observed calibration error, and the
   confidence bucket must be one of the validation-qualified buckets.
 
+AGE-295 keeps downstream reporting tied to those same gates:
+
+- Rebuilt dashboard and wager-card rows use the betting artifact's
+  `approval_status`, `approval_allowed`, and `approval_reason` as the final
+  approval source of truth.
+- Rejected rows stay visible for operator review, including rows blocked by
+  missing validation, weak validation, timestamp issues, below-threshold edge,
+  or correlated duplicate grouping.
+- The operator surfaces expose the projection mean, full count distribution,
+  line-specific over/under probabilities, no-vig market probability, confidence
+  bucket, feature-group driver shares, CLV/ROI context when present, and
+  research-only status when stage gates do not clear live-discussion thresholds.
+
 AGE-290 adds the workload, leash, and role-context layer over the same
 starter-game artifact. It emits one expected-opportunity row per starter-game
 under:

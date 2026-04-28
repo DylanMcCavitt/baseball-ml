@@ -73,6 +73,45 @@ def _feature_contrib_html(importance: pd.DataFrame) -> str:
 
 
 def _guardrail_html(row: pd.Series, settings: DashboardSettings) -> str:
+    if str(row.get("source") or "") == "edge_candidates":
+        items = [
+            (
+                "model validation",
+                bool(row.get("wager_approved")),
+                str(row.get("approval_reason") or "validation-derived approval unavailable"),
+            ),
+            (
+                "confidence bucket",
+                bool(row.get("wager_approved")),
+                str(row.get("model_confidence_bucket") or "n/a"),
+            ),
+            (
+                "correlation group",
+                int(row.get("correlation_group_rank") or 1) <= 1,
+                (
+                    f"rank {int(row.get('correlation_group_rank') or 1)} of "
+                    f"{int(row.get('correlation_group_size') or 1)}"
+                ),
+            ),
+            (
+                "research readiness",
+                str(row.get("research_readiness_status") or "") != "research_only",
+                str(row.get("research_readiness_status") or "research_only"),
+            ),
+        ]
+        parts: list[str] = []
+        for label, ok, value in items:
+            parts.append(
+                "<div class='strike-guard {}'>".format("" if ok else "bad")
+                + "<div class='strike-guard-top'>"
+                + "<span class='strike-dot {}'></span>".format("ok" if ok else "bad")
+                + f"<span class='strike-dim'>{escape(label)}</span>"
+                + "</div>"
+                + f"<div>{escape(value)}</div>"
+                + "</div>"
+            )
+        return "<div class='strike-guard-grid'>" + "".join(parts) + "</div>"
+
     model_age_days = row.get("model_age_days")
     model_age_text = (
         f"trained {float(model_age_days):.1f}d ago"
@@ -223,6 +262,10 @@ def render_pitcher_screen(
             f"<div class='strike-kpi'><div class='strike-kpi-label'>fair</div><div class='strike-kpi-value sm'>{'n/a' if fair_odds is None else f'{fair_odds:+d}'}</div></div>"
             f"<div class='strike-kpi'><div class='strike-kpi-label'>kelly ×{settings.kelly_fraction:.2f}</div><div class='strike-kpi-value sm'>{float(row['kelly_units']):.2f}u</div></div>"
             f"<div class='strike-kpi'><div class='strike-kpi-label'>decision ts</div><div class='strike-kpi-value sm'>{escape(str(row['captured_at']) if row['captured_at'] is not None else 'n/a')}</div></div>"
+            f"<div class='strike-kpi'><div class='strike-kpi-label'>projected K</div><div class='strike-kpi-value sm'>{float(row.get('model_projection') or 0.0):.2f}</div></div>"
+            f"<div class='strike-kpi'><div class='strike-kpi-label'>over / under</div><div class='strike-kpi-value sm'>{format_pct(float(row.get('model_over_probability') or 0.0), digits=1)} / {format_pct(float(row.get('model_under_probability') or 0.0), digits=1)}</div></div>"
+            f"<div class='strike-kpi'><div class='strike-kpi-label'>cal bucket</div><div class='strike-kpi-value sm'>{escape(str(row.get('model_confidence_bucket') or 'n/a'))}</div></div>"
+            f"<div class='strike-kpi'><div class='strike-kpi-label'>approval</div><div class='strike-kpi-value sm'>{escape(str(row.get('wager_gate_status') or 'n/a'))}</div></div>"
             "</div>",
             unsafe_allow_html=True,
         )

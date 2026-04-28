@@ -280,9 +280,23 @@ def _latest_model_runs(output_root: Path) -> list[Path]:
     )
 
 
+def _latest_distribution_model_runs(output_root: Path) -> list[Path]:
+    return _latest_run_dirs(
+        output_root / "normalized" / "candidate_strikeout_models",
+        "model_outputs.jsonl",
+    )
+
+
 def _model_run_lookup(output_root: Path) -> dict[str, Path]:
     lookup: dict[str, Path] = {}
     for run_dir in _latest_model_runs(output_root):
+        lookup[_run_id_from_dir(run_dir)] = run_dir
+    return lookup
+
+
+def _distribution_model_run_lookup(output_root: Path) -> dict[str, Path]:
+    lookup: dict[str, Path] = {}
+    for run_dir in _latest_distribution_model_runs(output_root):
         lookup[_run_id_from_dir(run_dir)] = run_dir
     return lookup
 
@@ -312,6 +326,27 @@ def _latest_ladder_run_dirs(output_root: Path) -> list[Path]:
         ),
         key=_run_id_from_dir,
     )
+
+
+def _latest_stage_gate_report(output_root: Path) -> dict[str, Any] | None:
+    reports = sorted(
+        path
+        for path in (output_root / "normalized" / "stage_gates").rglob(
+            "stage_gate_report.json"
+        )
+        if path.is_file()
+    )
+    if not reports:
+        return None
+    return _load_json(str(reports[-1]))
+
+
+def stack_readiness_status(output_root: Path) -> str:
+    """Return the latest saved stage-gate status, defaulting to research_only."""
+    report = _latest_stage_gate_report(output_root)
+    if report is None:
+        return "research_only"
+    return str(report.get("status") or "research_only")
 
 
 def latest_model_run_dir(
@@ -558,10 +593,16 @@ def _normalize_board_dataframe(
                 "hidden_line_row_count",
                 "sportsbook_count",
                 "line_group_summary",
+                "approval_status",
+                "approval_reason",
+                "research_readiness_status",
+                "probability_distribution",
+                "feature_group_contributions",
             ]
         )
 
     normalized_rows: list[dict[str, Any]] = []
+    readiness_status = stack_readiness_status(output_root)
     for row in rows:
         line_snapshot_id = str(row.get("line_snapshot_id") or "")
         line_snapshot = line_lookup.get(line_snapshot_id) or {}
@@ -575,14 +616,20 @@ def _normalize_board_dataframe(
         over_odds = row.get("over_odds")
         under_odds = row.get("under_odds")
         selected_side = str(row.get("selected_side") or "over")
-        market_over, market_under = (
-            devig([int(over_odds), int(under_odds)], settings.devig_method)
-            if over_odds is not None and under_odds is not None
-            else (
+        if source == "edge_candidates" and row.get("market_over_probability") is not None:
+            market_over, market_under = (
                 float(row.get("market_over_probability") or 0.5),
                 float(row.get("market_under_probability") or 0.5),
             )
-        )
+        else:
+            market_over, market_under = (
+                devig([int(over_odds), int(under_odds)], settings.devig_method)
+                if over_odds is not None and under_odds is not None
+                else (
+                    float(row.get("market_over_probability") or 0.5),
+                    float(row.get("market_under_probability") or 0.5),
+                )
+            )
         if selected_side == "under":
             market_probability = market_under
         else:
@@ -598,20 +645,28 @@ def _normalize_board_dataframe(
             else:
                 selected_odds = over_odds
         edge_probability = (
-            round(model_probability - market_probability, 6)
-            if model_probability is not None
-            else None
+            float(row["edge_pct"])
+            if source == "edge_candidates" and row.get("edge_pct") is not None
+            else (
+                round(model_probability - market_probability, 6)
+                if model_probability is not None
+                else None
+            )
         )
         expected_value_pct = float(row.get("expected_value_pct") or 0.0)
         kelly_fraction = (
-            fractional_kelly(
-                model_probability,
-                int(selected_odds),
-                fraction=settings.kelly_fraction,
+            float(row.get("stake_fraction") or 0.0)
+            if source == "edge_candidates"
+            else (
+                fractional_kelly(
+                    model_probability,
+                    int(selected_odds),
+                    fraction=settings.kelly_fraction,
+                )
+                if model_probability not in {None, 0.0}
+                and selected_odds is not None
+                else 0.0
             )
-            if model_probability not in {None, 0.0}
-            and selected_odds is not None
-            else 0.0
         )
         kelly_units = min(
             round(kelly_fraction * settings.bankroll_units, 4),
@@ -622,6 +677,11 @@ def _normalize_board_dataframe(
             int(under_odds) if under_odds is not None else None,
         )
         notes = [_short_reason(row.get("reason"))]
+        approval_reason = row.get("approval_reason")
+        if source == "edge_candidates" and approval_reason:
+            notes.append(str(approval_reason).replace("_", " "))
+        if source == "edge_candidates":
+            notes.append(str(row.get("research_readiness_status") or readiness_status))
         lineup_status = feature_row.get("lineup_status") if feature_row else None
         if lineup_status:
             notes.append(str(lineup_status).replace("_", " "))
@@ -698,6 +758,10 @@ def _normalize_board_dataframe(
                 "side": selected_side,
                 "p_model": model_probability,
                 "p_market": market_probability,
+                "model_over_probability": row.get("model_over_probability"),
+                "model_under_probability": row.get("model_under_probability"),
+                "market_over_probability": row.get("market_over_probability"),
+                "market_under_probability": row.get("market_under_probability"),
                 "american": int(selected_odds) if selected_odds is not None else None,
                 "edge": edge_probability,
                 "kelly_units": kelly_units,
@@ -739,8 +803,81 @@ def _normalize_board_dataframe(
                     if row.get("pitcher_mlb_id") is not None
                     else "unknown"
                 ),
+                "approval_status": str(row.get("approval_status") or ""),
+                "approval_allowed": bool(row.get("approval_allowed"))
+                if "approval_allowed" in row
+                else None,
+                "approval_reason": str(approval_reason or ""),
+                "validation_recommendation": str(row.get("validation_recommendation") or ""),
+                "validation_threshold_status": str(row.get("validation_threshold_status") or ""),
+                "validation_min_edge_pct": row.get("validation_min_edge_pct"),
+                "validation_min_confidence": row.get("validation_min_confidence"),
+                "model_projection": row.get("model_projection") or row.get("model_mean"),
+                "model_confidence_bucket": str(row.get("model_confidence_bucket") or ""),
+                "probability_distribution": row.get("probability_distribution")
+                or row.get("count_distribution")
+                or [],
+                "feature_group_contributions": row.get("feature_group_contributions") or [],
+                "correlation_group_key": str(row.get("correlation_group_key") or ""),
+                "correlation_group_size": int(row.get("correlation_group_size") or 1),
+                "correlation_group_rank": int(row.get("correlation_group_rank") or 1),
+                "research_readiness_status": str(
+                    row.get("research_readiness_status") or readiness_status
+                ),
             }
         )
+
+    if source == "edge_candidates":
+        for row in normalized_rows:
+            approved = (
+                row["approval_status"] == "approved"
+                and row["approval_allowed"] is True
+            )
+            row["wager_approved"] = approved
+            row["wager_gate_status"] = "approved" if approved else "blocked"
+            row["wager_blocked_reason"] = (
+                "approved" if approved else row["approval_reason"] or "rejected by rebuilt wager gates"
+            )
+            row["wager_gate_notes"] = [] if approved else [row["wager_blocked_reason"]]
+            row["wager_gate_details"] = {
+                "model_validation": {
+                    "recommendation": row["validation_recommendation"],
+                    "threshold_status": row["validation_threshold_status"],
+                    "passed": approved,
+                },
+                "correlation_group": {
+                    "group": row["correlation_group_key"],
+                    "rank": row["correlation_group_rank"],
+                    "size": row["correlation_group_size"],
+                    "passed": row["correlation_group_rank"] <= 1,
+                },
+                "research_readiness": {
+                    "status": row["research_readiness_status"],
+                    "live_discussion_eligible": (
+                        row["research_readiness_status"]
+                        != "research_only"
+                    ),
+                },
+            }
+            row["cleared"] = approved
+            row["cleared_edge_gate"] = bool(row.get("edge") is not None and row["edge"] >= 0.0)
+            row["cleared_conf_gate"] = row["approval_status"] == "approved"
+            row["cleared_vig_gate"] = row["approval_status"] == "approved"
+            row["cleared_stake_gate"] = row["approval_status"] == "approved"
+            row["cleared_status_gate"] = row["pitcher_status"] in {"probable", "confirmed"}
+            row["cleared_model_age_gate"] = True
+            row["cleared_correlation_gate"] = row["correlation_group_rank"] <= 1
+            row["cleared_exposure_gate"] = approved
+            row["model_age_days"] = None
+            row["daily_exposure_before_units"] = 0.0
+            row["daily_exposure_after_units"] = row["kelly_units"] if approved else 0.0
+        dataframe = pd.DataFrame(normalized_rows)
+        if dataframe.empty:
+            return dataframe
+        return dataframe.sort_values(
+            ["cleared", "edge", "pitcher"],
+            ascending=[False, False, True],
+        ).reset_index(drop=True)
 
     approved_rows = annotate_wager_approval_rows(
         normalized_rows,
@@ -852,6 +989,18 @@ def ticker_context(board: pd.DataFrame, *, settings: DashboardSettings) -> dict[
     if first_pitch is not None and hasattr(first_pitch, "to_pydatetime"):
         first_pitch = first_pitch.to_pydatetime()
     source_label = str(board.iloc[0]["source"]) if "source" in board.columns else ""
+    readiness_status = (
+        str(board.iloc[0]["research_readiness_status"])
+        if "research_readiness_status" in board.columns
+        and board.iloc[0]["research_readiness_status"]
+        else ""
+    )
+    if source_label == "walk_forward_backtest":
+        live_label = "HIST REPLAY"
+    elif readiness_status == "research_only":
+        live_label = "RESEARCH ONLY"
+    else:
+        live_label = "LIVE ODDS"
     return {
         "slate_date": official_date,
         "game_count": f"{game_count} GAMES" if game_count else "GAMES n/a",
@@ -860,7 +1009,7 @@ def ticker_context(board: pd.DataFrame, *, settings: DashboardSettings) -> dict[
             if first_pitch is not None
             else "FIRST PITCH n/a"
         ),
-        "live_label": "HIST REPLAY" if source_label == "walk_forward_backtest" else "LIVE ODDS",
+        "live_label": live_label,
         "model": (
             f"MODEL {board.iloc[0]['model_version']}"
             if board.iloc[0]["model_version"]
@@ -928,6 +1077,37 @@ def _load_ladder_rows(output_root: Path, run_dir: Path) -> list[dict[str, Any]]:
     return _load_jsonl(str(path))
 
 
+def _load_distribution_rows(run_dir: Path) -> list[dict[str, Any]]:
+    path = run_dir / "model_outputs.jsonl"
+    if not path.exists():
+        return []
+    return _load_jsonl(str(path))
+
+
+def _find_pitcher_distribution_row(
+    output_root: Path,
+    *,
+    official_date: str,
+    pitcher_mlb_id: int | None,
+    model_run_id: str | None = None,
+) -> dict[str, Any] | None:
+    if pitcher_mlb_id is None:
+        return None
+    if model_run_id is not None:
+        resolved_run_dir = _distribution_model_run_lookup(output_root).get(model_run_id)
+        run_dirs = [resolved_run_dir] if resolved_run_dir is not None else []
+    else:
+        run_dirs = list(reversed(_latest_distribution_model_runs(output_root)))
+    for run_dir in run_dirs:
+        for row in _load_distribution_rows(run_dir):
+            if (
+                str(row.get("official_date")) == official_date
+                and int(row.get("pitcher_id") or -1) == int(pitcher_mlb_id)
+            ):
+                return row
+    return None
+
+
 def _find_pitcher_ladder_row(
     output_root: Path,
     *,
@@ -980,6 +1160,33 @@ def get_pmf(
     model_run_id: str | None = None,
 ) -> tuple[list[dict[str, float | str]], dict[str, Any] | None]:
     """Return discrete PMF rows for the selected pitcher/date."""
+    distribution_row = _find_pitcher_distribution_row(
+        output_root,
+        official_date=official_date,
+        pitcher_mlb_id=pitcher_mlb_id,
+        model_run_id=model_run_id,
+    )
+    if distribution_row is not None:
+        raw_rows = list(distribution_row.get("probability_distribution") or [])
+        pmf_rows = [
+            {
+                "k": int(item["strikeouts"]),
+                "label": str(item["strikeouts"]),
+                "p": float(item["probability"]),
+                "color": "#2ecc71" if int(item["strikeouts"]) > line else "#6b7280",
+            }
+            for item in raw_rows
+            if item.get("strikeouts") is not None and item.get("probability") is not None
+        ]
+        total = sum(float(row["p"]) for row in pmf_rows)
+        if total > 0:
+            for row in pmf_rows:
+                row["p"] = float(row["p"]) / total
+        return pmf_rows, {
+            **distribution_row,
+            "model_mean": distribution_row.get("point_projection"),
+        }
+
     ladder_row, _ = _find_pitcher_ladder_row(
         output_root,
         official_date=official_date,
@@ -1721,6 +1928,36 @@ def get_feature_importance(
     run_id: str | None = None,
 ) -> pd.DataFrame:
     """Return feature-importance rows for the features screen."""
+    distribution_run_dir = (
+        _distribution_model_run_lookup(output_root).get(run_id)
+        if run_id is not None
+        else (_latest_distribution_model_runs(output_root)[-1] if _latest_distribution_model_runs(output_root) else None)
+    )
+    if distribution_run_dir is not None:
+        selected_model_path = distribution_run_dir / "selected_model.json"
+        if selected_model_path.exists():
+            selected_model = _load_json(str(selected_model_path))
+            contributions = selected_model.get("feature_group_contributions") or []
+            return pd.DataFrame(
+                [
+                    {
+                        "name": str(row.get("feature_group") or row.get("group") or ""),
+                        "importance": float(
+                            row.get("absolute_contribution")
+                            or row.get("share")
+                            or 0.0
+                        ),
+                        "direction": "+",
+                        "last_value": (
+                            None
+                            if row.get("share") is None
+                            else f"{float(row['share']):.1%}"
+                        ),
+                    }
+                    for row in contributions
+                ]
+            )
+
     summary = load_latest_model_summary(output_root, run_id=run_id)
     run_dir = latest_model_run_dir(output_root, run_id=run_id)
     if summary is None or run_dir is None:

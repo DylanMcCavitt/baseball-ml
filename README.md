@@ -802,6 +802,12 @@ By default the card prints only rows with `wager_approved=true` and writes:
 Add `--include-rejected` to print blocked candidates in a separate diagnostic
 section without mixing them into the approved wager list.
 
+When a rebuilt `daily_candidates` sheet is not present, the card can read the
+latest rebuilt `edge_candidates` artifact for the requested date. In that mode
+approval comes from the betting-layer `approval_status` and `approval_reason`
+fields written after model-validation gates and market gates have run; the card
+does not re-approve rejected rows from dashboard-only settings.
+
 `paper_results.jsonl` keeps:
 
 - only approved paper bets from the latest sheet for each date
@@ -826,6 +832,15 @@ The dashboard now reads:
 - walk-forward summary artifacts such as `roi_summary.jsonl` and
   `clv_summary.jsonl` for the backtest screen
 - the local MLflow store under `file:./artifacts/mlruns` for the registry view
+
+For rebuilt `edge_candidates`, the board and pitcher detail preserve all line
+rows, including rejected rows, and surface the fields operators need to audit a
+candidate: projected strikeouts, the full strikeout distribution, line-specific
+over/under probabilities, model confidence bucket, feature-group driver shares,
+market odds/no-vig probabilities, model edge, approval or rejection reason, and
+correlated-line grouping. If stage-gate artifacts are missing or still fail,
+the board labels the slate `RESEARCH ONLY` rather than implying live-use
+eligibility.
 
 For model refinement on historical data, the intended loop is:
 

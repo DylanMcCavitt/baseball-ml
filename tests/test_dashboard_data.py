@@ -154,6 +154,174 @@ def test_board_daily_candidates_use_shared_final_wager_gates(tmp_path: Path) -> 
     assert current_slate_metrics(board)["plays_cleared"] == 0
 
 
+def test_board_edge_candidates_preserve_rebuilt_approval_gates_and_distribution(
+    tmp_path: Path,
+) -> None:
+    edge_run = (
+        tmp_path
+        / "normalized"
+        / "edge_candidates"
+        / "date=2026-04-20"
+        / "run=20260420T170000Z"
+    )
+    distribution = [
+        {"strikeouts": 5, "probability": 0.20},
+        {"strikeouts": 6, "probability": 0.20},
+        {"strikeouts": 7, "probability": 0.35},
+        {"strikeouts": 8, "probability": 0.25},
+    ]
+    _write_jsonl(
+        edge_run / "edge_candidates.jsonl",
+        [
+            {
+                "candidate_id": "line-approved|candidate-v1",
+                "official_date": "2026-04-20",
+                "evaluation_status": "actionable",
+                "approval_status": "approved",
+                "approval_allowed": True,
+                "approval_reason": "Approved by model-only validation evidence and market edge gates.",
+                "research_readiness_status": "research_only",
+                "validation_recommendation": "conditional_go_for_betting_layer_rebuild",
+                "validation_threshold_status": "thresholds_observed_from_calibration",
+                "validation_min_edge_pct": 0.06,
+                "line_snapshot_id": "line-approved",
+                "player_id": "mlb-pitcher:700001",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Distribution Arm",
+                "game_pk": 9001,
+                "event_id": "event-1",
+                "market": "pitcher_strikeouts",
+                "line": 6.5,
+                "selected_side": "over",
+                "selected_odds": -110,
+                "over_odds": -110,
+                "under_odds": -110,
+                "model_projection": 6.9,
+                "model_confidence": 0.60,
+                "model_confidence_bucket": "0.6_to_0.7",
+                "model_over_probability": 0.60,
+                "model_under_probability": 0.40,
+                "selected_model_probability": 0.60,
+                "market_over_probability": 0.50,
+                "market_under_probability": 0.50,
+                "selected_market_probability": 0.50,
+                "edge_pct": 0.10,
+                "expected_value_pct": 0.145,
+                "stake_fraction": 0.02,
+                "model_run_id": "20260420T150000Z",
+                "model_version": "starter-strikeout-candidate-v1",
+                "sportsbook": "draftkings",
+                "sportsbook_title": "DraftKings",
+                "captured_at": "2026-04-20T16:00:00Z",
+                "probability_distribution": distribution,
+                "feature_group_contributions": [
+                    {"feature_group": "pitcher_skill", "absolute_contribution": 1.2, "share": 0.4},
+                    {"feature_group": "matchup", "absolute_contribution": 0.9, "share": 0.3},
+                    {"feature_group": "workload", "absolute_contribution": 0.6, "share": 0.2},
+                    {"feature_group": "context", "absolute_contribution": 0.3, "share": 0.1},
+                ],
+                "correlation_group_key": "2026-04-20|9001|700001|6.500000",
+                "correlation_group_size": 2,
+                "correlation_group_rank": 1,
+                "reason": "over clears minimum edge threshold (10.00% >= 3.00%)",
+            },
+            {
+                "candidate_id": "line-duplicate|candidate-v1",
+                "official_date": "2026-04-20",
+                "evaluation_status": "actionable",
+                "approval_status": "rejected",
+                "approval_allowed": False,
+                "approval_reason": "Rejected as a correlated duplicate within the same pitcher/game/line group.",
+                "research_readiness_status": "research_only",
+                "line_snapshot_id": "line-duplicate",
+                "player_id": "mlb-pitcher:700001",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Distribution Arm",
+                "game_pk": 9001,
+                "event_id": "event-1",
+                "market": "pitcher_strikeouts",
+                "line": 6.5,
+                "selected_side": "over",
+                "selected_odds": -110,
+                "over_odds": -110,
+                "under_odds": -110,
+                "model_over_probability": 0.60,
+                "model_under_probability": 0.40,
+                "selected_model_probability": 0.60,
+                "market_over_probability": 0.50,
+                "market_under_probability": 0.50,
+                "selected_market_probability": 0.50,
+                "edge_pct": 0.10,
+                "expected_value_pct": 0.145,
+                "stake_fraction": 0.02,
+                "model_run_id": "20260420T150000Z",
+                "model_version": "starter-strikeout-candidate-v1",
+                "sportsbook": "fanduel",
+                "sportsbook_title": "FanDuel",
+                "captured_at": "2026-04-20T16:00:00Z",
+                "probability_distribution": distribution,
+                "correlation_group_key": "2026-04-20|9001|700001|6.500000",
+                "correlation_group_size": 2,
+                "correlation_group_rank": 2,
+                "reason": "over clears minimum edge threshold (10.00% >= 3.00%)",
+            },
+        ],
+    )
+    model_run = (
+        tmp_path
+        / "normalized"
+        / "candidate_strikeout_models"
+        / "start=2026-04-16_end=2026-04-20"
+        / "run=20260420T150000Z"
+    )
+    _write_json(
+        model_run / "selected_model.json",
+        {
+            "run_id": "20260420T150000Z",
+            "feature_group_contributions": [
+                {"feature_group": "pitcher_skill", "absolute_contribution": 1.2, "share": 0.4}
+            ],
+        },
+    )
+    _write_jsonl(
+        model_run / "model_outputs.jsonl",
+        [
+            {
+                "official_date": "2026-04-20",
+                "pitcher_id": 700001,
+                "point_projection": 6.9,
+                "probability_distribution": distribution,
+            }
+        ],
+    )
+
+    board, source = load_board_dataframe(
+        tmp_path,
+        target_date=date(2026, 4, 20),
+        settings=DashboardSettings(),
+    )
+    pmf_rows, pmf_source = get_pmf(
+        tmp_path,
+        official_date="2026-04-20",
+        pitcher_mlb_id=700001,
+        line=6.5,
+        model_run_id="20260420T150000Z",
+    )
+
+    assert source == "edge_candidates"
+    assert len(board) == 2
+    assert current_slate_metrics(board)["plays_cleared"] == 1
+    assert bool(board.iloc[0]["wager_approved"]) is True
+    assert bool(board.iloc[1]["wager_approved"]) is False
+    assert "correlated duplicate" in board.iloc[1]["note"]
+    assert board.iloc[0]["research_readiness_status"] == "research_only"
+    assert ticker_context(board, settings=DashboardSettings())["live_label"] == "RESEARCH ONLY"
+    assert board.iloc[0]["probability_distribution"] == distribution
+    assert pmf_source is not None
+    assert pmf_source["model_mean"] == 6.9
+    assert [row["k"] for row in pmf_rows] == [5, 6, 7, 8]
+
+
 def test_board_joins_sportsbook_provenance_from_line_snapshot(tmp_path: Path) -> None:
     candidate_run = (
         tmp_path

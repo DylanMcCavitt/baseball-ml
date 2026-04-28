@@ -339,6 +339,25 @@ strikeout distributions:
   and exact line. At most one row in that group can be approved; the rest remain
   auditable rejections.
 
+AGE-295 reconnects the operator-facing reporting surfaces to that rebuilt
+artifact shape:
+
+- The dashboard can read rebuilt `edge_candidates` rows directly when a
+  `daily_candidates` sheet is not present.
+- Rebuilt dashboard rows preserve rejected rows by default, carry the
+  validation-derived `approval_status` through as the final approval state, and
+  avoid re-approving rows from older dashboard-only controls.
+- The board and pitcher detail expose projected strikeouts, the full count
+  distribution, line-specific model and no-vig market probabilities, confidence
+  bucket, feature-group driver shares, approval or rejection reason, and
+  correlated duplicate grouping.
+- The terminal wager card can fall back to rebuilt `edge_candidates` and keeps
+  approved rows separated from blocked diagnostics. It does not show a play as
+  approved unless the rebuilt betting artifact already marked it approved.
+- If stage-gate output is missing or still reports `research_only`, the
+  operator surface labels rebuilt slate rows as research-only instead of
+  implying live-use eligibility.
+
 AGE-147 adds:
 
 - raw same-day outcome pulls:

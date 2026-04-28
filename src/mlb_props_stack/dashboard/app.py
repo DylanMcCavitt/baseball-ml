@@ -38,8 +38,16 @@ def _user_config_path() -> Path:
 def _query_params_dict(streamlit_module: Any) -> dict[str, str]:
     raw = getattr(streamlit_module, "query_params", {})
     if hasattr(raw, "to_dict"):
-        return {str(key): str(value) for key, value in raw.to_dict().items()}
-    return {str(key): str(value) for key, value in dict(raw).items()}
+        raw_items = raw.to_dict().items()
+    else:
+        raw_items = dict(raw).items()
+    normalized: dict[str, str] = {}
+    for key, value in raw_items:
+        if isinstance(value, (list, tuple)):
+            normalized[str(key)] = str(value[-1]) if value else ""
+        else:
+            normalized[str(key)] = str(value)
+    return normalized
 
 
 def _toml_scalar(value: Any) -> str:

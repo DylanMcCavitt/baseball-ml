@@ -16,6 +16,7 @@ from .config import (
 )
 from .betting import (
     approval_from_validation_evidence,
+    confidence_bucket,
     find_latest_distribution_model_run_for_date,
     find_latest_validation_report,
     optional_datetime,
@@ -408,6 +409,9 @@ def _build_distribution_edge_candidates_for_date(
     model_outputs_path = model_run_dir / "model_outputs.jsonl"
     selected_model = _load_json(selected_model_path)
     model_version = str(selected_model["model_version"])
+    feature_group_contributions = list(
+        selected_model.get("feature_group_contributions") or []
+    )
     model_run_id = _path_run_id(model_run_dir)
     model_rows = _load_jsonl_rows(model_outputs_path)
     model_lookup = {
@@ -610,6 +614,7 @@ def _build_distribution_edge_candidates_for_date(
             "validation_confidence_buckets": list(
                 validation_evidence.confidence_buckets
             ),
+            "research_readiness_status": "research_only",
             "data_split": str(model_row.get("split")),
             "feature_row_id": str(
                 model_row.get("feature_row_id")
@@ -623,6 +628,8 @@ def _build_distribution_edge_candidates_for_date(
             "model_projection": round(float(model_row["point_projection"]), 6),
             "model_mean": round(float(model_row["point_projection"]), 6),
             "model_confidence": round(confidence, 6),
+            "model_confidence_bucket": confidence_bucket(confidence),
+            "feature_group_contributions": feature_group_contributions,
             "count_distribution": distribution,
             "probability_distribution": distribution,
             "raw_model_over_probability": round(
