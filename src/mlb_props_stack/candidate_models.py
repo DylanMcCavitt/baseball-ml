@@ -194,6 +194,43 @@ def _resolve_run_dir(
     return _latest_run_dir(output_root / "normalized" / family, artifact_name)
 
 
+def _resolve_feature_run_dirs(
+    explicit_run_dir: Path | str | None,
+    *,
+    output_root: Path,
+    family: str,
+    start_date: date,
+    end_date: date,
+    artifact_name: str,
+) -> tuple[Path, ...]:
+    if explicit_run_dir is not None:
+        run_dir = Path(explicit_run_dir)
+        if not run_dir.joinpath(artifact_name).exists():
+            raise FileNotFoundError(f"{run_dir} is missing {artifact_name}.")
+        return (run_dir,)
+    exact_root = (
+        output_root
+        / "normalized"
+        / family
+        / f"start={start_date.isoformat()}_end={end_date.isoformat()}"
+    )
+    exact = _latest_run_dir(exact_root, artifact_name)
+    if exact is not None:
+        return (exact,)
+    family_root = output_root / "normalized" / family
+    if not family_root.exists():
+        return ()
+    return tuple(
+        sorted(
+            {
+                path.parent
+                for path in family_root.glob(f"**/{artifact_name}")
+                if path.is_file() and path.parent.name.startswith("run=")
+            }
+        )
+    )
+
+
 def _row_key(row: dict[str, Any]) -> str:
     value = row.get("training_row_id")
     if value:
@@ -219,6 +256,25 @@ def _index_feature_rows(
         row_date = date.fromisoformat(str(row["official_date"]))
         if start_date <= row_date <= end_date:
             rows[_row_key(row)] = row
+    return rows
+
+
+def _index_feature_rows_from_runs(
+    run_dirs: tuple[Path, ...],
+    artifact_name: str,
+    *,
+    start_date: date,
+    end_date: date,
+) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, Any]] = {}
+    for run_dir in run_dirs:
+        for key, row in _index_feature_rows(
+            run_dir,
+            artifact_name,
+            start_date=start_date,
+            end_date=end_date,
+        ).items():
+            rows[key] = row
     return rows
 
 
@@ -882,7 +938,7 @@ def _build_joined_rows(
     )
     if starter_run is None:
         raise FileNotFoundError("No starter-game training dataset run was found.")
-    pitcher_run = _resolve_run_dir(
+    pitcher_runs = _resolve_feature_run_dirs(
         pitcher_skill_run_dir,
         output_root=output_root,
         family="pitcher_skill_features",
@@ -890,7 +946,7 @@ def _build_joined_rows(
         end_date=end_date,
         artifact_name="pitcher_skill_features.jsonl",
     )
-    lineup_run = _resolve_run_dir(
+    lineup_runs = _resolve_feature_run_dirs(
         lineup_matchup_run_dir,
         output_root=output_root,
         family="lineup_matchup_features",
@@ -898,7 +954,7 @@ def _build_joined_rows(
         end_date=end_date,
         artifact_name="lineup_matchup_features.jsonl",
     )
-    workload_run = _resolve_run_dir(
+    workload_runs = _resolve_feature_run_dirs(
         workload_leash_run_dir,
         output_root=output_root,
         family="workload_leash_features",
@@ -906,20 +962,20 @@ def _build_joined_rows(
         end_date=end_date,
         artifact_name="workload_leash_features.jsonl",
     )
-    pitcher_rows = _index_feature_rows(
-        pitcher_run,
+    pitcher_rows = _index_feature_rows_from_runs(
+        pitcher_runs,
         "pitcher_skill_features.jsonl",
         start_date=start_date,
         end_date=end_date,
     )
-    lineup_rows = _index_feature_rows(
-        lineup_run,
+    lineup_rows = _index_feature_rows_from_runs(
+        lineup_runs,
         "lineup_matchup_features.jsonl",
         start_date=start_date,
         end_date=end_date,
     )
-    workload_rows = _index_feature_rows(
-        workload_run,
+    workload_rows = _index_feature_rows_from_runs(
+        workload_runs,
         "workload_leash_features.jsonl",
         start_date=start_date,
         end_date=end_date,
@@ -946,9 +1002,12 @@ def _build_joined_rows(
         raise ValueError("No starter rows with strikeout targets were available.")
     source_summary = {
         "starter_dataset_run_dir": starter_run,
-        "pitcher_skill_run_dir": pitcher_run,
-        "lineup_matchup_run_dir": lineup_run,
-        "workload_leash_run_dir": workload_run,
+        "pitcher_skill_run_dir": pitcher_runs[0] if len(pitcher_runs) == 1 else None,
+        "lineup_matchup_run_dir": lineup_runs[0] if len(lineup_runs) == 1 else None,
+        "workload_leash_run_dir": workload_runs[0] if len(workload_runs) == 1 else None,
+        "pitcher_skill_run_dirs": list(pitcher_runs),
+        "lineup_matchup_run_dirs": list(lineup_runs),
+        "workload_leash_run_dirs": list(workload_runs),
         "joined_rows": len(rows),
         "pitcher_skill_matches": sum(1 for row in rows if row["pitcher"]),
         "lineup_matchup_matches": sum(1 for row in rows if row["lineup"]),
