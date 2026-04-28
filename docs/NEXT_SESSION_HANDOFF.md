@@ -6,10 +6,10 @@
 - Default branch: `main`
 - Active issue: `AGE-312` - vertical slice: sportsbook walk-forward backtest report
 - Current issue branch:
-  `dylanmccavitt2015/age-312-vertical-slice-sportsbook-walk-forward-backtest-report`
-- PR: https://github.com/DylanMcCavitt/baseball-ml/pull/56
+  `dylanmccavitt2015/age-312-market-report-fixes-v2`
+- PR: replacement PR from the fresh branch, after PR #56 was closed unmerged
 - Current state: Needs-fixes follow-up code is implemented, verified, committed,
-  and pushed to the PR branch.
+  and ready to push/open as a replacement PR branch.
 
 ## What Changed In AGE-312
 
