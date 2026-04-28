@@ -49,6 +49,7 @@ modeling work must honor.
 | Lineup matchup features | `src/mlb_props_stack/lineup_matchup_features.py` | build prior-only batter-by-batter and aggregate opponent-lineup matchup features over the starter-game dataset |
 | Workload and leash features | `src/mlb_props_stack/workload_leash_features.py` | build prior-only expected opportunity, pitch-count, batters-faced, rest-bucket, team-leash, and role-context features over the starter-game dataset |
 | Candidate projection models | `src/mlb_props_stack/candidate_models.py` | train comparable time-aware strikeout model families, distribution outputs, calibration diagnostics, feature-group summaries, and a reusable selected-model artifact |
+| Starter ML report | `src/mlb_props_stack/starter_ml_report.py` | produce a single research-only report that joins existing starter-game and feature artifacts, trains on past dates, scores held-out dates, and explains model quality without betting metrics |
 | Model-only validation | `src/mlb_props_stack/model_validation.py` | validate rebuilt strikeout projections with rolling season walk-forward splits, line/confidence calibration, bias buckets, recency sensitivity, and go/no-go reporting before betting-layer work resumes |
 | Obsolete pre-rebuild modeling | `src/mlb_props_stack/modeling.py` | legacy v0 training path retained only until the rebuild replaces it; do not use `starter-strikeout-baseline-v0` as current performance evidence or as the rebuild benchmark |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, per-book and consensus devig, book hold, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
@@ -338,6 +339,27 @@ strikeout distributions:
 - Duplicate and correlated rows are grouped by official date, game, pitcher,
   and exact line. At most one row in that group can be approved; the rest remain
   auditable rejections.
+
+AGE-311 adds a vertical research report over the starter strikeout ML path:
+
+- `build-starter-strikeout-ml-report` reads an existing
+  `starter_strikeout_training_dataset` run plus any existing pitcher-skill,
+  lineup-matchup, and workload/leash feature runs that can be joined by
+  `training_row_id`.
+- It writes
+  `data/normalized/starter_strikeout_ml_report/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+  with a JSON report, Markdown report, per-row predictions, and reproducibility
+  notes.
+- The report shows row counts, date-ordered train/validation/test windows,
+  selected feature columns, missing or excluded feature families,
+  leakage/timestamp status, held-out RMSE/MAE/Spearman rank correlation, bias
+  slices, best/worst prediction examples, and count/common-line probability
+  quality.
+- It does not run feature builders. If feature artifacts are missing, it records
+  the missing artifact family and keeps the report usable with the dense
+  starter-game context columns that are available.
+- It is research-only: no sportsbook prices, CLV, ROI, edge approval, or stake
+  sizing belongs in this report.
 
 AGE-147 adds:
 

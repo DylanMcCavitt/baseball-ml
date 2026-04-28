@@ -85,6 +85,7 @@ Run the actual changed command, not just the module entrypoint:
 - `build-workload-leash-features`
 - `train-candidate-strikeout-models`
 - `validate-model-only-strikeouts`
+- `build-starter-strikeout-ml-report`
 - `train-starter-strikeout-baseline`
 - `compare-starter-strikeout-baselines`
 - `build-edge-candidates`
@@ -194,6 +195,22 @@ pitcher tier, handedness, workload, rest/layoff, season, and rule environment,
 recency sensitivity, observed calibration-derived threshold proposals, and the
 go/no-go recommendation are present. Confirm the report did not emit wagering,
 CLV, ROI, edge-candidate, approval, or stake-sizing metrics.
+
+For starter strikeout ML report work, open:
+
+- `starter_strikeout_ml_report.json`
+- `starter_strikeout_ml_report.md`
+- `starter_strikeout_ml_predictions.jsonl`
+- `reproducibility_notes.md`
+
+Confirm the report shows row counts, date-ordered train/validation/test
+windows, selected feature columns, missing or excluded feature families,
+leakage/timestamp status, held-out RMSE/MAE/Spearman rank correlation, useful
+bias slices, best/worst prediction examples, and count-distribution or
+common-line over/under probability quality. If feature artifacts are missing,
+confirm the report says so explicitly and still avoids running feature builders.
+Confirm the report did not emit wagering, CLV, ROI, edge-candidate, approval,
+or stake-sizing metrics.
 
 For odds, edge, or daily candidate work, inspect:
 
