@@ -319,6 +319,26 @@ CLV, ROI, edge candidates, wager approvals, or stake sizes. If the report is
 weak, unstable, or missing required feature-layer coverage, downstream betting
 work remains blocked.
 
+AGE-294 rebuilds the edge-candidate betting report against those candidate
+strikeout distributions:
+
+- `build-edge-candidates` now prefers
+  `data/normalized/candidate_strikeout_models/.../model_outputs.jsonl` when a
+  rebuilt model run is available. It still supports the legacy
+  `starter_strikeout_baseline` ladder artifact for older runs and tests.
+- Each rebuilt row prices the exact sportsbook line from the full count
+  distribution instead of requiring the line to exist in a precomputed ladder.
+- Each report row carries model projection, full probability distribution,
+  model confidence, no-vig market probabilities, selected edge, validation
+  evidence, approval status, and rejection reason.
+- Wager approval is blocked unless the latest model-only validation report says
+  `conditional_go_for_betting_layer_rebuild` and exposes observed calibration
+  confidence buckets for later approval. Thresholds are derived from that
+  validation report, not from CLV, ROI, or forced output.
+- Duplicate and correlated rows are grouped by official date, game, pitcher,
+  and exact line. At most one row in that group can be approved; the rest remain
+  auditable rejections.
+
 AGE-147 adds:
 
 - raw same-day outcome pulls:

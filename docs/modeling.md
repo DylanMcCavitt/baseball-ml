@@ -407,6 +407,23 @@ does not replace full feature-layer validation.
 No wagering, CLV, ROI, edge-candidate, approval-gate, or stake-sizing metrics
 belong in this validation layer.
 
+AGE-294 consumes the rebuilt model outputs only after that model-only gate is
+available:
+
+- `model_outputs.jsonl` rows now preserve `feature_row_id`,
+  `lineup_snapshot_id`, `features_as_of`, and `projection_generated_at` so the
+  betting layer can audit projection timing instead of inventing it later.
+- Exact sportsbook lines are priced from `probability_distribution`, using
+  `P(strikeouts > line)` for over and the complementary under probability.
+- The betting report can score model edge versus no-vig market price without
+  approving the wager. Approval remains rejected when validation is missing,
+  validation says no-go, projection timestamps are missing, or a row is a
+  duplicate within the same pitcher/game/line group.
+- Approval thresholds come from
+  `proposed_later_wager_approval_thresholds` in the latest validation report:
+  the minimum edge cannot be lower than the observed calibration error, and the
+  confidence bucket must be one of the validation-qualified buckets.
+
 AGE-290 adds the workload, leash, and role-context layer over the same
 starter-game artifact. It emits one expected-opportunity row per starter-game
 under:

@@ -413,6 +413,8 @@ def render_edge_candidate_summary(result: EdgeCandidateBuildResult) -> str:
         f"actionable_candidates={result.actionable_count}",
         f"below_threshold={result.below_threshold_count}",
         f"skipped_lines={result.skipped_line_count}",
+        f"approved_wagers={result.approved_count}",
+        f"rejected_wagers={result.rejected_count}",
         f"line_snapshots_path={result.line_snapshots_path}",
         f"model_path={result.model_path}",
         f"ladder_probabilities_path={result.ladder_probabilities_path}",

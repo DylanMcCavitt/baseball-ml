@@ -1077,6 +1077,10 @@ def _model_output_rows(
 ) -> list[dict[str, Any]]:
     output_rows: list[dict[str, Any]] = []
     for row in rows:
+        starter_row = _source_row(row, "starter")
+        lineup_row = _source_row(row, "lineup")
+        pitcher_row = _source_row(row, "pitcher")
+        workload_row = _source_row(row, "workload")
         mean, probabilities = _distribution_for_candidate(row, candidate)
         lower_count, upper_count = _count_interval(probabilities, 0.10, 0.90)
         variance = sum(((count - mean) ** 2) * probability for count, probability in enumerate(probabilities))
@@ -1093,11 +1097,37 @@ def _model_output_rows(
         output_rows.append(
             {
                 "training_row_id": row["training_row_id"],
+                "feature_row_id": row["training_row_id"],
                 "official_date": row["official_date"],
                 "split": split_by_date[str(row["official_date"])],
-                "game_pk": _source_row(row, "starter").get("game_pk"),
-                "pitcher_id": _source_row(row, "starter").get("pitcher_id"),
-                "pitcher_name": _source_row(row, "starter").get("pitcher_name"),
+                "game_pk": starter_row.get("game_pk"),
+                "pitcher_id": starter_row.get("pitcher_id"),
+                "pitcher_name": starter_row.get("pitcher_name"),
+                "lineup_snapshot_id": (
+                    starter_row.get("lineup_snapshot_id")
+                    or lineup_row.get("lineup_snapshot_id")
+                ),
+                "features_as_of": (
+                    starter_row.get("features_as_of")
+                    or pitcher_row.get("features_as_of")
+                    or lineup_row.get("features_as_of")
+                    or workload_row.get("features_as_of")
+                ),
+                "projection_generated_at": generated_at,
+                "model_input_refs": {
+                    "pitcher_feature_row_id": (
+                        starter_row.get("pitcher_feature_row_id")
+                        or pitcher_row.get("feature_row_id")
+                    ),
+                    "lineup_feature_row_id": (
+                        starter_row.get("lineup_feature_row_id")
+                        or lineup_row.get("feature_row_id")
+                    ),
+                    "game_context_feature_row_id": (
+                        starter_row.get("game_context_feature_row_id")
+                        or workload_row.get("feature_row_id")
+                    ),
+                },
                 "actual_strikeouts": int(_target(row)),
                 "selected_candidate": candidate.name,
                 "point_projection": round(mean, 6),
