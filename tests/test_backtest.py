@@ -436,8 +436,8 @@ def test_build_walk_forward_backtest_surfaces_precise_skip_reasons_alongside_sco
                 "line_snapshot_id": "line-5-below-threshold",
                 "official_date": "2026-04-20",
                 "captured_at": "2026-04-20T19:05:00Z",
-                "sportsbook": "draftkings",
-                "sportsbook_title": "DraftKings",
+                "sportsbook": "fanduel",
+                "sportsbook_title": "FanDuel",
                 "event_id": "event-5",
                 "game_pk": 9001,
                 "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T20:00:00Z",
@@ -520,3 +520,142 @@ def test_build_walk_forward_backtest_surfaces_precise_skip_reasons_alongside_sco
         "missing_line_probability": 1,
         "unmatched_event_mapping": 1,
     }
+
+
+def test_build_walk_forward_backtest_groups_resolved_historical_lines_by_mlb_contract(
+    tmp_path,
+) -> None:
+    _seed_model_run(tmp_path)
+    _write_jsonl(
+        tmp_path
+        / "normalized"
+        / "the_odds_api"
+        / "date=2026-04-20"
+        / "run=20260420T180000Z"
+        / "prop_line_snapshots.jsonl",
+        [
+            {
+                "line_snapshot_id": "line-old-event",
+                "official_date": "2026-04-20",
+                "captured_at": "2026-04-20T18:50:00Z",
+                "sportsbook": "draftkings",
+                "sportsbook_title": "DraftKings",
+                "event_id": "historical-event-a",
+                "game_pk": 9001,
+                "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T20:00:00Z",
+                "match_status": "matched",
+                "commence_time": "2026-04-20T20:00:00Z",
+                "player_id": "odds-player:actionable-arm",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Actionable Arm",
+                "market": "pitcher_strikeouts",
+                "line": 5.5,
+                "over_odds": -110,
+                "under_odds": -110,
+            }
+        ],
+    )
+    _write_jsonl(
+        tmp_path
+        / "normalized"
+        / "the_odds_api"
+        / "date=2026-04-20"
+        / "run=20260420T191000Z"
+        / "prop_line_snapshots.jsonl",
+        [
+            {
+                "line_snapshot_id": "line-new-event",
+                "official_date": "2026-04-20",
+                "captured_at": "2026-04-20T19:10:00Z",
+                "sportsbook": "draftkings",
+                "sportsbook_title": "DraftKings",
+                "event_id": "historical-event-b",
+                "game_pk": 9001,
+                "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T20:00:00Z",
+                "match_status": "matched",
+                "commence_time": "2026-04-20T20:00:00Z",
+                "player_id": "mlb-pitcher:700001",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Actionable Arm",
+                "market": "pitcher_strikeouts",
+                "line": 5.5,
+                "over_odds": -110,
+                "under_odds": -110,
+            }
+        ],
+    )
+
+    result = build_walk_forward_backtest(
+        start_date=date(2026, 4, 20),
+        end_date=date(2026, 4, 20),
+        output_dir=tmp_path,
+        cutoff_minutes_before_first_pitch=30,
+        now=lambda: datetime(2026, 4, 21, 19, 15, tzinfo=UTC),
+        tracking_config=_tracking_config(tmp_path),
+    )
+    rows = _load_jsonl(result.backtest_bets_path)
+    audit_rows = _load_jsonl(result.join_audit_path)
+
+    assert result.snapshot_group_count == 1
+    assert result.actionable_bet_count == 1
+    assert result.skip_reason_counts == {}
+    assert rows[0]["line_snapshot_id"] == "line-new-event"
+    assert rows[0]["latest_observed_line_snapshot_id"] == "line-new-event"
+    assert rows[0]["event_id"] == "historical-event-b"
+    assert rows[0]["player_id"] == "mlb-pitcher:700001"
+    assert audit_rows[0]["audit_status"] == "ok"
+    assert audit_rows[0]["selected_has_game_mapping"] is True
+    assert audit_rows[0]["selected_has_pitcher_mapping"] is True
+
+
+def test_build_walk_forward_backtest_reports_timestamp_invalid_projection_separately(
+    tmp_path,
+) -> None:
+    _seed_model_run(tmp_path)
+    _write_jsonl(
+        tmp_path
+        / "normalized"
+        / "the_odds_api"
+        / "date=2026-04-20"
+        / "run=20260420T182000Z"
+        / "prop_line_snapshots.jsonl",
+        [
+            {
+                "line_snapshot_id": "line-before-projection",
+                "official_date": "2026-04-20",
+                "captured_at": "2026-04-20T18:20:00Z",
+                "sportsbook": "caesars",
+                "sportsbook_title": "Caesars",
+                "event_id": "event-before-projection",
+                "game_pk": 9001,
+                "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T20:00:00Z",
+                "match_status": "matched",
+                "commence_time": "2026-04-20T20:00:00Z",
+                "player_id": "mlb-pitcher:700001",
+                "pitcher_mlb_id": 700001,
+                "player_name": "Actionable Arm",
+                "market": "pitcher_strikeouts",
+                "line": 5.5,
+                "over_odds": -110,
+                "under_odds": -110,
+            }
+        ],
+    )
+
+    result = build_walk_forward_backtest(
+        start_date=date(2026, 4, 20),
+        end_date=date(2026, 4, 20),
+        output_dir=tmp_path,
+        cutoff_minutes_before_first_pitch=30,
+        now=lambda: datetime(2026, 4, 21, 19, 20, tzinfo=UTC),
+        tracking_config=_tracking_config(tmp_path),
+    )
+    rows = _load_jsonl(result.backtest_bets_path)
+    audit_rows = _load_jsonl(result.join_audit_path)
+
+    assert result.skipped_count == 1
+    assert result.skip_reason_counts == {"timestamp_invalid_projection": 1}
+    assert rows[0]["evaluation_status"] == "timestamp_invalid_projection"
+    assert "features_as_of" in rows[0]["reason"]
+    assert audit_rows[0]["audit_status"] == "timestamp_invalid_projection"
+    assert audit_rows[0]["projection_timestamp_status"] == "invalid_after_selected_line"

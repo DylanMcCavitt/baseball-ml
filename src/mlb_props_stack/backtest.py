@@ -188,14 +188,29 @@ def _find_latest_model_run_covering_dates(
     )
 
 
-def _line_group_key(row: dict[str, Any]) -> tuple[str, str, str, str, str, float]:
+def _has_join_value(value: Any) -> bool:
+    return value is not None and str(value).strip() != ""
+
+
+def _line_group_key(row: dict[str, Any]) -> tuple[str, str, str, float, str, str, str]:
+    if _has_join_value(row.get("game_pk")) and _has_join_value(
+        row.get("pitcher_mlb_id")
+    ):
+        entity_namespace = "mlb"
+        entity_primary = str(row["game_pk"])
+        entity_secondary = str(row["pitcher_mlb_id"])
+    else:
+        entity_namespace = "source"
+        entity_primary = str(row["event_id"])
+        entity_secondary = str(row["player_id"])
     return (
         str(row["official_date"]),
         str(row["sportsbook"]),
-        str(row["event_id"]),
-        str(row["player_id"]),
         str(row["market"]),
         round(float(row["line"]), 6),
+        entity_namespace,
+        entity_primary,
+        entity_secondary,
     )
 
 
@@ -210,8 +225,10 @@ def _load_snapshot_groups_for_dates(
     output_root: Path,
     *,
     target_dates: list[date],
-) -> dict[tuple[str, str, str, str, str, float], list[dict[str, Any]]]:
-    grouped_rows: dict[tuple[str, str, str, str, str, float], list[dict[str, Any]]] = {}
+) -> dict[tuple[str, str, str, float, str, str, str], list[dict[str, Any]]]:
+    grouped_rows: dict[
+        tuple[str, str, str, float, str, str, str], list[dict[str, Any]]
+    ] = {}
     for target_date in target_dates:
         odds_root = output_root / "normalized" / "the_odds_api" / f"date={target_date.isoformat()}"
         run_dirs = sorted(path for path in odds_root.glob("run=*") if path.is_dir())
@@ -239,6 +256,19 @@ def _prop_line_from_snapshot_row(row: dict[str, Any]) -> PropLine:
         under_odds=int(row["under_odds"]),
         captured_at=_parse_datetime(str(row["captured_at"])),
     )
+
+
+def _projection_generated_at(
+    *,
+    probability_row: dict[str, Any],
+    training_row: dict[str, Any],
+) -> datetime:
+    value = (
+        probability_row.get("projection_generated_at")
+        or training_row.get("projection_generated_at")
+        or training_row["features_as_of"]
+    )
+    return _parse_datetime(str(value))
 
 
 def _selected_market_probability(row: dict[str, Any], *, side: str) -> float:
@@ -704,28 +734,29 @@ def _base_row_from_snapshot_group(
     selected_row: dict[str, Any] | None,
     closing_row: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    line_value = round(float(representative_row["line"]), 6)
+    contract_row = selected_row or representative_row
+    line_value = round(float(contract_row["line"]), 6)
     return {
         "backtest_entry_id": (
-            f"{representative_row['official_date']}|{representative_row['sportsbook']}|"
-            f"{representative_row['event_id']}|{representative_row['player_id']}|"
-            f"{representative_row['market']}|{line_value}|{model_version}"
+            f"{contract_row['official_date']}|{contract_row['sportsbook']}|"
+            f"{contract_row['event_id']}|{contract_row['player_id']}|"
+            f"{contract_row['market']}|{line_value}|{model_version}"
         ),
-        "official_date": str(representative_row["official_date"]),
+        "official_date": str(contract_row["official_date"]),
         "model_version": model_version,
         "model_run_id": model_run_id,
-        "sportsbook": str(representative_row["sportsbook"]),
+        "sportsbook": str(contract_row["sportsbook"]),
         "sportsbook_title": str(
-            representative_row.get("sportsbook_title") or representative_row["sportsbook"]
+            contract_row.get("sportsbook_title") or contract_row["sportsbook"]
         ),
-        "event_id": str(representative_row["event_id"]),
-        "game_pk": representative_row.get("game_pk"),
-        "odds_matchup_key": representative_row.get("odds_matchup_key"),
-        "match_status": representative_row.get("match_status"),
-        "player_id": str(representative_row["player_id"]),
-        "pitcher_mlb_id": representative_row.get("pitcher_mlb_id"),
-        "player_name": str(representative_row["player_name"]),
-        "market": str(representative_row["market"]),
+        "event_id": str(contract_row["event_id"]),
+        "game_pk": contract_row.get("game_pk"),
+        "odds_matchup_key": contract_row.get("odds_matchup_key"),
+        "match_status": contract_row.get("match_status"),
+        "player_id": str(contract_row["player_id"]),
+        "pitcher_mlb_id": contract_row.get("pitcher_mlb_id"),
+        "player_name": str(contract_row["player_name"]),
+        "market": str(contract_row["market"]),
         "line": line_value,
         "commence_time": commence_time,
         "decision_cutoff_time": cutoff_time,
@@ -798,6 +829,11 @@ def _audit_row(
         "latest_observed_snapshot_captured_at": base_row[
             "latest_observed_snapshot_captured_at"
         ],
+        "selected_match_status": base_row.get("match_status"),
+        "selected_has_game_mapping": base_row["line_snapshot_id"] is not None
+        and _has_join_value(base_row.get("game_pk")),
+        "selected_has_pitcher_mapping": base_row["line_snapshot_id"] is not None
+        and _has_join_value(base_row.get("pitcher_mlb_id")),
         "commence_time": base_row["commence_time"],
         "decision_cutoff_time": base_row["decision_cutoff_time"],
         "eligible_snapshot_count": eligible_snapshot_count,
@@ -808,6 +844,17 @@ def _audit_row(
         "lineup_snapshot_id": lineup_snapshot_id,
         "features_as_of": features_as_of,
         "projection_generated_at": projection_generated_at,
+        "projection_timestamp_status": (
+            "ok"
+            if features_as_of is not None
+            and projection_generated_at is not None
+            and base_row["decision_snapshot_captured_at"] is not None
+            and features_as_of <= base_row["decision_snapshot_captured_at"]
+            and projection_generated_at <= base_row["decision_snapshot_captured_at"]
+            else "not_checked"
+            if features_as_of is None or projection_generated_at is None
+            else "invalid_after_selected_line"
+        ),
         "features_before_cutoff": (
             features_as_of is not None and features_as_of <= base_row["decision_cutoff_time"]
         ),
@@ -862,7 +909,7 @@ def _missing_snapshot_join_status(
                 "so no honest MLB game join exists for backtest scoring."
             ),
         )
-    if selected_row.get("game_pk") is None:
+    if not _has_join_value(selected_row.get("game_pk")):
         return (
             "missing_game_mapping",
             (
@@ -870,7 +917,7 @@ def _missing_snapshot_join_status(
                 "required for walk-forward joins."
             ),
         )
-    if selected_row.get("pitcher_mlb_id") is None:
+    if not _has_join_value(selected_row.get("pitcher_mlb_id")):
         if player_id.startswith("odds-player:"):
             return (
                 "unresolved_pitcher_identity",
@@ -1040,7 +1087,9 @@ def build_walk_forward_backtest(
 
         selected_game_pk = selected_row.get("game_pk")
         selected_pitcher_id = selected_row.get("pitcher_mlb_id")
-        if selected_game_pk is None or selected_pitcher_id is None:
+        if not _has_join_value(selected_game_pk) or not _has_join_value(
+            selected_pitcher_id
+        ):
             skipped_count += 1
             evaluation_status, reason = _missing_snapshot_join_status(selected_row)
             _increment_reason_count(
@@ -1309,7 +1358,74 @@ def build_walk_forward_backtest(
             continue
 
         features_as_of = _parse_datetime(str(training_row["features_as_of"]))
-        projection_generated_at = _parse_datetime(str(training_row["features_as_of"]))
+        projection_generated_at = _projection_generated_at(
+            probability_row=probability_row,
+            training_row=training_row,
+        )
+        selected_captured_at = _parse_datetime(str(selected_row["captured_at"]))
+        if (
+            features_as_of > selected_captured_at
+            or projection_generated_at > selected_captured_at
+        ):
+            skipped_count += 1
+            evaluation_status = "timestamp_invalid_projection"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
+            invalid_fields = []
+            if features_as_of > selected_captured_at:
+                invalid_fields.append("features_as_of")
+            if projection_generated_at > selected_captured_at:
+                invalid_fields.append("projection_generated_at")
+            reason = (
+                "The matched projection timestamp is after the selected line snapshot "
+                f"({', '.join(invalid_fields)} > line captured_at), so the backtest "
+                "cannot compare it without leakage."
+            )
+            backtest_rows.append(
+                {
+                    **base_row,
+                    "evaluation_status": evaluation_status,
+                    "bet_placed": False,
+                    "data_split": split_name,
+                    "feature_row_id": str(training_row["training_row_id"]),
+                    "lineup_snapshot_id": str(lineup_snapshot_id),
+                    "features_as_of": features_as_of,
+                    "projection_generated_at": projection_generated_at,
+                    "model_train_from_date": probability_row.get("model_train_from_date"),
+                    "model_train_through_date": probability_row.get(
+                        "model_train_through_date"
+                    ),
+                    "reason": reason,
+                }
+            )
+            audit_rows.append(
+                _audit_row(
+                    base_row,
+                    audit_status=evaluation_status,
+                    reason=reason,
+                    eligible_snapshot_count=len(eligible_rows),
+                    late_snapshot_count=late_snapshot_count,
+                    selected_snapshot_before_cutoff=True,
+                    selected_snapshot_is_latest_before_cutoff=True,
+                    features_as_of=features_as_of,
+                    projection_generated_at=projection_generated_at,
+                    data_split=split_name,
+                    model_train_from_date=probability_row.get("model_train_from_date"),
+                    model_train_through_date=probability_row.get(
+                        "model_train_through_date"
+                    ),
+                    calibration_fit_through_date=probability_row.get(
+                        "calibration_fit_through_date"
+                    ),
+                    feature_row_id=str(training_row["training_row_id"]),
+                    lineup_snapshot_id=str(lineup_snapshot_id),
+                    outcome_id=str(outcome_row["outcome_id"]),
+                    outcome_available=True,
+                )
+            )
+            continue
         try:
             analysis = analyze_projection(
                 _prop_line_from_snapshot_row(selected_row),
