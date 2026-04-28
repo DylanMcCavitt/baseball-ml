@@ -2,18 +2,27 @@
 
 -
 
-## Verification
+## Report Evidence
 
-- [ ] `uv sync --extra dev`
+- Issue:
+- Report path:
+- Dashboard path:
+- Key visuals:
+
+## Data / Feature / Model Impact
+
+- Data sources touched:
+- Feature families touched:
+- Timestamp/leakage checks:
+- Missing coverage or rejected rows:
+
+## Validation
+
 - [ ] `uv run pytest`
-- [ ] `python3 -m compileall src tests`
-- [ ] `uv run python -m mlb_props_stack`
-- [ ] Ran the affected runtime checks from `docs/review_runtime_checks.md`
-- [ ] Verified generated artifacts or UI behavior, not just process exit codes
+- [ ] `uv run ruff check`
+- [ ] Relevant report command:
 
-## Runtime Review Notes
+## Reviewer Notes
 
-- Entry points exercised:
-- Dates or fixture inputs used:
-- Output artifacts inspected:
-- External-source caveats or unresolved gaps:
+- Limitations:
+- Questions:
