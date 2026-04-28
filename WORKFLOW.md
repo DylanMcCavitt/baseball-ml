@@ -1,8 +1,8 @@
 ---
 tracker:
   kind: linear
-  api_key: "$LINEAR_API_KEY"
-  project_slug: "$LINEAR_PROJECT_SLUG"
+  api_key: $LINEAR_API_KEY
+  project_slug: mlb-props-reboot-b9ac56339eba
   active_states:
     - Ready
     - In Progress
