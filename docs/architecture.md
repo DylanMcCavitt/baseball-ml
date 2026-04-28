@@ -50,6 +50,7 @@ modeling work must honor.
 | Workload and leash features | `src/mlb_props_stack/workload_leash_features.py` | build prior-only expected opportunity, pitch-count, batters-faced, rest-bucket, team-leash, and role-context features over the starter-game dataset |
 | Candidate projection models | `src/mlb_props_stack/candidate_models.py` | train comparable time-aware strikeout model families, distribution outputs, calibration diagnostics, feature-group summaries, and a reusable selected-model artifact |
 | Starter ML report | `src/mlb_props_stack/starter_ml_report.py` | produce a single research-only report that joins existing starter-game and feature artifacts, trains on past dates, scores held-out dates, and explains model quality without betting metrics |
+| Starter market report | `src/mlb_props_stack/market_report.py` | adapt the starter ML report predictions into the existing walk-forward backtest contract, join historical sportsbook lines, and summarize scoreable coverage, skipped joins, CLV, ROI, and calibration by line bucket |
 | Model-only validation | `src/mlb_props_stack/model_validation.py` | validate rebuilt strikeout projections with rolling season walk-forward splits, line/confidence calibration, bias buckets, recency sensitivity, and go/no-go reporting before betting-layer work resumes |
 | Obsolete pre-rebuild modeling | `src/mlb_props_stack/modeling.py` | legacy v0 training path retained only until the rebuild replaces it; do not use `starter-strikeout-baseline-v0` as current performance evidence or as the rebuild benchmark |
 | Pricing math | `src/mlb_props_stack/pricing.py` | American odds conversion, per-book and consensus devig, book hold, fair odds, expected value, fractional Kelly, and capped bankroll sizing |
@@ -360,6 +361,24 @@ AGE-311 adds a vertical research report over the starter strikeout ML path:
   starter-game context columns that are available.
 - It is research-only: no sportsbook prices, CLV, ROI, edge approval, or stake
   sizing belongs in this report.
+
+AGE-312 adds a sportsbook market report over the AGE-311 prediction artifact:
+
+- `build-starter-strikeout-market-report` consumes
+  `starter_strikeout_ml_predictions.jsonl` from a selected
+  `starter_strikeout_ml_report` run.
+- It writes
+  `data/normalized/starter_strikeout_market_report/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+  with a JSON report, Markdown report, and an adapted model-run contract used
+  only to call `build_walk_forward_backtest()`.
+- The existing walk-forward backtest artifacts still land under
+  `data/normalized/walk_forward_backtest/...` and preserve `backtest_bets`,
+  `join_audit`, CLV, ROI, and edge-bucket outputs.
+- The report separates scoreable rows from skipped rows, join failure reasons,
+  book/line coverage, CLV, ROI, line-bucket calibration, and examples.
+- It does not force event or pitcher joins when sportsbook identity is
+  uncertain, and timestamp ordering still requires
+  `features_as_of <= projection_generated_at <= line captured_at`.
 
 AGE-147 adds:
 

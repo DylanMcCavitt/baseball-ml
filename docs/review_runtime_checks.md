@@ -212,6 +212,23 @@ confirm the report says so explicitly and still avoids running feature builders.
 Confirm the report did not emit wagering, CLV, ROI, edge-candidate, approval,
 or stake-sizing metrics.
 
+For starter strikeout market report work, open:
+
+- `starter_strikeout_market_report.json`
+- `starter_strikeout_market_report.md`
+- `adapted_model_run/raw_vs_calibrated_probabilities.jsonl`
+- the linked `backtest_bets.jsonl`
+- the linked `join_audit.jsonl`
+- the linked `clv_summary.jsonl`
+- the linked `roi_summary.jsonl`
+
+Confirm the report consumes a selected `starter_strikeout_ml_predictions.jsonl`
+artifact, calls the existing walk-forward backtest path, and separates scoreable
+rows from skipped rows. Check join failure reasons, book/line coverage, CLV,
+ROI, line-bucket calibration, and examples. Confirm skipped rows remain
+auditable, uncertain sportsbook joins are not forced, and the timestamp audit
+preserves `features_as_of <= projection_generated_at <= line captured_at`.
+
 For odds, edge, or daily candidate work, inspect:
 
 - CLI summary counts such as `matched_events`, `unmatched_events`,

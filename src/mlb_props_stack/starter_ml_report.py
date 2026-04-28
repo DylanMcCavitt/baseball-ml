@@ -106,6 +106,18 @@ def _prediction_rows(
         actual = int(cm._target(row))
         error = mean - actual
         starter = cm._source_row(row, "starter")
+        lineup = cm._source_row(row, "lineup")
+        pitcher = cm._source_row(row, "pitcher")
+        workload = cm._source_row(row, "workload")
+        features_as_of = (
+            starter.get("features_as_of")
+            or pitcher.get("features_as_of")
+            or lineup.get("features_as_of")
+            or workload.get("features_as_of")
+        )
+        lineup_snapshot_id = (
+            starter.get("lineup_snapshot_id") or lineup.get("lineup_snapshot_id")
+        )
         common_lines = []
         for line in cm.COMMON_PROP_LINES:
             line_probabilities = cm.strikeout_line_probabilities(probabilities, line)
@@ -122,11 +134,29 @@ def _prediction_rows(
         predictions.append(
             {
                 "training_row_id": row["training_row_id"],
+                "feature_row_id": row["training_row_id"],
                 "official_date": row["official_date"],
                 "split": split_by_date[str(row["official_date"])],
                 "game_pk": starter.get("game_pk"),
                 "pitcher_id": starter.get("pitcher_id"),
                 "pitcher_name": starter.get("pitcher_name"),
+                "lineup_snapshot_id": lineup_snapshot_id,
+                "features_as_of": features_as_of,
+                "projection_generated_at": features_as_of,
+                "model_input_refs": {
+                    "pitcher_feature_row_id": (
+                        starter.get("pitcher_feature_row_id")
+                        or pitcher.get("feature_row_id")
+                    ),
+                    "lineup_feature_row_id": (
+                        starter.get("lineup_feature_row_id")
+                        or lineup.get("feature_row_id")
+                    ),
+                    "game_context_feature_row_id": (
+                        starter.get("game_context_feature_row_id")
+                        or workload.get("feature_row_id")
+                    ),
+                },
                 "team_abbreviation": starter.get("team_abbreviation"),
                 "opponent_team_abbreviation": starter.get("opponent_team_abbreviation"),
                 "home_away": starter.get("home_away"),

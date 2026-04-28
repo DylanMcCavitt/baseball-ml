@@ -447,8 +447,8 @@ Key artifacts:
   prediction examples, and count/common-line probability quality
 - `starter_strikeout_ml_predictions.jsonl`
   stores one prediction row per starter-game row with actual strikeouts, point
-  projection, error, exact-count probability, and common-line over/under
-  probabilities
+  projection, input refs, `features_as_of`, `projection_generated_at`, error,
+  exact-count probability, and common-line over/under probabilities
 - `reproducibility_notes.md`
   records the rerun command and scope guardrail
 
@@ -457,6 +457,40 @@ CLV, ROI, edge approvals, or stake sizing. It only consumes existing artifacts.
 When pitcher-skill, lineup-matchup, or workload/leash artifacts are missing, the
 report records that bottleneck explicitly and falls back to the dense
 starter-game context columns available in the canonical dataset.
+
+AGE-312 adds the first sportsbook market report over the AGE-311 prediction
+artifact:
+
+```bash
+uv run python -m mlb_props_stack build-starter-strikeout-market-report \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /tmp/age312-market-report \
+  --ml-report-run-dir /tmp/age311-ml-report-historical/normalized/starter_strikeout_ml_report/start=2019-03-20_end=2026-04-24/run=YYYYMMDDTHHMMSSZ \
+  --odds-input-dir /Users/dylanmccavitt/projects/nba-ml/data
+```
+
+Artifacts land under:
+
+`data/normalized/starter_strikeout_market_report/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+Key artifacts:
+
+- `starter_strikeout_market_report.json` and
+  `starter_strikeout_market_report.md`
+  summarize scoreable rows, skipped rows, join failure reasons, book/line
+  coverage, CLV, ROI, line-bucket calibration, and examples.
+- `adapted_model_run/`
+  contains the AGE-311 predictions reshaped into the existing
+  `build_walk_forward_backtest` model-run contract. This is an adapter, not a
+  parallel model path.
+- the called walk-forward backtest still writes `backtest_bets.jsonl`,
+  `join_audit.jsonl`, `clv_summary.jsonl`, `roi_summary.jsonl`, and
+  `edge_bucket_summary.jsonl`.
+
+The market report remains research-only. It does not approve wagers to make the
+report look useful, does not loosen event or pitcher joins, and preserves the
+timestamp check `features_as_of <= projection_generated_at <= line captured_at`.
 
 AGE-290 adds the workload, leash, and role-context layer over the same
 starter-game artifact. It emits one expected-opportunity row per starter-game

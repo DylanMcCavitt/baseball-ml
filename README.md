@@ -745,6 +745,45 @@ The current backtest runner stays honest in two important ways:
   `raw_vs_calibrated_probabilities.jsonl` for headline backtest rows instead of
   the production calibrator embedded in `ladder_probabilities.jsonl`
 
+## Starter Strikeout Market Report
+
+`AGE-312` adds a vertical sportsbook report over the AGE-311 starter strikeout
+ML prediction artifact.
+
+This command expects:
+
+- a selected `starter_strikeout_ml_report` run with
+  `starter_strikeout_ml_predictions.jsonl`
+- historical Odds API snapshots under `normalized/the_odds_api/...`
+
+Build the market report:
+
+```bash
+uv run python -m mlb_props_stack build-starter-strikeout-market-report \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --ml-report-run-dir /path/to/starter_strikeout_ml_report/run=YYYYMMDDTHHMMSSZ \
+  --odds-input-dir /path/to/odds/artifact/root
+```
+
+By default that writes:
+
+- `starter_strikeout_market_report.json`
+  scoreable/skipped counts, join failure reasons, book/line coverage, CLV, ROI,
+  line-bucket calibration, examples, source paths, and guardrails
+- `starter_strikeout_market_report.md`
+  a readable report for review
+- `adapted_model_run/`
+  an adapter from AGE-311 prediction rows into the existing walk-forward
+  backtest contract
+
+The command also runs `build_walk_forward_backtest`, so the linked backtest
+artifacts still include `backtest_bets.jsonl`, `join_audit.jsonl`,
+`clv_summary.jsonl`, `roi_summary.jsonl`, and `edge_bucket_summary.jsonl`.
+Rows remain research-only: skipped joins are preserved, uncertain event/player
+identity is not forced, and timestamp checks still require
+`features_as_of <= projection_generated_at <= line captured_at`.
+
 ## Daily Candidate Workflow
 
 `AGE-153` adds the first repeatable paper-tracking loop for the live slate.
