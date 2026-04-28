@@ -199,6 +199,16 @@ def test_train_candidate_strikeout_models_writes_comparable_distribution_report(
     assert report["candidates"][result.selected_candidate]["feature_group_contributions"]
     assert selected_model["selected_candidate"] == result.selected_candidate
     assert output_rows[0]["point_projection"] >= 0.0
+    assert output_rows[0]["feature_row_id"] == output_rows[0]["training_row_id"]
+    assert output_rows[0]["lineup_snapshot_id"] is None
+    assert output_rows[0]["features_as_of"] == "2026-04-01T00:00:00Z"
+    assert output_rows[0]["projection_generated_at"] == "2026-04-26T18:00:00Z"
+    assert output_rows[0]["model_input_refs"]["pitcher_feature_row_id"].startswith(
+        "pitcher-skill:"
+    )
+    assert output_rows[0]["model_input_refs"]["lineup_feature_row_id"].startswith(
+        "lineup-matchup:"
+    )
     assert output_rows[0]["probability_distribution"]
     assert output_rows[0]["line_probability_contract"]["supports_arbitrary_lines"] is True
     assert output_rows[0]["over_under_probabilities"][0]["line"] == 2.5

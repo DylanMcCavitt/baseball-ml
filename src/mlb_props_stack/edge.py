@@ -14,6 +14,15 @@ from .config import (
     DEVIG_MODE_TIGHTEST_BOOK,
     StackConfig,
 )
+from .betting import (
+    approval_from_validation_evidence,
+    find_latest_distribution_model_run_for_date,
+    find_latest_validation_report,
+    optional_datetime,
+    path_run_id,
+    probabilities_for_line,
+    validation_evidence_from_report,
+)
 from .markets import EdgeDecision, PropLine, PropProjection, ProjectionInputRef
 from .pricing import (
     book_hold,
@@ -42,6 +51,8 @@ class EdgeCandidateBuildResult:
     actionable_count: int
     below_threshold_count: int
     skipped_line_count: int
+    approved_count: int = 0
+    rejected_count: int = 0
 
 
 def _json_ready(value: Any) -> Any:
@@ -83,7 +94,7 @@ def _parse_datetime(value: str) -> datetime:
 
 
 def _path_run_id(run_dir: Path) -> str:
-    return run_dir.name.split("=", 1)[-1]
+    return path_run_id(run_dir)
 
 
 def _latest_run_dir(root: Path) -> Path:
@@ -94,6 +105,13 @@ def _latest_run_dir(root: Path) -> Path:
 
 
 def _find_latest_model_run_for_date(output_root: Path, *, target_date: date) -> Path:
+    distribution_run_dir = find_latest_distribution_model_run_for_date(
+        output_root,
+        target_date=target_date.isoformat(),
+    )
+    if distribution_run_dir is not None:
+        return distribution_run_dir
+
     model_root = output_root / "normalized" / "starter_strikeout_baseline"
     run_dirs = sorted(
         path
@@ -292,6 +310,416 @@ def _ladder_probability_for_line(
     return None
 
 
+def _model_output_lookup_key(row: dict[str, Any]) -> tuple[str, int, int]:
+    return (
+        str(row["official_date"]),
+        int(row["game_pk"]),
+        int(row["pitcher_id"]),
+    )
+
+
+def _line_model_lookup_key(line_row: dict[str, Any]) -> tuple[str, int, int]:
+    return (
+        str(line_row["official_date"]),
+        int(line_row["game_pk"]),
+        int(line_row["pitcher_mlb_id"]),
+    )
+
+
+def _projection_timestamps_from_model_output(
+    model_row: dict[str, Any],
+    *,
+    fallback_captured_at: datetime,
+) -> tuple[datetime, datetime, str]:
+    features_as_of = optional_datetime(model_row.get("features_as_of"))
+    projection_generated_at = optional_datetime(model_row.get("projection_generated_at"))
+    if features_as_of is None or projection_generated_at is None:
+        return (
+            fallback_captured_at,
+            fallback_captured_at,
+            "missing_projection_timestamps",
+        )
+    if features_as_of > fallback_captured_at or projection_generated_at > fallback_captured_at:
+        return features_as_of, projection_generated_at, "invalid_after_selected_line"
+    return features_as_of, projection_generated_at, "ok"
+
+
+def _distribution_correlation_group_key(row: dict[str, Any]) -> str:
+    if row.get("game_pk") is not None and row.get("pitcher_mlb_id") is not None:
+        game_key = str(row["game_pk"])
+        pitcher_key = str(row["pitcher_mlb_id"])
+    else:
+        game_key = str(row.get("event_id") or "")
+        pitcher_key = str(row.get("player_id") or "")
+    return "|".join(
+        [
+            str(row["official_date"]),
+            game_key,
+            pitcher_key,
+            f"{float(row['line']):.6f}",
+        ]
+    )
+
+
+def _annotate_distribution_correlation_groups(rows: list[dict[str, Any]]) -> None:
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.get("evaluation_status") in {"actionable", "below_threshold"}:
+            grouped.setdefault(str(row["correlation_group_key"]), []).append(row)
+    for group_rows in grouped.values():
+        ranked = sorted(
+            group_rows,
+            key=lambda row: (
+                -float(row.get("edge_pct") or 0.0),
+                str(row.get("sportsbook") or ""),
+                str(row.get("line_snapshot_id") or ""),
+            ),
+        )
+        for rank, row in enumerate(ranked, start=1):
+            row["correlation_group_size"] = len(ranked)
+            row["correlation_group_rank"] = rank
+            if (
+                rank > 1
+                and row.get("approval_status") == "approved"
+                and row.get("approval_allowed") is True
+            ):
+                row["approval_status"] = "rejected"
+                row["approval_allowed"] = False
+                row["approval_reason"] = (
+                    "Rejected as a correlated duplicate within the same "
+                    "pitcher/game/line group."
+                )
+
+
+def _build_distribution_edge_candidates_for_date(
+    *,
+    target_date: date,
+    output_dir: Path | str,
+    model_run_dir: Path,
+    config: StackConfig,
+) -> EdgeCandidateBuildResult:
+    output_root = Path(output_dir)
+    odds_root = output_root / "normalized" / "the_odds_api" / f"date={target_date.isoformat()}"
+    odds_run_dir = _latest_run_dir(odds_root)
+    line_snapshots_path = odds_run_dir / "prop_line_snapshots.jsonl"
+    line_rows = _load_jsonl_rows(line_snapshots_path)
+
+    selected_model_path = model_run_dir / "selected_model.json"
+    model_outputs_path = model_run_dir / "model_outputs.jsonl"
+    selected_model = _load_json(selected_model_path)
+    model_version = str(selected_model["model_version"])
+    model_run_id = _path_run_id(model_run_dir)
+    model_rows = _load_jsonl_rows(model_outputs_path)
+    model_lookup = {
+        _model_output_lookup_key(row): row
+        for row in model_rows
+        if row.get("game_pk") is not None and row.get("pitcher_id") is not None
+    }
+    validation_path = find_latest_validation_report(output_root)
+    validation_evidence = validation_evidence_from_report(validation_path, config=config)
+
+    peer_lookup: dict[
+        tuple[str, str, str, str, float], list[PropLine]
+    ] = {}
+    for peer_row in line_rows:
+        try:
+            peer_line = _prop_line_from_snapshot_row(peer_row)
+        except (KeyError, TypeError, ValueError):
+            continue
+        peer_lookup.setdefault(_multi_book_line_group_key(peer_row), []).append(
+            peer_line
+        )
+
+    candidate_rows: list[dict[str, Any]] = []
+    actionable_count = 0
+    below_threshold_count = 0
+    skipped_line_count = 0
+
+    for line_row in line_rows:
+        base_row = _build_candidate_base_row(
+            line_row,
+            model_version=model_version,
+            model_run_id=model_run_id,
+        )
+        game_pk = line_row.get("game_pk")
+        pitcher_mlb_id = line_row.get("pitcher_mlb_id")
+        if game_pk is None or pitcher_mlb_id is None:
+            skipped_line_count += 1
+            candidate_rows.append(
+                _build_skipped_candidate_row(
+                    line_row,
+                    model_version=model_version,
+                    model_run_id=model_run_id,
+                    evaluation_status="missing_join_keys",
+                    reason="Line snapshot is missing mapped game or pitcher identifiers.",
+                    extra_fields={
+                        "approval_status": "rejected",
+                        "approval_allowed": False,
+                        "approval_reason": "Cannot approve without mapped game and pitcher identifiers.",
+                    },
+                )
+            )
+            continue
+
+        model_row = model_lookup.get(_line_model_lookup_key(line_row))
+        if model_row is None:
+            skipped_line_count += 1
+            candidate_rows.append(
+                _build_skipped_candidate_row(
+                    line_row,
+                    model_version=model_version,
+                    model_run_id=model_run_id,
+                    evaluation_status="missing_projection",
+                    reason="No rebuilt strikeout distribution was found for this line snapshot.",
+                    extra_fields={
+                        "approval_status": "rejected",
+                        "approval_allowed": False,
+                        "approval_reason": "Cannot approve without a model distribution.",
+                    },
+                )
+            )
+            continue
+
+        if str(model_row.get("split")) == "train":
+            skipped_line_count += 1
+            candidate_rows.append(
+                _build_skipped_candidate_row(
+                    line_row,
+                    model_version=model_version,
+                    model_run_id=model_run_id,
+                    evaluation_status="train_split_projection",
+                    reason=(
+                        "The matched rebuilt distribution belongs to the training "
+                        "split and is not honest for historical edge evaluation."
+                    ),
+                    extra_fields={
+                        "data_split": "train",
+                        "approval_status": "rejected",
+                        "approval_allowed": False,
+                        "approval_reason": "Cannot approve a training-split projection.",
+                    },
+                )
+            )
+            continue
+
+        try:
+            distribution = list(model_row["probability_distribution"])
+            line_probabilities = probabilities_for_line(
+                distribution,
+                line=float(line_row["line"]),
+            )
+            prop_line = _prop_line_from_snapshot_row(line_row)
+            features_as_of, projection_generated_at, timestamp_status = (
+                _projection_timestamps_from_model_output(
+                    model_row,
+                    fallback_captured_at=prop_line.captured_at,
+                )
+            )
+            if timestamp_status == "invalid_after_selected_line":
+                raise ValueError(
+                    "The matched rebuilt projection timestamp is after the line "
+                    "snapshot, so the comparison would leak future information."
+                )
+            projection = PropProjection(
+                event_id=str(line_row["event_id"]),
+                player_id=str(line_row["player_id"]),
+                market=str(line_row["market"]),
+                line=float(line_row["line"]),
+                mean=float(model_row["point_projection"]),
+                over_probability=float(line_probabilities["over_probability"]),
+                under_probability=float(line_probabilities["under_probability"]),
+                model_version=model_version,
+                input_ref=ProjectionInputRef(
+                    lineup_snapshot_id=str(model_row.get("lineup_snapshot_id") or "unknown"),
+                    feature_row_id=str(
+                        model_row.get("feature_row_id")
+                        or model_row.get("training_row_id")
+                        or "unknown"
+                    ),
+                    features_as_of=features_as_of,
+                ),
+                generated_at=projection_generated_at,
+            )
+            peer_lines = [
+                peer
+                for peer in peer_lookup.get(
+                    _multi_book_line_group_key(line_row), []
+                )
+                if peer.line_snapshot_id != prop_line.line_snapshot_id
+            ]
+            analysis = analyze_projection(
+                prop_line,
+                projection,
+                config=config,
+                peer_lines=peer_lines,
+            )
+        except (KeyError, TypeError, ValueError) as error:
+            skipped_line_count += 1
+            candidate_rows.append(
+                _build_skipped_candidate_row(
+                    line_row,
+                    model_version=model_version,
+                    model_run_id=model_run_id,
+                    evaluation_status="invalid_projection",
+                    reason=str(error),
+                    extra_fields={
+                        "approval_status": "rejected",
+                        "approval_allowed": False,
+                        "approval_reason": str(error),
+                    },
+                )
+            )
+            continue
+
+        if analysis["clears_min_edge"]:
+            actionable_count += 1
+            evaluation_status = "actionable"
+        else:
+            below_threshold_count += 1
+            evaluation_status = "below_threshold"
+
+        confidence = max(
+            float(line_probabilities["over_probability"]),
+            float(line_probabilities["under_probability"]),
+        )
+        approved, approval_reason = approval_from_validation_evidence(
+            evidence=validation_evidence,
+            edge_pct=float(analysis["edge_pct"]),
+            confidence=confidence,
+            line=float(line_row["line"]),
+        )
+        if timestamp_status == "missing_projection_timestamps":
+            approved = False
+            approval_reason = (
+                "Projection timestamps are missing from the rebuilt model output, "
+                "so the row can be priced but not approved."
+            )
+
+        candidate_row = {
+            **base_row,
+            "evaluation_status": evaluation_status,
+            "approval_status": "approved" if approved else "rejected",
+            "approval_allowed": approved,
+            "approval_reason": approval_reason,
+            "validation_report_path": validation_evidence.report_path,
+            "validation_report_run_id": validation_evidence.report_run_id,
+            "validation_recommendation": validation_evidence.recommendation,
+            "validation_threshold_status": validation_evidence.threshold_status,
+            "validation_min_edge_pct": round(validation_evidence.min_edge_pct, 6),
+            "validation_min_confidence": validation_evidence.min_confidence,
+            "validation_confidence_buckets": list(
+                validation_evidence.confidence_buckets
+            ),
+            "data_split": str(model_row.get("split")),
+            "feature_row_id": str(
+                model_row.get("feature_row_id")
+                or model_row.get("training_row_id")
+                or "unknown"
+            ),
+            "lineup_snapshot_id": model_row.get("lineup_snapshot_id"),
+            "features_as_of": features_as_of,
+            "projection_generated_at": projection_generated_at,
+            "projection_timestamp_status": timestamp_status,
+            "model_projection": round(float(model_row["point_projection"]), 6),
+            "model_mean": round(float(model_row["point_projection"]), 6),
+            "model_confidence": round(confidence, 6),
+            "count_distribution": distribution,
+            "probability_distribution": distribution,
+            "raw_model_over_probability": round(
+                float(line_probabilities["over_probability"]),
+                6,
+            ),
+            "raw_model_under_probability": round(
+                float(line_probabilities["under_probability"]),
+                6,
+            ),
+            "model_over_probability": round(
+                float(line_probabilities["over_probability"]),
+                6,
+            ),
+            "model_under_probability": round(
+                float(line_probabilities["under_probability"]),
+                6,
+            ),
+            "market_over_probability": round(
+                float(analysis["market_over_probability"]),
+                6,
+            ),
+            "market_under_probability": round(
+                float(analysis["market_under_probability"]),
+                6,
+            ),
+            "market_consensus_books": list(analysis["market_consensus_books"]),
+            "devig_mode": str(analysis["devig_mode"]),
+            "selected_side": str(analysis["side"]),
+            "selected_model_probability": round(
+                float(analysis["selected_model_probability"]),
+                6,
+            ),
+            "selected_market_probability": round(
+                float(analysis["selected_market_probability"]),
+                6,
+            ),
+            "selected_odds": int(analysis["selected_odds"]),
+            "edge_pct": round(float(analysis["edge_pct"]), 6),
+            "expected_value_pct": round(float(analysis["expected_value_pct"]), 6),
+            "uncapped_stake_fraction": round(
+                float(analysis["uncapped_stake_fraction"]),
+                6,
+            ),
+            "stake_fraction": round(float(analysis["stake_fraction"]), 6),
+            "fair_odds": int(analysis["fair_odds"]),
+            "clears_min_edge": bool(analysis["clears_min_edge"]),
+            "reason": str(analysis["reason"]),
+            "correlation_group_key": _distribution_correlation_group_key(line_row),
+            "correlation_group_size": 1,
+            "correlation_group_rank": 1,
+        }
+        candidate_rows.append(candidate_row)
+
+    _annotate_distribution_correlation_groups(candidate_rows)
+    approved_count = sum(1 for row in candidate_rows if row.get("approval_status") == "approved")
+    rejected_count = sum(1 for row in candidate_rows if row.get("approval_status") == "rejected")
+
+    candidate_rows.sort(
+        key=lambda row: (
+            0 if row.get("approval_status") == "approved" else 1,
+            0 if row["evaluation_status"] == "actionable" else 1,
+            -float(row.get("edge_pct") or 0.0),
+            str(row["line_snapshot_id"]),
+        )
+    )
+
+    run_id = datetime.now(tz=UTC).strftime("%Y%m%dT%H%M%SZ")
+    normalized_root = (
+        output_root
+        / "normalized"
+        / "edge_candidates"
+        / f"date={target_date.isoformat()}"
+        / f"run={run_id}"
+    )
+    edge_candidates_path = normalized_root / "edge_candidates.jsonl"
+    _write_jsonl(edge_candidates_path, candidate_rows)
+
+    return EdgeCandidateBuildResult(
+        target_date=target_date,
+        run_id=run_id,
+        model_version=model_version,
+        model_run_id=model_run_id,
+        line_snapshots_path=line_snapshots_path,
+        model_path=selected_model_path,
+        ladder_probabilities_path=model_outputs_path,
+        edge_candidates_path=edge_candidates_path,
+        line_count=len(line_rows),
+        scored_line_count=actionable_count + below_threshold_count,
+        actionable_count=actionable_count,
+        below_threshold_count=below_threshold_count,
+        skipped_line_count=skipped_line_count,
+        approved_count=approved_count,
+        rejected_count=rejected_count,
+    )
+
+
 def _build_candidate_base_row(
     line_row: dict[str, Any],
     *,
@@ -377,6 +805,16 @@ def build_edge_candidates_for_date(
         if model_run_dir is not None
         else _find_latest_model_run_for_date(output_root, target_date=target_date)
     )
+    if resolved_model_run_dir.joinpath("model_outputs.jsonl").exists():
+        if config is None:
+            config = StackConfig()
+        return _build_distribution_edge_candidates_for_date(
+            target_date=target_date,
+            output_dir=output_dir,
+            model_run_dir=resolved_model_run_dir,
+            config=config,
+        )
+
     model_path = resolved_model_run_dir / "baseline_model.json"
     ladder_probabilities_path = resolved_model_run_dir / "ladder_probabilities.jsonl"
     model_artifact = _load_json(model_path)

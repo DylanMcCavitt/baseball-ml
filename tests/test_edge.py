@@ -714,3 +714,188 @@ def test_build_edge_candidates_for_date_changes_market_devig_under_consensus_mod
         per_book_by_book["draftkings"]["edge_pct"]
         != consensus_by_book["draftkings"]["edge_pct"]
     )
+
+
+def _write_distribution_fixture(
+    tmp_path: Path,
+    *,
+    include_validation: bool = True,
+) -> Path:
+    odds_run_dir = (
+        tmp_path
+        / "normalized"
+        / "the_odds_api"
+        / "date=2026-04-20"
+        / "run=20260420T170000Z"
+    )
+    base_line = {
+        "official_date": "2026-04-20",
+        "captured_at": "2026-04-20T16:00:00Z",
+        "event_id": "event-1",
+        "game_pk": 9001,
+        "odds_matchup_key": "2026-04-20|BOS|NYY|2026-04-20T23:10:00Z",
+        "match_status": "matched",
+        "player_id": "mlb-pitcher:700001",
+        "pitcher_mlb_id": 700001,
+        "player_name": "Distribution Arm",
+        "market": "pitcher_strikeouts",
+        "line": 6.5,
+        "over_odds": -110,
+        "under_odds": -110,
+    }
+    _write_jsonl(
+        odds_run_dir / "prop_line_snapshots.jsonl",
+        [
+            {
+                **base_line,
+                "line_snapshot_id": "line-draftkings",
+                "sportsbook": "draftkings",
+                "sportsbook_title": "DraftKings",
+            },
+            {
+                **base_line,
+                "line_snapshot_id": "line-fanduel",
+                "sportsbook": "fanduel",
+                "sportsbook_title": "FanDuel",
+            },
+        ],
+    )
+
+    model_run_dir = (
+        tmp_path
+        / "normalized"
+        / "candidate_strikeout_models"
+        / "start=2026-04-16_end=2026-04-20"
+        / "run=20260420T150000Z"
+    )
+    _write_json(
+        model_run_dir / "selected_model.json",
+        {
+            "model_version": "starter-strikeout-candidate-v1",
+            "run_id": "20260420T150000Z",
+            "selected_candidate": "validation_top_two_mean_blend",
+        },
+    )
+    _write_jsonl(
+        model_run_dir / "model_outputs.jsonl",
+        [
+            {
+                "training_row_id": "training-row-1",
+                "feature_row_id": "training-row-1",
+                "official_date": "2026-04-20",
+                "split": "test",
+                "game_pk": 9001,
+                "pitcher_id": 700001,
+                "pitcher_name": "Distribution Arm",
+                "lineup_snapshot_id": "lineup-snapshot-1",
+                "features_as_of": "2026-04-20T15:30:00Z",
+                "projection_generated_at": "2026-04-20T15:45:00Z",
+                "selected_candidate": "validation_top_two_mean_blend",
+                "point_projection": 6.9,
+                "probability_distribution": [
+                    {"strikeouts": 0, "probability": 0.02},
+                    {"strikeouts": 1, "probability": 0.03},
+                    {"strikeouts": 2, "probability": 0.04},
+                    {"strikeouts": 3, "probability": 0.05},
+                    {"strikeouts": 4, "probability": 0.06},
+                    {"strikeouts": 5, "probability": 0.08},
+                    {"strikeouts": 6, "probability": 0.12},
+                    {"strikeouts": 7, "probability": 0.35},
+                    {"strikeouts": 8, "probability": 0.25},
+                ],
+                "confidence": {"predictive_sd": 1.4},
+            }
+        ],
+    )
+    if include_validation:
+        validation_dir = (
+            tmp_path
+            / "normalized"
+            / "model_only_walk_forward_validation"
+            / "start=2019-03-20_end=2026-04-24"
+            / "run=20260420T151000Z"
+        )
+        _write_json(
+            validation_dir / "validation_report.json",
+            {
+                "run_id": "20260420T151000Z",
+                "go_no_go_recommendation": {
+                    "recommendation": "conditional_go_for_betting_layer_rebuild",
+                    "reason": "Model-only validation produced stable confidence buckets.",
+                },
+                "proposed_later_wager_approval_thresholds": {
+                    "status": "thresholds_observed_from_calibration",
+                    "observed_median_confidence_bucket_error": 0.06,
+                    "candidate_confidence_buckets_for_later_approval": [
+                        {"confidence_bucket": "0.6_to_0.7", "event_count": 50}
+                    ],
+                    "line_buckets_to_exclude_or_discount": [],
+                },
+            },
+        )
+    return model_run_dir
+
+
+def test_build_edge_candidates_prices_rebuilt_distribution_and_groups_duplicates(
+    tmp_path,
+) -> None:
+    _write_distribution_fixture(tmp_path)
+
+    result = build_edge_candidates_for_date(
+        target_date=date(2026, 4, 20),
+        output_dir=tmp_path,
+        model_run_dir=(
+            tmp_path
+            / "normalized"
+            / "candidate_strikeout_models"
+            / "start=2026-04-16_end=2026-04-20"
+            / "run=20260420T150000Z"
+        ),
+    )
+    rows = [
+        json.loads(line)
+        for line in result.edge_candidates_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert result.scored_line_count == 2
+    assert result.actionable_count == 2
+    assert result.approved_count == 1
+    assert result.rejected_count == 1
+    assert rows[0]["approval_status"] == "approved"
+    assert rows[0]["model_projection"] == 6.9
+    assert rows[0]["model_confidence"] == 0.6
+    assert rows[0]["model_over_probability"] == 0.6
+    assert rows[0]["model_under_probability"] == 0.4
+    assert rows[0]["market_over_probability"] == 0.5
+    assert rows[0]["edge_pct"] == 0.1
+    assert rows[0]["validation_min_edge_pct"] == 0.06
+    assert rows[0]["correlation_group_size"] == 2
+    assert rows[0]["correlation_group_rank"] == 1
+    assert rows[1]["approval_status"] == "rejected"
+    assert rows[1]["correlation_group_rank"] == 2
+    assert "correlated duplicate" in rows[1]["approval_reason"]
+    assert len(rows[0]["probability_distribution"]) == 9
+
+
+def test_build_edge_candidates_rejects_distribution_rows_without_validation(
+    tmp_path,
+) -> None:
+    model_run_dir = _write_distribution_fixture(tmp_path, include_validation=False)
+
+    result = build_edge_candidates_for_date(
+        target_date=date(2026, 4, 20),
+        output_dir=tmp_path,
+        model_run_dir=model_run_dir,
+    )
+    rows = [
+        json.loads(line)
+        for line in result.edge_candidates_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+    assert result.actionable_count == 2
+    assert result.approved_count == 0
+    assert all(row["approval_status"] == "rejected" for row in rows)
+    assert all(row["validation_recommendation"] == "missing_validation_report" for row in rows)
+    assert "validation report" in rows[0]["approval_reason"]
