@@ -4,144 +4,124 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Active issue: `AGE-292` - validate model-only strikeout projections with
-  walk-forward splits
+- Active issue: `AGE-293` - fix scoreable historical market joins for
+  strikeout prop backtests
 - Current issue branch:
-  `dylanmccavitt2015/age-292-validate-model-only-strikeout-projections-with-walk-forward`
-- Base state: current `origin/main` at `4bd1429`
-  (`AGE-291: train candidate strikeout model families (#49)`).
-- Linear status was moved from `Todo` to `In Progress` at issue start.
-- Implementation state: code, docs, focused tests, baseline checks, and a real
-  model-only validation artifact run are complete. Remaining closeout steps are
-  commit, push, PR creation, and moving Linear to `In Review`.
+  `dylanmccavitt2015/age-293-fix-scoreable-historical-market-joins-for-strikeout-prop`
+- Base state: `HEAD` and `origin/main` both started at
+  `14932bf021a8dce6100f0fb5dfc22b1a6cdb48ea`.
+- PR: https://github.com/DylanMcCavitt/baseball-ml/pull/51
+- Implementation state: code, focused/runtime verification, commit, push, and
+  PR creation are complete. Linear is ready to remain in `In Review` for human
+  review.
 
-## What Changed In AGE-292
+## What Changed In AGE-293
 
-- Added `src/mlb_props_stack/model_validation.py`, a projection-only validation
-  runner over the AGE-291 candidate model families.
-- Added the CLI command:
+- Updated `build_walk_forward_backtest()` snapshot grouping so resolved
+  historical line snapshots are grouped by the stable MLB contract when both
+  `game_pk` and `pitcher_mlb_id` are present:
+  official date, sportsbook, market, exact line, MLB game, and MLB pitcher.
+- Kept unresolved or partially mapped snapshots on source identifiers instead
+  of fabricating joins.
+- Preserved alternate lines as separate groups by keeping exact line in the
+  grouping key.
+- Changed selected contract metadata to use the selected cutoff-safe snapshot
+  when a group contains historical source `event_id` or `player_id` drift.
+- Added explicit projection timestamp validation against the selected line
+  snapshot:
+  `features_as_of <= selected captured_at` and
+  `projection_generated_at <= selected captured_at`.
+- Added `timestamp_invalid_projection` as a separate skip reason before pricing
+  analysis can run.
+- Added join-audit fields for selected match status, selected game mapping,
+  selected pitcher mapping, and projection timestamp status.
+- Hardened mapping checks so blank mapping fields are treated as missing.
 
-```bash
-uv run python -m mlb_props_stack validate-model-only-strikeouts \
-  --start-date 2019-03-20 \
-  --end-date 2026-04-24 \
-  --output-dir data
-```
+## Coverage Evidence
 
-- The command writes:
-  - `validation_report.json`
-  - `validation_report.md`
-  - `validation_predictions.jsonl`
-  - `reproducibility_notes.md`
-- Headline validation uses rolling season walk-forward splits, not random
-  splits:
-  - train 2019-2022, validate 2023
-  - train 2019-2023, validate 2024
-  - train 2019-2024, validate 2025
-  - train 2020-2025, validate 2026-to-date when present
-- The report includes model-only MAE/RMSE, count-distribution log loss,
-  common-line log loss and Brier, calibration by line bucket and confidence
-  bucket, bias by pitcher tier, handedness, workload, rest/layoff, season, and
-  rule environment, recency sensitivity, observed calibration-derived threshold
-  proposals, and a go/no-go recommendation.
-- The command intentionally excludes wagering, CLV, ROI, edge candidates,
-  approval gates, and stake sizing.
+- Fixture-backed runtime smoke:
+  `/tmp/age293-backtest-runtime` contains a representative historical
+  `2026-04-20` replay with source event/player drift across snapshots for the
+  same resolved MLB game and pitcher.
+- CLI result:
+  `snapshot_groups=2`, `actionable_bets=1`, `skipped=1`,
+  `skip_reason_counts={"unmatched_event_mapping": 1}`.
+- Inspected artifacts under:
+  `/tmp/age293-backtest-runtime/normalized/walk_forward_backtest/start=2026-04-20_end=2026-04-20/run=20260428T005335Z/`
+  - `backtest_bets.jsonl`: one `actionable` row and one
+    `unmatched_event_mapping` row.
+  - `join_audit.jsonl`: scoreable row has selected game/pitcher mapping true
+    and `projection_timestamp_status=ok`; unmatched row has both selected
+    mapping flags false.
+  - `backtest_runs.jsonl`: row counts and skip reasons match the CLI summary.
 
-## Real AGE-292 Data Evidence
+## Historical Market Coverage Caveat
 
-Command:
-
-```bash
-rm -rf /tmp/age292-model-validation && UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run python -m mlb_props_stack validate-model-only-strikeouts --start-date 2019-03-20 --end-date 2026-04-24 --output-dir /tmp/age292-model-validation --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z --first-validation-season 2023
-```
-
-Result:
-
-- run:
-  `/tmp/age292-model-validation/normalized/model_only_walk_forward_validation/start=2019-03-20_end=2026-04-24/run=20260427T224022Z/`
-- joined rows: `31,729`
-- walk-forward splits: `4`
-- held-out prediction rows: `15,358`
-- recommendation: `no_go_betting_layer_still_blocked`
-- headline MAE: `2.001726`
-- headline RMSE: `2.492028`
-- mean bias: `-0.060645`
-- count log loss: `2.312353`
-- common-line log loss: `0.483954`
-- common-line Brier: `0.158808`
-- observed confidence/line threshold status:
-  `thresholds_observed_from_calibration`
-- blocker: canonical data had `0` joined pitcher-skill, lineup-matchup, and
-  workload/leash feature rows for the full validation window, so the report
-  keeps betting-layer work blocked despite scoreable model-only calibration.
-- inspected `validation_report.json`, `validation_report.md`, and
-  `validation_predictions.jsonl`; no betting, CLV, ROI, edge, approval, or
-  stake-sizing metrics were emitted.
+- This worktree has no persisted real historical Odds API market artifacts
+  beyond static data.
+- The canonical checkout at `/Users/dylanmccavitt/projects/nba-ml` also has no
+  `data/normalized/the_odds_api` or `data/normalized/starter_strikeout_baseline`
+  artifacts available during this session.
+- Therefore no real MLB season/date window can be certified here as having
+  sufficient market coverage for betting-layer validation.
+- The corrected path is verified for covered fixture data on `2026-04-20`.
+  Real season/date certification still requires backfilling or restoring
+  historical Odds API line artifacts plus a compatible starter-strikeout
+  baseline run.
 
 ## Files Changed
 
-- `README.md`
+- `src/mlb_props_stack/backtest.py`
+- `tests/test_backtest.py`
 - `docs/NEXT_SESSION_HANDOFF.md`
-- `docs/architecture.md`
-- `docs/modeling.md`
-- `docs/review_runtime_checks.md`
-- `src/mlb_props_stack/cli.py`
-- `src/mlb_props_stack/model_validation.py`
-- `tests/test_cli.py`
-- `tests/test_model_validation.py`
 
 ## Verification
 
 Commands run:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv sync --extra dev
-UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run pytest tests/test_model_validation.py tests/test_cli.py::test_model_only_validation_cli_renders_output_summary -q
-UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run pytest
-PYTHONPYCACHEPREFIX=/tmp/age292-pycache python3 -m compileall src tests
-UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run python -m mlb_props_stack
-rm -rf /tmp/age292-model-validation && UV_CACHE_DIR=/tmp/uv-cache /opt/homebrew/bin/uv run python -m mlb_props_stack validate-model-only-strikeouts --start-date 2019-03-20 --end-date 2026-04-24 --output-dir /tmp/age292-model-validation --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z --first-validation-season 2023
+/opt/homebrew/bin/uv sync --extra dev
+/opt/homebrew/bin/uv run pytest tests/test_backtest.py -q
+/opt/homebrew/bin/uv run pytest tests/test_runtime_smokes.py -q
+/opt/homebrew/bin/uv run pytest
+PYTHONPYCACHEPREFIX=/tmp/age293-pycache python3 -m compileall src tests
+/opt/homebrew/bin/uv run python -m mlb_props_stack
+/opt/homebrew/bin/uv --project /Users/dylanmccavitt/.codex/worktrees/symphony-nba-ml/AGE-293 run python -m mlb_props_stack build-walk-forward-backtest --start-date 2026-04-20 --end-date 2026-04-20 --output-dir /tmp/age293-backtest-runtime --cutoff-minutes-before-first-pitch 30
 ```
 
 Observed results:
 
-- `uv sync --extra dev` completed successfully with `UV_CACHE_DIR=/tmp/uv-cache`.
-- Focused tests: `2 passed`.
-- Full suite: `222 passed` with existing third-party MLflow/Pydantic warnings.
-- `python3 -m compileall src tests` completed successfully with
-  `PYTHONPYCACHEPREFIX=/tmp/age292-pycache`.
-- `python -m mlb_props_stack` printed the runtime configuration banner.
-- The first focused test attempt failed before sync with
-  `Failed to spawn: pytest`; this was the expected fresh-worktree missing-dev
-  dependency state and was resolved by `uv sync --extra dev`.
-- Real validation runtime completed successfully and produced the artifact run
-  listed above.
+- `uv sync --extra dev`: completed successfully.
+- Focused backtest tests: `5 passed` with existing third-party
+  MLflow/Pydantic warnings.
+- Runtime smoke tests: `5 passed` with existing third-party MLflow/Pydantic
+  warnings.
+- Full test suite: `224 passed` with existing third-party MLflow/Pydantic
+  warnings.
+- `compileall`: completed successfully.
+- `python -m mlb_props_stack`: printed the runtime configuration banner.
+- Fixture-backed CLI backtest: completed successfully with one scoreable row
+  and explicit unmatched-event audit output.
 
 ## Recommended Next Issue
 
-1. Keep betting-layer rebuild work blocked until full-window pitcher-skill,
-   lineup-matchup, and workload/leash feature artifacts are available and the
-   model-only validation is rerun with those feature joins.
-2. Then proceed to `AGE-293` - scoreable historical market joins only after the
-   model-only gate has a defensible go/no-go result with feature coverage.
+1. Backfill or restore real historical Odds API pitcher strikeout line
+   artifacts and compatible baseline probability artifacts for the intended
+   validation window.
+2. Rerun `build-walk-forward-backtest` on that real covered window and record
+   which dates/seasons produce scoreable rows.
+3. Keep downstream betting-layer validation blocked until real historical
+   coverage is certified and model-only validation has a defensible go/no-go
+   result with feature coverage.
 
 ## Constraints And Risks
 
-- GitHub DNS initially failed from this workspace for both SSH fetch and `gh`
-  API calls, so the branch started from the local completed AGE-291 branch.
-  Fetch later recovered and `origin/main` advanced to the AGE-291 squash commit
-  `4bd1429`; keep this branch based on that current remote main before PR.
-- The real validation run used the full starter-game dataset only because the
-  canonical checkout does not currently have full-window feature-layer artifacts.
-  The report records that feature-coverage gap and keeps betting-layer work
-  blocked.
-- Do not resume pricing, approval-gate, paper-tracking, or dashboard reconnect
-  work from this issue alone.
-- Do not use v0 artifacts, metrics, feature assumptions, or code paths as
-  current modeling evidence.
-
-## Deferred Or Superseded Issues
-
-- `AGE-293` waits for a model-only validation rerun with feature-layer coverage
-  or an explicit human decision to continue with the documented blocker.
-- `AGE-294` and `AGE-295` remain blocked behind `AGE-293`.
+- Do not treat the fixture-backed `2026-04-20` smoke as betting evidence.
+  It only proves the corrected historical join path and audit behavior.
+- Do not loosen timestamp guards. The implementation now rejects projections
+  whose `features_as_of` or `projection_generated_at` lands after the selected
+  sportsbook snapshot.
+- Do not fabricate event or pitcher joins when `game_pk` or `pitcher_mlb_id`
+  is missing or blank; those rows stay skipped with explicit reasons.
+- Do not resume pricing, approval-gate, paper-tracking, dashboard, or live
+  ingest work from this issue alone.
