@@ -424,6 +424,40 @@ available:
   the minimum edge cannot be lower than the observed calibration error, and the
   confidence bucket must be one of the validation-qualified buckets.
 
+AGE-311 adds the first single-command starter strikeout ML report:
+
+```bash
+uv run python -m mlb_props_stack build-starter-strikeout-ml-report \
+  --start-date 2019-03-20 \
+  --end-date 2026-04-24 \
+  --output-dir /tmp/age311-ml-report-historical \
+  --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
+```
+
+Artifacts land under:
+
+`data/normalized/starter_strikeout_ml_report/start=YYYY-MM-DD_end=YYYY-MM-DD/run=.../`
+
+Key artifacts:
+
+- `starter_strikeout_ml_report.json` and `starter_strikeout_ml_report.md`
+  summarize row counts, date-ordered train/validation/test windows, selected
+  feature columns, missing or excluded feature families, leakage/timestamp
+  status, held-out RMSE/MAE/Spearman rank correlation, bias slices, best/worst
+  prediction examples, and count/common-line probability quality
+- `starter_strikeout_ml_predictions.jsonl`
+  stores one prediction row per starter-game row with actual strikeouts, point
+  projection, error, exact-count probability, and common-line over/under
+  probabilities
+- `reproducibility_notes.md`
+  records the rerun command and scope guardrail
+
+This command does not add model families, feature families, sportsbook pricing,
+CLV, ROI, edge approvals, or stake sizing. It only consumes existing artifacts.
+When pitcher-skill, lineup-matchup, or workload/leash artifacts are missing, the
+report records that bottleneck explicitly and falls back to the dense
+starter-game context columns available in the canonical dataset.
+
 AGE-290 adds the workload, leash, and role-context layer over the same
 starter-game artifact. It emits one expected-opportunity row per starter-game
 under:

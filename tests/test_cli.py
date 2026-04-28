@@ -15,6 +15,7 @@ from mlb_props_stack.model_comparison import StarterStrikeoutModelComparisonResu
 from mlb_props_stack.model_validation import ModelOnlyWalkForwardValidationResult
 from mlb_props_stack.paper_tracking import DailyCandidateWorkflowResult
 from mlb_props_stack.pitcher_skill_features import PitcherSkillFeatureBuildResult
+from mlb_props_stack.starter_ml_report import StarterStrikeoutMLReportResult
 from mlb_props_stack.starter_dataset import StarterGameDatasetBuildResult
 from mlb_props_stack.workload_leash_features import WorkloadLeashFeatureBuildResult
 from tests.stage_gate_fixtures import seed_stage_gate_artifacts
@@ -514,6 +515,45 @@ def test_model_only_validation_cli_renders_output_summary(monkeypatch, tmp_path,
     assert "recommendation=no_go_betting_layer_still_blocked" in output
     assert "validation_report_path=" in output
     assert "validation_predictions_path=" in output
+
+
+def test_starter_strikeout_ml_report_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
+    result = StarterStrikeoutMLReportResult(
+        start_date=date(2026, 4, 1),
+        end_date=date(2026, 4, 8),
+        run_id="20260428T180000Z",
+        selected_candidate="poisson_glm_count_baseline",
+        row_count=32,
+        held_out_rmse=1.234567,
+        held_out_mae=0.987654,
+        report_path=tmp_path / "starter_strikeout_ml_report.json",
+        report_markdown_path=tmp_path / "starter_strikeout_ml_report.md",
+        predictions_path=tmp_path / "starter_strikeout_ml_predictions.jsonl",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.build_starter_strikeout_ml_report",
+        lambda **_: result,
+    )
+
+    main(
+        [
+            "build-starter-strikeout-ml-report",
+            "--start-date",
+            "2026-04-01",
+            "--end-date",
+            "2026-04-08",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert "Starter strikeout ML report complete for 2026-04-01 -> 2026-04-08" in output
+    assert "selected_candidate=poisson_glm_count_baseline" in output
+    assert "held_out_rmse=1.234567" in output
+    assert "report_markdown_path=" in output
 
 
 def test_edge_candidate_cli_renders_output_summary(monkeypatch, tmp_path, capsys):

@@ -66,6 +66,10 @@ from .pitcher_skill_features import (
     build_pitcher_skill_features,
 )
 from .stage_gates import evaluate_stage_gates, render_stage_gate_summary
+from .starter_ml_report import (
+    StarterStrikeoutMLReportResult,
+    build_starter_strikeout_ml_report,
+)
 from .starter_dataset import (
     DEFAULT_DIRECT_CHUNK_DAYS,
     StarterGameDatasetBuildResult,
@@ -396,6 +400,28 @@ def render_model_only_validation_summary(
         f"validation_report_path={result.report_path}",
         f"validation_report_markdown_path={result.report_markdown_path}",
         f"validation_predictions_path={result.predictions_path}",
+        f"reproducibility_notes_path={result.reproducibility_notes_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_starter_strikeout_ml_report_summary(
+    result: StarterStrikeoutMLReportResult,
+) -> str:
+    """Return a human-readable summary for one starter strikeout ML report."""
+    lines = [
+        (
+            "Starter strikeout ML report complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"selected_candidate={result.selected_candidate}",
+        f"rows={result.row_count}",
+        f"held_out_rmse={result.held_out_rmse:.6f}",
+        f"held_out_mae={result.held_out_mae:.6f}",
+        f"report_path={result.report_path}",
+        f"report_markdown_path={result.report_markdown_path}",
+        f"predictions_path={result.predictions_path}",
         f"reproducibility_notes_path={result.reproducibility_notes_path}",
     ]
     return "\n".join(lines)
@@ -982,6 +1008,52 @@ def build_argument_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    ml_report_parser = subparsers.add_parser(
+        "build-starter-strikeout-ml-report",
+        help=(
+            "Build a research-only starter strikeout ML report from existing "
+            "starter-game and feature artifacts."
+        ),
+    )
+    ml_report_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the ML report source window.",
+    )
+    ml_report_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the ML report source window.",
+    )
+    ml_report_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where starter, feature, and ML report artifacts live.",
+    )
+    ml_report_parser.add_argument(
+        "--dataset-run-dir",
+        default=None,
+        help=(
+            "Optional exact starter-game dataset run directory. Defaults to the "
+            "latest matching run, then latest available run."
+        ),
+    )
+    ml_report_parser.add_argument(
+        "--pitcher-skill-run-dir",
+        default=None,
+        help="Optional exact pitcher-skill feature run directory.",
+    )
+    ml_report_parser.add_argument(
+        "--lineup-matchup-run-dir",
+        default=None,
+        help="Optional exact lineup-matchup feature run directory.",
+    )
+    ml_report_parser.add_argument(
+        "--workload-leash-run-dir",
+        default=None,
+        help="Optional exact workload/leash feature run directory.",
+    )
+
     daily_candidates_parser = subparsers.add_parser(
         "build-daily-candidates",
         help=(
@@ -1326,6 +1398,19 @@ def main(argv: list[str] | None = None) -> int:
             max_training_seasons=args.max_training_seasons,
         )
         print(render_model_only_validation_summary(result))
+        return 0
+
+    if args.command == "build-starter-strikeout-ml-report":
+        result = build_starter_strikeout_ml_report(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            dataset_run_dir=args.dataset_run_dir,
+            pitcher_skill_run_dir=args.pitcher_skill_run_dir,
+            lineup_matchup_run_dir=args.lineup_matchup_run_dir,
+            workload_leash_run_dir=args.workload_leash_run_dir,
+        )
+        print(render_starter_strikeout_ml_report_summary(result))
         return 0
 
     if args.command == "build-daily-candidates":

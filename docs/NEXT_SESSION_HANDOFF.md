@@ -4,76 +4,110 @@
 
 - Repo: `nba-ml` (current product scope: `mlb-props-stack`)
 - Default branch: `main`
-- Active issue: `AGE-294` - rebuild betting layer against calibrated strikeout
-  distributions
+- Active issue: `AGE-311` - vertical slice: starter strikeout ML report
 - Current issue branch:
-  `dylanmccavitt2015/age-294-rebuild-betting-layer-against-calibrated-strikeout`
-- Base state: branch created from `origin/main` at the start of this issue
-  after `git fetch origin --prune`.
-- PR: https://github.com/DylanMcCavitt/baseball-ml/pull/52
+  `dylanmccavitt2015/age-311-vertical-slice-starter-strikeout-ml-report`
+- Base state: branch created from `origin/main` after `git fetch origin --prune`.
+- PR: https://github.com/DylanMcCavitt/baseball-ml/pull/55
 - Implementation state: code, docs, focused tests, full tests, compile check,
-  module smoke, fixture-backed edge CLI verification, initial commit, push, and
-  PR creation are complete.
+  module smoke, exact CLI smoke window, exact CLI historical window, and output
+  artifact inspection are complete.
 
-## What Changed In AGE-294
+## What Changed In AGE-311
 
-- Added `src/mlb_props_stack/betting.py` for rebuilt betting-layer helpers:
-  exact line pricing from full strikeout count distributions, validation-report
-  discovery, validation-derived approval gates, confidence buckets, and line
-  buckets.
-- Updated `build-edge-candidates` so it prefers rebuilt
-  `candidate_strikeout_models/.../model_outputs.jsonl` runs when available,
-  while preserving the legacy `starter_strikeout_baseline` ladder path.
-- Rebuilt edge rows now include model projection, full probability
-  distribution, model confidence, no-vig market probabilities, selected edge,
-  validation evidence, approval status, and approval/rejection reason.
-- Wager approval is blocked unless the latest model-only validation report says
-  `conditional_go_for_betting_layer_rebuild` and has
-  `thresholds_observed_from_calibration`.
-- Approval thresholds now come from validation evidence:
-  `validation_min_edge_pct` cannot be lower than the observed confidence-bucket
-  calibration error, and the row confidence bucket must be one of the
-  validation-qualified buckets.
-- Added pitcher/game/line duplicate grouping for rebuilt distribution rows.
-  Only the top row in a correlated group can remain approved; duplicate rows
-  are preserved with rejection reasons.
-- Extended candidate model output rows with `feature_row_id`,
-  `lineup_snapshot_id`, `features_as_of`, `projection_generated_at`, and
-  `model_input_refs` so betting-layer timing checks are auditable.
-- Updated `docs/architecture.md` and `docs/modeling.md` with the AGE-294
-  betting-layer contract.
+- Added `build-starter-strikeout-ml-report`, a research-only vertical report
+  command over the starter strikeout ML path.
+- Added `src/mlb_props_stack/starter_ml_report.py`, which reuses the existing
+  candidate model families and feature-join helpers. It does not add model
+  families, feature families, sportsbook pricing, CLV, ROI, edge approvals, or
+  stake sizing.
+- The report reads an existing `starter_strikeout_training_dataset` artifact and
+  any existing pitcher-skill, lineup-matchup, and workload/leash feature runs
+  that can be joined by `training_row_id`.
+- The report writes:
+  - `starter_strikeout_ml_report.json`
+  - `starter_strikeout_ml_report.md`
+  - `starter_strikeout_ml_predictions.jsonl`
+  - `reproducibility_notes.md`
+- The report includes row counts, date-ordered train/validation/test windows,
+  selected feature columns, missing or excluded feature families,
+  leakage/timestamp status, held-out RMSE/MAE/Spearman rank correlation, bias
+  slices, best/worst prediction examples, and count/common-line probability
+  quality.
+- Updated `docs/architecture.md`, `docs/modeling.md`, and
+  `docs/review_runtime_checks.md` with the new command and review expectations.
 
 ## Runtime Evidence
 
-- Fixture-backed CLI output directory:
-  `/tmp/age294-edge-runtime`
-- Command:
+### Tiny Smoke Window
+
+Command:
 
 ```bash
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-edge-candidates --date 2026-04-20 --output-dir /tmp/age294-edge-runtime --model-run-dir /tmp/age294-edge-runtime/normalized/candidate_strikeout_models/start=2026-04-16_end=2026-04-20/run=20260420T150000Z
+rm -rf /tmp/age311-ml-report-smoke && /opt/homebrew/bin/uv run python -m mlb_props_stack build-starter-strikeout-ml-report --start-date 2026-04-01 --end-date 2026-04-08 --output-dir /tmp/age311-ml-report-smoke --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
 ```
 
-- CLI result:
-  `line_snapshots=2`, `scored_lines=2`, `actionable_candidates=2`,
-  `approved_wagers=1`, `rejected_wagers=1`.
-- Inspected artifact:
-  `/tmp/age294-edge-runtime/normalized/edge_candidates/date=2026-04-20/run=20260428T011046Z/edge_candidates.jsonl`
-  - `line-draftkings`: approved, `model_projection=6.9`,
-    `model_over_probability=0.6`, `market_over_probability=0.5`,
-    `edge_pct=0.1`, `correlation_group_rank=1`.
-  - `line-fanduel`: rejected as a correlated duplicate in the same
-    pitcher/game/line group, `correlation_group_rank=2`.
+Result:
+
+- `rows=212`
+- `selected_candidate=boosted_stump_tree_ensemble`
+- `held_out_rmse=2.369923`
+- `held_out_mae=2.041447`
+- Report path:
+  `/tmp/age311-ml-report-smoke/normalized/starter_strikeout_ml_report/start=2026-04-01_end=2026-04-08/run=20260428T202921Z/starter_strikeout_ml_report.json`
+- Markdown path:
+  `/tmp/age311-ml-report-smoke/normalized/starter_strikeout_ml_report/start=2026-04-01_end=2026-04-08/run=20260428T202921Z/starter_strikeout_ml_report.md`
+- Predictions path:
+  `/tmp/age311-ml-report-smoke/normalized/starter_strikeout_ml_report/start=2026-04-01_end=2026-04-08/run=20260428T202921Z/starter_strikeout_ml_predictions.jsonl`
+
+### Meaningful Historical Window
+
+Command:
+
+```bash
+rm -rf /tmp/age311-ml-report-historical && /opt/homebrew/bin/uv run python -m mlb_props_stack build-starter-strikeout-ml-report --start-date 2019-03-20 --end-date 2026-04-24 --output-dir /tmp/age311-ml-report-historical --dataset-run-dir /Users/dylanmccavitt/projects/nba-ml/data/normalized/starter_strikeout_training_dataset/start=2019-03-20_end=2026-04-24/run=20260425T145813Z
+```
+
+Result:
+
+- `rows=31729`
+- `selected_candidate=validation_top_two_mean_blend`
+- `held_out_rmse=2.480789`
+- `held_out_mae=1.995703`
+- Held-out Spearman rank correlation: `0.065863`
+- Held-out rows: `12582`
+- Common-line probability events: `100656`
+- Common-line log loss: `0.482648`
+- Common-line Brier: `0.158335`
+- Count-distribution negative log likelihood: `2.309371`
+- Report path:
+  `/tmp/age311-ml-report-historical/normalized/starter_strikeout_ml_report/start=2019-03-20_end=2026-04-24/run=20260428T202955Z/starter_strikeout_ml_report.json`
+- Markdown path:
+  `/tmp/age311-ml-report-historical/normalized/starter_strikeout_ml_report/start=2019-03-20_end=2026-04-24/run=20260428T202955Z/starter_strikeout_ml_report.md`
+- Predictions path:
+  `/tmp/age311-ml-report-historical/normalized/starter_strikeout_ml_report/start=2019-03-20_end=2026-04-24/run=20260428T202955Z/starter_strikeout_ml_predictions.jsonl`
+
+Artifact inspection confirmed:
+
+- `starter_strikeout_ml_predictions.jsonl` has `31,729` rows.
+- The report records the canonical feature-layer bottleneck explicitly:
+  `pitcher_skill`, `matchup`, and `workload` were
+  `missing_artifact_or_no_joined_rows`.
+- No feature builders were run; the report fell back to dense starter-game
+  context columns: `context_home`, `context_pitch_clock_era`, and
+  `context_pitcher_right_handed`.
+- Leakage/timestamp status is `ok`; date splits are ordered, random splits are
+  not used, and same-game starter strikeouts are target-only.
 
 ## Files Changed
 
-- `src/mlb_props_stack/betting.py`
-- `src/mlb_props_stack/edge.py`
-- `src/mlb_props_stack/candidate_models.py`
+- `src/mlb_props_stack/starter_ml_report.py`
 - `src/mlb_props_stack/cli.py`
-- `tests/test_edge.py`
-- `tests/test_candidate_models.py`
+- `tests/test_starter_ml_report.py`
+- `tests/test_cli.py`
 - `docs/architecture.md`
 - `docs/modeling.md`
+- `docs/review_runtime_checks.md`
 - `docs/NEXT_SESSION_HANDOFF.md`
 
 ## Verification
@@ -82,52 +116,41 @@ Commands run:
 
 ```bash
 /opt/homebrew/bin/uv sync --extra dev
-/opt/homebrew/bin/uv run pytest tests/test_edge.py -q
-/opt/homebrew/bin/uv run pytest tests/test_candidate_models.py tests/test_model_validation.py -q
-/opt/homebrew/bin/uv run pytest tests/test_backtest.py tests/test_edge.py tests/test_runtime_smokes.py -q
-/opt/homebrew/bin/uv run pytest tests/test_candidate_models.py tests/test_edge.py -q
+/opt/homebrew/bin/uv run pytest tests/test_starter_ml_report.py tests/test_cli.py -q
+/opt/homebrew/bin/uv run pytest tests/test_runtime_smokes.py -q
 /opt/homebrew/bin/uv run pytest
-PYTHONPYCACHEPREFIX=/tmp/age294-pycache python3 -m compileall src tests
+PYTHONPYCACHEPREFIX=/tmp/age311-pycache python3 -m compileall src tests
 /opt/homebrew/bin/uv run python -m mlb_props_stack
-/opt/homebrew/bin/uv run python -m mlb_props_stack build-edge-candidates --date 2026-04-20 --output-dir /tmp/age294-edge-runtime --model-run-dir /tmp/age294-edge-runtime/normalized/candidate_strikeout_models/start=2026-04-16_end=2026-04-20/run=20260420T150000Z
 git diff --check
 ```
 
 Observed results:
 
 - `uv sync --extra dev`: completed successfully.
-- Focused edge tests: `14 passed`.
-- Candidate/model-validation focused tests: `3 passed`.
-- Backtest/edge/runtime smoke focused tests: `24 passed` with existing
-  third-party MLflow/Pydantic warnings.
-- Candidate + edge focused tests after contract assertions: `16 passed`.
-- Full suite: `226 passed` with existing third-party MLflow/Pydantic warnings.
+- Focused report/CLI tests: `19 passed`.
+- Runtime smoke tests: `5 passed` with existing third-party
+  MLflow/Pydantic warnings.
+- Full suite: `229 passed` with existing third-party MLflow/Pydantic warnings.
 - `compileall`: completed successfully.
 - `python -m mlb_props_stack`: printed the runtime configuration banner.
-- Fixture-backed `build-edge-candidates`: completed successfully and produced
-  the expected approved/rejected distribution rows.
 - `git diff --check`: no whitespace errors.
 
 ## Recommended Next Issue
 
-1. Backfill or restore real historical Odds API strikeout-line artifacts plus
-   compatible rebuilt candidate-model and model-only validation artifacts.
-2. Run `build-edge-candidates` against a real covered date and confirm approval
-   remains blocked unless validation evidence is present and green.
-3. Extend `build-walk-forward-backtest` to consume rebuilt distribution outputs
-   directly once real scoreable market coverage exists for a representative
-   historical window.
+Next vertical issue: restore or materialize the full historical pitcher-skill,
+lineup-matchup, and workload/leash feature artifacts for the canonical
+2019-03-20 through 2026-04-24 starter dataset, then rerun
+`build-starter-strikeout-ml-report` with those feature run directories and
+compare the report against this dense-context fallback.
 
 ## Constraints And Risks
 
-- Do not treat the `/tmp/age294-edge-runtime` fixture as betting evidence. It
-  proves the rebuilt betting-layer code path and artifact shape only.
-- Real season/date betting-layer validation is still blocked by the handoff
-  caveat from AGE-293: this worktree and the canonical checkout did not have
-  restored real historical Odds API market artifacts available.
-- Do not loosen approval gates to force output. Missing validation, no-go
-  validation, missing projection timestamps, and correlated duplicate lines
-  remain explicit rejections.
-- CLV and ROI reporting remain separated in the walk-forward backtest artifacts;
-  they are not used to tune the projection model or validation-derived approval
-  thresholds.
+- Do not treat the AGE-311 metrics as betting readiness. This report is
+  projection-only research evidence.
+- The meaningful historical report currently uses dense starter-game context
+  only because the expected feature-layer artifacts were not present under the
+  canonical data directory available to this worktree.
+- Do not start a full feature-builder rebuild casually in the next thread.
+  Prove bounded runtime on a small window first, then expand deliberately.
+- Keep same-game Statcast outcomes target-only; do not introduce them as
+  features.
