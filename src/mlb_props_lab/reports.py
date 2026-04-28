@@ -51,6 +51,7 @@ def generate_feature_report(
     grouped = features_by_family(registry)
     visuals = []
     statcast_manifest = _latest_statcast_manifest(Path(output_dir) / issue)
+    target_manifest = _latest_target_manifest(Path(output_dir) / issue)
 
     overview_visual = visuals_root / "feature_family_coverage.svg"
     _write_family_coverage_svg(overview_visual, summary)
@@ -66,10 +67,15 @@ def generate_feature_report(
         for visual in statcast_manifest.get("visuals", []):
             visual_path = statcast_root / visual
             visuals.append(_relative_path(visual_path, report_root))
+    if target_manifest:
+        target_root = Path(target_manifest["_manifest_path"]).parent
+        for visual in target_manifest.get("visuals", []):
+            visual_path = target_root / visual
+            visuals.append(_relative_path(visual_path, report_root))
 
     report_md = report_root / "report.md"
     report_md.write_text(
-        _render_markdown_report(registry, summary, visuals, statcast_manifest),
+        _render_markdown_report(registry, summary, visuals, statcast_manifest, target_manifest),
         encoding="utf-8",
     )
 
@@ -93,6 +99,8 @@ def generate_feature_report(
             statcast_manifest,
             report_root,
         )
+    if target_manifest:
+        manifest["target_dataset_run"] = _target_manifest_summary(target_manifest, report_root)
     (report_root / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -105,6 +113,7 @@ def _render_markdown_report(
     summary: dict[str, dict[str, int]],
     visuals: list[str],
     statcast_manifest: dict[str, Any] | None = None,
+    target_manifest: dict[str, Any] | None = None,
 ) -> str:
     lines = [
         "# Source-Backed Feature Registry Report",
@@ -177,6 +186,50 @@ def _render_markdown_report(
         if statcast_manifest.get("limitations"):
             lines.extend(["", "Limitations:", ""])
             lines.extend(f"- {limitation}" for limitation in statcast_manifest["limitations"])
+    if target_manifest:
+        target_root = Path(target_manifest["_manifest_path"]).parent
+        target_summary = target_manifest["summary"]
+        target_table = _relative_path(target_root / target_manifest["target_table"], target_root)
+        audit = _relative_path(target_root / target_manifest["audit"], target_root)
+        rejected_rows = _relative_path(
+            target_root / target_manifest["rejected_rows"],
+            target_root,
+        )
+        lines.extend(
+            [
+                "",
+                "## Pitcher Start Target Dataset Evidence",
+                "",
+                f"Run: `{target_manifest['run_id']}`",
+                f"Raw rows: `{target_summary['raw_row_count']}`",
+                f"Accepted target rows: `{target_summary['accepted_row_count']}`",
+                f"Rejected rows: `{target_summary['rejected_row_count']}`",
+                f"Missing targets: `{target_summary['missing_target_count']}`",
+                f"Duplicate starts: `{target_summary['duplicate_start_count']}`",
+                f"Target table: `{target_table}`",
+                f"Audit: `{audit}`",
+                f"Rejected rows: `{rejected_rows}`",
+                "",
+                "Field separation:",
+                "",
+            ]
+        )
+        field_groups = target_manifest["field_groups"]
+        lines.extend(
+            [
+                f"- Pregame fields: `{len(field_groups['pregame_fields'])}`",
+                f"- Start metadata fields: `{len(field_groups['start_metadata_fields'])}`",
+                f"- Completion fields: `{len(field_groups['completion_fields'])}`",
+                f"- Target fields: `{len(field_groups['target_fields'])}`",
+                "",
+                "Timestamp rules:",
+                "",
+            ]
+        )
+        lines.extend(f"- {rule}" for rule in target_manifest["timestamp_rules"])
+        if target_manifest.get("limitations"):
+            lines.extend(["", "Limitations:", ""])
+            lines.extend(f"- {limitation}" for limitation in target_manifest["limitations"])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -275,6 +328,19 @@ def _latest_statcast_manifest(issue_root: Path) -> dict[str, Any] | None:
     return max(manifests, key=lambda manifest: manifest.get("generated_at", ""))
 
 
+def _latest_target_manifest(issue_root: Path) -> dict[str, Any] | None:
+    candidates = sorted(issue_root.glob("*/pitcher_start_target_manifest.json"))
+    manifests = []
+    for path in candidates:
+        with path.open(encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        manifest["_manifest_path"] = path
+        manifests.append(manifest)
+    if not manifests:
+        return None
+    return max(manifests, key=lambda manifest: manifest.get("generated_at", ""))
+
+
 def _statcast_manifest_summary(manifest: dict[str, Any], report_root: Path) -> dict[str, Any]:
     statcast_root = Path(manifest["_manifest_path"]).parent
     return {
@@ -286,6 +352,21 @@ def _statcast_manifest_summary(manifest: dict[str, Any], report_root: Path) -> d
         "target_count": manifest["target_count"],
         "materialized_feature_ids": manifest["materialized_feature_ids"],
         "gap_feature_ids": manifest.get("gap_feature_ids", []),
+        "limitations": manifest.get("limitations", []),
+    }
+
+
+def _target_manifest_summary(manifest: dict[str, Any], report_root: Path) -> dict[str, Any]:
+    target_root = Path(manifest["_manifest_path"]).parent
+    return {
+        "run_id": manifest["run_id"],
+        "manifest": _relative_path(Path(manifest["_manifest_path"]), report_root),
+        "target_table": _relative_path(target_root / manifest["target_table"], report_root),
+        "audit": _relative_path(target_root / manifest["audit"], report_root),
+        "rejected_rows": _relative_path(target_root / manifest["rejected_rows"], report_root),
+        "summary": manifest["summary"],
+        "field_groups": manifest["field_groups"],
+        "timestamp_rules": manifest["timestamp_rules"],
         "limitations": manifest.get("limitations", []),
     }
 

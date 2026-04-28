@@ -60,3 +60,24 @@ def test_cli_builds_statcast_feature_sample(tmp_path: Path) -> None:
     assert exit_code == 0
     assert (tmp_path / "AGE-317" / "sample" / "statcast_feature_manifest.json").exists()
     assert (tmp_path / "AGE-317" / "sample" / "statcast_features.csv").exists()
+
+
+def test_cli_builds_pitcher_start_target_sample(tmp_path: Path) -> None:
+    exit_code = main(
+        [
+            "targets",
+            "build",
+            "--issue",
+            "AGE-319",
+            "--output-dir",
+            str(tmp_path),
+            "--run-id",
+            "target-sample",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (
+        tmp_path / "AGE-319" / "target-sample" / "pitcher_start_target_manifest.json"
+    ).exists()
+    assert (tmp_path / "AGE-319" / "target-sample" / "pitcher_start_targets.csv").exists()

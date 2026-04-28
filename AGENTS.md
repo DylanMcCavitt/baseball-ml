@@ -24,6 +24,7 @@ uv sync --extra dev
 uv run pytest
 uv run ruff check
 uv run python -m mlb_props_lab feature-registry validate
+uv run python -m mlb_props_lab targets build --issue TARGET-SAMPLE
 uv run python -m mlb_props_lab statcast build-features --issue STATCAST-SAMPLE
 uv run python -m mlb_props_lab report features --issue FEATURE-RESEARCH
 uv run python -m mlb_props_lab dashboard
@@ -35,6 +36,7 @@ uv run python -m mlb_props_lab dashboard
 - Every registered feature needs source fields, formula, timestamp cutoff,
   missing-value policy, leakage risk, and a required visual.
 - Use only information available before the game or odds snapshot being scored.
+- Keep post-game target labels out of pre-game feature fields and reports.
 - Source-backed does not mean model-approved. Features must survive walk-forward
   validation, ablation, calibration checks, and out-of-time stability checks.
 

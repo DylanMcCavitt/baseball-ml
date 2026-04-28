@@ -5,6 +5,7 @@ from mlb_props_lab.dashboard import build_dashboard
 from mlb_props_lab.feature_registry import REQUIRED_FAMILIES
 from mlb_props_lab.reports import generate_feature_report
 from mlb_props_lab.statcast_features import build_statcast_feature_artifacts
+from mlb_props_lab.targets import build_pitcher_start_target_artifacts
 
 
 def test_feature_report_writes_manifest_markdown_and_family_visuals(tmp_path: Path) -> None:
@@ -64,3 +65,26 @@ def test_feature_report_links_latest_statcast_feature_evidence(tmp_path: Path) -
     assert "../sample/visuals/statcast_pitcher_skill.svg" in manifest["visuals"]
     assert "Materialized Statcast Feature Evidence" in report
     assert "projected_lineup_handedness_mix" in report
+
+
+def test_feature_report_links_latest_target_dataset_evidence(tmp_path: Path) -> None:
+    build_pitcher_start_target_artifacts(
+        issue="AGE-319",
+        output_dir=tmp_path,
+        run_id="target-sample",
+    )
+
+    report_root = generate_feature_report(
+        issue="AGE-319",
+        output_dir=tmp_path,
+        run_id="review",
+    )
+
+    manifest = json.loads((report_root / "manifest.json").read_text(encoding="utf-8"))
+    report = (report_root / "report.md").read_text(encoding="utf-8")
+
+    assert manifest["target_dataset_run"]["run_id"] == "target-sample"
+    assert manifest["target_dataset_run"]["summary"]["accepted_row_count"] == 2
+    assert "../target-sample/visuals/pitcher_start_target_quality.svg" in manifest["visuals"]
+    assert "Pitcher Start Target Dataset Evidence" in report
+    assert "Duplicate starts: `1`" in report
