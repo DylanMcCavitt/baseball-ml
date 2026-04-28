@@ -10,9 +10,10 @@
   `dylanmccavitt2015/age-294-rebuild-betting-layer-against-calibrated-strikeout`
 - Base state: branch created from `origin/main` at the start of this issue
   after `git fetch origin --prune`.
-- PR: pending creation after commit and push.
+- PR: https://github.com/DylanMcCavitt/baseball-ml/pull/52
 - Implementation state: code, docs, focused tests, full tests, compile check,
-  module smoke, and fixture-backed edge CLI verification are complete.
+  module smoke, fixture-backed edge CLI verification, initial commit, push, and
+  PR creation are complete.
 
 ## What Changed In AGE-294
 
