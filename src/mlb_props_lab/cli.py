@@ -7,6 +7,7 @@ from pathlib import Path
 from mlb_props_lab.dashboard import build_dashboard
 from mlb_props_lab.feature_registry import load_registry, validate_registry
 from mlb_props_lab.reports import generate_feature_report
+from mlb_props_lab.statcast_features import build_statcast_feature_artifacts
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,6 +35,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=Path("artifacts/dashboard/index.html"),
     )
 
+    statcast_parser = subparsers.add_parser("statcast")
+    statcast_subparsers = statcast_parser.add_subparsers(dest="statcast_command", required=True)
+    statcast_build_parser = statcast_subparsers.add_parser("build-features")
+    statcast_build_parser.add_argument("--issue", required=True)
+    statcast_build_parser.add_argument("--output-dir", type=Path, default=Path("artifacts/reports"))
+    statcast_build_parser.add_argument("--run-id", default=None)
+    statcast_build_parser.add_argument("--pitches", type=Path, default=None)
+    statcast_build_parser.add_argument("--targets", type=Path, default=None)
+    statcast_build_parser.add_argument("--registry-path", type=Path, default=None)
+
     return parser
 
 
@@ -47,6 +58,8 @@ def main(argv: list[str] | None = None) -> int:
         path = build_dashboard(args.reports_root, args.output)
         print(f"Dashboard written to {path}")
         return 0
+    if args.command == "statcast":
+        return _handle_statcast(args)
     return 2
 
 
@@ -75,5 +88,22 @@ def _handle_report(args: argparse.Namespace) -> int:
             registry_path=args.registry_path,
         )
         print(f"Feature report written to {path}")
+        return 0
+    return 2
+
+
+def _handle_statcast(args: argparse.Namespace) -> int:
+    if args.statcast_command == "build-features":
+        build = build_statcast_feature_artifacts(
+            issue=args.issue,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            pitches_path=args.pitches,
+            targets_path=args.targets,
+            registry_path=args.registry_path,
+        )
+        print(f"Statcast feature build written to {build.report_root}")
+        print(f"Feature matrix: {build.feature_matrix_path}")
+        print(f"Coverage: {build.coverage_path}")
         return 0
     return 2

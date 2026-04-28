@@ -4,6 +4,7 @@ from pathlib import Path
 from mlb_props_lab.dashboard import build_dashboard
 from mlb_props_lab.feature_registry import REQUIRED_FAMILIES
 from mlb_props_lab.reports import generate_feature_report
+from mlb_props_lab.statcast_features import build_statcast_feature_artifacts
 
 
 def test_feature_report_writes_manifest_markdown_and_family_visuals(tmp_path: Path) -> None:
@@ -45,3 +46,21 @@ def test_dashboard_indexes_feature_report_manifest(tmp_path: Path) -> None:
     assert "MLB Props Reboot Dashboard" in dashboard
     assert "FEATURE-RESEARCH" in dashboard
     assert "feature_registry" in dashboard
+
+
+def test_feature_report_links_latest_statcast_feature_evidence(tmp_path: Path) -> None:
+    build_statcast_feature_artifacts(issue="AGE-317", output_dir=tmp_path, run_id="sample")
+
+    report_root = generate_feature_report(
+        issue="AGE-317",
+        output_dir=tmp_path,
+        run_id="review",
+    )
+
+    manifest = json.loads((report_root / "manifest.json").read_text(encoding="utf-8"))
+    report = (report_root / "report.md").read_text(encoding="utf-8")
+
+    assert manifest["materialized_feature_run"]["run_id"] == "sample"
+    assert "../sample/visuals/statcast_pitcher_skill.svg" in manifest["visuals"]
+    assert "Materialized Statcast Feature Evidence" in report
+    assert "projected_lineup_handedness_mix" in report

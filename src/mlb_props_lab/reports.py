@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from html import escape
 from pathlib import Path
@@ -49,6 +50,7 @@ def generate_feature_report(
     summary = family_summary(registry)
     grouped = features_by_family(registry)
     visuals = []
+    statcast_manifest = _latest_statcast_manifest(Path(output_dir) / issue)
 
     overview_visual = visuals_root / "feature_family_coverage.svg"
     _write_family_coverage_svg(overview_visual, summary)
@@ -59,8 +61,17 @@ def generate_feature_report(
         _write_family_detail_svg(visual_path, family, features)
         visuals.append(visual_path.relative_to(report_root).as_posix())
 
+    if statcast_manifest:
+        statcast_root = Path(statcast_manifest["_manifest_path"]).parent
+        for visual in statcast_manifest.get("visuals", []):
+            visual_path = statcast_root / visual
+            visuals.append(_relative_path(visual_path, report_root))
+
     report_md = report_root / "report.md"
-    report_md.write_text(_render_markdown_report(registry, summary, visuals), encoding="utf-8")
+    report_md.write_text(
+        _render_markdown_report(registry, summary, visuals, statcast_manifest),
+        encoding="utf-8",
+    )
 
     manifest = {
         "schema_version": "2026-04-28.1",
@@ -77,6 +88,11 @@ def generate_feature_report(
         "report": "report.md",
         "sources": registry["sources"],
     }
+    if statcast_manifest:
+        manifest["materialized_feature_run"] = _statcast_manifest_summary(
+            statcast_manifest,
+            report_root,
+        )
     (report_root / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -88,6 +104,7 @@ def _render_markdown_report(
     registry: dict[str, Any],
     summary: dict[str, dict[str, int]],
     visuals: list[str],
+    statcast_manifest: dict[str, Any] | None = None,
 ) -> str:
     lines = [
         "# Source-Backed Feature Registry Report",
@@ -125,6 +142,41 @@ def _render_markdown_report(
                 "",
             ]
         )
+    if statcast_manifest:
+        statcast_root = Path(statcast_manifest["_manifest_path"]).parent
+        feature_matrix = _relative_path(
+            statcast_root / statcast_manifest["feature_matrix"],
+            statcast_root,
+        )
+        coverage = _relative_path(statcast_root / statcast_manifest["coverage"], statcast_root)
+        skipped_rows = _relative_path(
+            statcast_root / statcast_manifest["skipped_rows"],
+            statcast_root,
+        )
+        lines.extend(
+            [
+                "",
+                "## Materialized Statcast Feature Evidence",
+                "",
+                f"Run: `{statcast_manifest['run_id']}`",
+                f"Targets: `{statcast_manifest['target_count']}`",
+                f"Feature matrix: `{feature_matrix}`",
+                f"Coverage: `{coverage}`",
+                f"Skipped rows: `{skipped_rows}`",
+                "",
+                "Materialized registered feature IDs:",
+                "",
+            ]
+        )
+        lines.extend(
+            f"- `{feature_id}`" for feature_id in statcast_manifest["materialized_feature_ids"]
+        )
+        if statcast_manifest.get("gap_feature_ids"):
+            lines.extend(["", "Reported source gaps:", ""])
+            lines.extend(f"- `{feature_id}`" for feature_id in statcast_manifest["gap_feature_ids"])
+        if statcast_manifest.get("limitations"):
+            lines.extend(["", "Limitations:", ""])
+            lines.extend(f"- {limitation}" for limitation in statcast_manifest["limitations"])
     return "\n".join(lines).rstrip() + "\n"
 
 
@@ -208,3 +260,35 @@ def _write_family_detail_svg(path: Path, family: str, features: list[dict[str, A
 </svg>
 """
     path.write_text(svg, encoding="utf-8")
+
+
+def _latest_statcast_manifest(issue_root: Path) -> dict[str, Any] | None:
+    candidates = sorted(issue_root.glob("*/statcast_feature_manifest.json"))
+    manifests = []
+    for path in candidates:
+        with path.open(encoding="utf-8") as fh:
+            manifest = json.load(fh)
+        manifest["_manifest_path"] = path
+        manifests.append(manifest)
+    if not manifests:
+        return None
+    return max(manifests, key=lambda manifest: manifest.get("generated_at", ""))
+
+
+def _statcast_manifest_summary(manifest: dict[str, Any], report_root: Path) -> dict[str, Any]:
+    statcast_root = Path(manifest["_manifest_path"]).parent
+    return {
+        "run_id": manifest["run_id"],
+        "manifest": _relative_path(Path(manifest["_manifest_path"]), report_root),
+        "feature_matrix": _relative_path(statcast_root / manifest["feature_matrix"], report_root),
+        "coverage": _relative_path(statcast_root / manifest["coverage"], report_root),
+        "skipped_rows": _relative_path(statcast_root / manifest["skipped_rows"], report_root),
+        "target_count": manifest["target_count"],
+        "materialized_feature_ids": manifest["materialized_feature_ids"],
+        "gap_feature_ids": manifest.get("gap_feature_ids", []),
+        "limitations": manifest.get("limitations", []),
+    }
+
+
+def _relative_path(target: Path, base: Path) -> str:
+    return os.path.relpath(target, start=base).replace(os.sep, "/")

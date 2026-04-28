@@ -41,3 +41,22 @@ def test_cli_generates_feature_report_and_dashboard(tmp_path: Path) -> None:
     assert dashboard_exit == 0
     assert (reports_root / "FEATURE-RESEARCH" / "test-run" / "manifest.json").exists()
     assert dashboard_path.exists()
+
+
+def test_cli_builds_statcast_feature_sample(tmp_path: Path) -> None:
+    exit_code = main(
+        [
+            "statcast",
+            "build-features",
+            "--issue",
+            "AGE-317",
+            "--output-dir",
+            str(tmp_path),
+            "--run-id",
+            "sample",
+        ]
+    )
+
+    assert exit_code == 0
+    assert (tmp_path / "AGE-317" / "sample" / "statcast_feature_manifest.json").exists()
+    assert (tmp_path / "AGE-317" / "sample" / "statcast_features.csv").exists()

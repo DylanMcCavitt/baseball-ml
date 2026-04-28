@@ -24,6 +24,7 @@ uv sync --extra dev
 uv run pytest
 uv run ruff check
 uv run python -m mlb_props_lab feature-registry validate
+uv run python -m mlb_props_lab statcast build-features --issue STATCAST-SAMPLE
 uv run python -m mlb_props_lab report features --issue FEATURE-RESEARCH
 uv run python -m mlb_props_lab dashboard
 ```
