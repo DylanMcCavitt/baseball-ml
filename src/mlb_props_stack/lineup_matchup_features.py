@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -211,17 +212,16 @@ def _lineup_from_starter_row(starter_row: dict[str, Any]) -> tuple[tuple[int, ..
 
 
 def _pitcher_hand_from_history(
-    pitcher_rows: list[StatcastPitchRecord], *, target_date: date
+    pitcher_rows: list[StatcastPitchRecord], *, target_date: date | None = None
 ) -> str | None:
-    for row in sorted(
-        (
-            row
-            for row in pitcher_rows
-            if _row_date(row) < target_date and row.p_throws
-        ),
-        key=lambda row: (row.game_date, row.game_pk, row.at_bat_number, row.pitch_number),
-        reverse=True,
-    ):
+    rows = (
+        pitcher_rows
+        if target_date is None
+        else [row for row in pitcher_rows if _row_date(row) < target_date]
+    )
+    for row in reversed(rows):
+        if not row.p_throws:
+            continue
         return row.p_throws
     return None
 
@@ -310,12 +310,12 @@ def _pitch_type_weakness(rows: list[StatcastPitchRecord]) -> dict[str, dict[str,
 
 
 def _pitcher_pitch_type_usage(
-    pitcher_rows: list[StatcastPitchRecord], *, target_date: date
+    pitcher_rows: list[StatcastPitchRecord], *, target_date: date | None = None
 ) -> dict[str, float]:
     counts: Counter[str] = Counter(
         row.pitch_type
         for row in pitcher_rows
-        if _row_date(row) < target_date and row.pitch_type
+        if (target_date is None or _row_date(row) < target_date) and row.pitch_type
     )
     total = sum(counts.values())
     if total <= 0:
@@ -379,6 +379,34 @@ def _pitcher_index(
         )
         for pitcher_id, pitcher_rows in indexed.items()
     }
+
+
+def _history_dates_by_id(
+    indexed_rows: dict[int, list[StatcastPitchRecord]],
+) -> dict[int, list[date]]:
+    return {
+        row_id: [_row_date(row) for row in rows]
+        for row_id, rows in indexed_rows.items()
+    }
+
+
+def _rows_before_date(
+    rows: list[StatcastPitchRecord],
+    row_dates: list[date],
+    cutoff_date: date,
+) -> list[StatcastPitchRecord]:
+    return rows[:bisect_left(row_dates, cutoff_date)]
+
+
+def _rows_between_dates(
+    rows: list[StatcastPitchRecord],
+    row_dates: list[date],
+    start_date: date,
+    end_date: date,
+) -> list[StatcastPitchRecord]:
+    start_index = bisect_left(row_dates, start_date)
+    end_index = bisect_left(row_dates, end_date)
+    return rows[start_index:end_index]
 
 
 def _team_lineup_index(
@@ -477,7 +505,9 @@ def _lineup_feature_row(
     *,
     starter_row: dict[str, Any],
     batter_rows_by_id: dict[int, list[StatcastPitchRecord]],
+    batter_dates_by_id: dict[int, list[date]],
     pitcher_rows_by_id: dict[int, list[StatcastPitchRecord]],
+    pitcher_dates_by_id: dict[int, list[date]],
     team_lineups: dict[str, list[tuple[date, int, tuple[int, ...]]]],
     prior_k_rate: float | None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -493,26 +523,32 @@ def _lineup_feature_row(
             lineup_ids = projected
             lineup_status = "projected_from_prior_team_game"
     pitcher_id = int(starter_row["pitcher_id"])
-    pitcher_rows = pitcher_rows_by_id.get(pitcher_id, [])
-    pitcher_hand = starter_row.get("pitcher_hand") or _pitcher_hand_from_history(
-        pitcher_rows, target_date=target_date
+    all_pitcher_rows = pitcher_rows_by_id.get(pitcher_id, [])
+    pitcher_dates = pitcher_dates_by_id.get(pitcher_id, [])
+    pitcher_rows = _rows_before_date(
+        all_pitcher_rows,
+        pitcher_dates,
+        target_date,
     )
-    pitcher_usage = _pitcher_pitch_type_usage(
-        pitcher_rows, target_date=target_date
-    )
+    pitcher_hand = starter_row.get("pitcher_hand") or _pitcher_hand_from_history(pitcher_rows)
+    pitcher_usage = _pitcher_pitch_type_usage(pitcher_rows)
     batter_feature_rows: list[dict[str, Any]] = []
     lineup_size = len(lineup_ids)
     recent_cutoff = target_date - timedelta(days=RECENT_FORM_DAYS)
     for slot_index, batter_id in enumerate(lineup_ids):
-        batter_rows = sorted(
-            (
-                row
-                for row in batter_rows_by_id.get(batter_id, [])
-                if _row_date(row) < target_date
-            ),
-            key=lambda row: (row.game_date, row.game_pk, row.at_bat_number, row.pitch_number),
+        all_batter_rows = batter_rows_by_id.get(batter_id, [])
+        batter_dates = batter_dates_by_id.get(batter_id, [])
+        batter_rows = _rows_before_date(
+            all_batter_rows,
+            batter_dates,
+            target_date,
         )
-        recent_rows = [row for row in batter_rows if _row_date(row) >= recent_cutoff]
+        recent_rows = _rows_between_dates(
+            all_batter_rows,
+            batter_dates,
+            recent_cutoff,
+            target_date,
+        )
         batter_feature_rows.append(
             _batter_feature_row(
                 starter_row=starter_row,
@@ -847,12 +883,24 @@ def build_lineup_matchup_features(
         dataset_run_dir=explicit_dataset_dir,
     )
     dataset_rows = _load_jsonl(resolved_dataset_run_dir / "starter_game_training_dataset.jsonl")
+    if not dataset_rows:
+        raise FileNotFoundError(
+            "No starter-game dataset rows found at "
+            f"{resolved_dataset_run_dir / 'starter_game_training_dataset.jsonl'}"
+        )
     pitch_rows = _load_pitch_records_from_manifest(
         resolved_dataset_run_dir / "source_manifest.jsonl",
         latest_needed_date=end_date,
     )
+    if not pitch_rows:
+        raise FileNotFoundError(
+            "No source pitch rows found from "
+            f"{resolved_dataset_run_dir / 'source_manifest.jsonl'}"
+        )
     batter_rows_by_id = _batter_index(pitch_rows)
     pitcher_rows_by_id = _pitcher_index(pitch_rows)
+    batter_dates_by_id = _history_dates_by_id(batter_rows_by_id)
+    pitcher_dates_by_id = _history_dates_by_id(pitcher_rows_by_id)
     team_lineups = _team_lineup_index(pitch_rows)
     target_dates = [
         date.fromisoformat(str(row["official_date"]))
@@ -877,7 +925,9 @@ def build_lineup_matchup_features(
         lineup_row, row_batter_rows = _lineup_feature_row(
             starter_row=starter_row,
             batter_rows_by_id=batter_rows_by_id,
+            batter_dates_by_id=batter_dates_by_id,
             pitcher_rows_by_id=pitcher_rows_by_id,
+            pitcher_dates_by_id=pitcher_dates_by_id,
             team_lineups=team_lineups,
             prior_k_rate=league_priors[target_date],
         )

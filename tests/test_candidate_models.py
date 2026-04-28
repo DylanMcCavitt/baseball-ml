@@ -218,6 +218,65 @@ def test_train_candidate_strikeout_models_writes_comparable_distribution_report(
     )
 
 
+def test_train_candidate_models_can_join_multiple_feature_runs(tmp_path) -> None:
+    (
+        start_date,
+        end_date,
+        dataset_run_dir,
+        pitcher_run_dir,
+        lineup_run_dir,
+        workload_run_dir,
+    ) = _seed_candidate_training_window(tmp_path)
+    lineup_rows = [
+        json.loads(line)
+        for line in lineup_run_dir.joinpath("lineup_matchup_features.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    lineup_run_dir.joinpath("lineup_matchup_features.jsonl").unlink()
+    first_chunk = [
+        row for row in lineup_rows if str(row["official_date"]) <= "2026-04-03"
+    ]
+    second_chunk = [
+        row for row in lineup_rows if str(row["official_date"]) > "2026-04-03"
+    ]
+    _write_jsonl(
+        tmp_path
+        / "normalized"
+        / "lineup_matchup_features"
+        / "start=2026-04-01_end=2026-04-03"
+        / "run=20260426T120201Z"
+        / "lineup_matchup_features.jsonl",
+        first_chunk,
+    )
+    _write_jsonl(
+        tmp_path
+        / "normalized"
+        / "lineup_matchup_features"
+        / "start=2026-04-04_end=2026-04-06"
+        / "run=20260426T120202Z"
+        / "lineup_matchup_features.jsonl",
+        second_chunk,
+    )
+
+    result = train_candidate_strikeout_models(
+        start_date=start_date,
+        end_date=end_date,
+        output_dir=tmp_path,
+        dataset_run_dir=dataset_run_dir,
+        pitcher_skill_run_dir=pitcher_run_dir,
+        workload_leash_run_dir=workload_run_dir,
+        now=lambda: datetime(2026, 4, 26, 18, 0, tzinfo=UTC),
+    )
+
+    report = json.loads(result.report_path.read_text(encoding="utf-8"))
+
+    assert report["source_artifacts"]["lineup_matchup_matches"] == 24
+    assert report["source_artifacts"]["lineup_matchup_run_dir"] is None
+    assert len(report["source_artifacts"]["lineup_matchup_run_dirs"]) == 2
+
+
 def test_strikeout_line_probabilities_supports_arbitrary_lines() -> None:
     result = strikeout_line_probabilities([0.10, 0.20, 0.30, 0.40], 1.75)
 

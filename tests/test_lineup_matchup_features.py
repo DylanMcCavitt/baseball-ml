@@ -6,6 +6,8 @@ from io import StringIO
 import json
 from pathlib import Path
 
+import pytest
+
 from mlb_props_stack.lineup_matchup_features import build_lineup_matchup_features
 
 
@@ -190,6 +192,19 @@ def test_lineup_matchup_features_project_prior_lineup_without_same_game_leakage(
     assert {row["batter_id"] for row in batter_rows} == {101, 102}
     assert report["missingness"]["no_confirmed_lineup"] == 1
     assert report["missingness"]["no_projection"] == 0
+
+
+def test_lineup_matchup_features_fail_when_dataset_artifact_is_missing(tmp_path):
+    missing_run_dir = tmp_path / "missing-dataset-run"
+
+    with pytest.raises(FileNotFoundError, match="No starter-game dataset rows"):
+        build_lineup_matchup_features(
+            start_date=date(2024, 4, 1),
+            end_date=date(2024, 4, 3),
+            output_dir=tmp_path,
+            dataset_run_dir=missing_run_dir,
+            now=lambda: datetime(2026, 4, 25, 18, 30, tzinfo=UTC),
+        )
 
 
 def test_lineup_matchup_features_respect_handedness_and_pitch_type_matchups(tmp_path):
