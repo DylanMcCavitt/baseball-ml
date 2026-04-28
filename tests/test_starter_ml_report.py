@@ -207,6 +207,10 @@ def test_build_starter_strikeout_ml_report_writes_human_readable_artifacts(tmp_p
     assert report["scope_guardrails"]["feature_builders_run"] is False
     assert report["scope_guardrails"]["betting_decisions_included"] is False
     assert prediction_rows[0]["common_line_probabilities"]
+    assert prediction_rows[0]["feature_row_id"] == prediction_rows[0]["training_row_id"]
+    assert prediction_rows[0]["features_as_of"] is not None
+    assert prediction_rows[0]["projection_generated_at"] == prediction_rows[0]["features_as_of"]
+    assert "model_input_refs" in prediction_rows[0]
     assert "Starter Strikeout ML Report" in markdown
 
 

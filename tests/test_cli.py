@@ -10,6 +10,7 @@ from mlb_props_stack.ingest import (
     StatcastFeatureIngestResult,
 )
 from mlb_props_stack.lineup_matchup_features import LineupMatchupFeatureBuildResult
+from mlb_props_stack.market_report import StarterStrikeoutMarketReportResult
 from mlb_props_stack.modeling import StarterStrikeoutBaselineTrainingResult
 from mlb_props_stack.model_comparison import StarterStrikeoutModelComparisonResult
 from mlb_props_stack.model_validation import ModelOnlyWalkForwardValidationResult
@@ -688,6 +689,76 @@ def test_walk_forward_backtest_cli_renders_output_summary(monkeypatch, tmp_path,
         in output
     )
     assert "bet_reporting_path=" in output
+
+
+def test_starter_strikeout_market_report_cli_renders_output_summary(
+    monkeypatch, tmp_path, capsys
+):
+    backtest_result = WalkForwardBacktestResult(
+        start_date=date(2026, 4, 18),
+        end_date=date(2026, 4, 20),
+        run_id="20260421T200000Z",
+        mlflow_run_id="mlflow-market-backtest-run-1",
+        mlflow_experiment_name="mlb-props-stack-walk-forward-backtest",
+        model_version="starter_strikeout_market_report_v1:20260428T202955Z",
+        model_run_id="adapted_model_run",
+        cutoff_minutes_before_first_pitch=30,
+        backtest_bets_path=tmp_path / "backtest_bets.jsonl",
+        bet_reporting_path=tmp_path / "bet_reporting.jsonl",
+        backtest_runs_path=tmp_path / "backtest_runs.jsonl",
+        join_audit_path=tmp_path / "join_audit.jsonl",
+        clv_summary_path=tmp_path / "clv_summary.jsonl",
+        roi_summary_path=tmp_path / "roi_summary.jsonl",
+        edge_bucket_summary_path=tmp_path / "edge_bucket_summary.jsonl",
+        reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
+        snapshot_group_count=2,
+        actionable_bet_count=1,
+        below_threshold_count=0,
+        skipped_count=1,
+        skip_reason_counts={"unmatched_event_mapping": 1},
+    )
+    result = StarterStrikeoutMarketReportResult(
+        start_date=date(2026, 4, 18),
+        end_date=date(2026, 4, 20),
+        run_id="20260421T200000Z",
+        report_path=tmp_path / "starter_strikeout_market_report.json",
+        report_markdown_path=tmp_path / "starter_strikeout_market_report.md",
+        adapted_model_run_dir=tmp_path / "adapted_model_run",
+        backtest_result=backtest_result,
+        scoreable_row_count=1,
+        skipped_row_count=1,
+    )
+
+    monkeypatch.setattr(
+        "mlb_props_stack.cli.build_starter_strikeout_market_report",
+        lambda **_: result,
+    )
+
+    main(
+        [
+            "build-starter-strikeout-market-report",
+            "--start-date",
+            "2026-04-18",
+            "--end-date",
+            "2026-04-20",
+            "--output-dir",
+            str(tmp_path),
+            "--ml-report-run-dir",
+            str(tmp_path / "ml-report-run"),
+            "--odds-input-dir",
+            str(tmp_path / "odds"),
+        ]
+    )
+    output = capsys.readouterr().out
+
+    assert (
+        "Starter strikeout sportsbook market report complete for 2026-04-18 -> 2026-04-20"
+        in output
+    )
+    assert "scoreable_rows=1" in output
+    assert "skipped_rows=1" in output
+    assert 'skip_reason_counts={"unmatched_event_mapping": 1}' in output
+    assert "market_report_path=" in output
     assert "join_audit_path=" in output
     assert "clv_summary_path=" in output
     assert "roi_summary_path=" in output

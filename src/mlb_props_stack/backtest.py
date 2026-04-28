@@ -946,6 +946,7 @@ def build_walk_forward_backtest(
     end_date: date,
     output_dir: Path | str = "data",
     model_run_dir: Path | str | None = None,
+    odds_input_dir: Path | str | None = None,
     cutoff_minutes_before_first_pitch: int = 30,
     now: Callable[[], datetime] | None = None,
     tracking_config: TrackingConfig | None = None,
@@ -960,6 +961,7 @@ def build_walk_forward_backtest(
     config = StackConfig()
     tracking = tracking_config or TrackingConfig()
     output_root = Path(output_dir)
+    odds_root = Path(odds_input_dir) if odds_input_dir is not None else output_root
     target_dates = _requested_dates(start_date, end_date)
     resolved_model_run_dir = (
         Path(model_run_dir)
@@ -1010,7 +1012,7 @@ def build_walk_forward_backtest(
         ): row
         for row in _load_jsonl_rows(outcomes_path)
     }
-    snapshot_groups = _load_snapshot_groups_for_dates(output_root, target_dates=target_dates)
+    snapshot_groups = _load_snapshot_groups_for_dates(odds_root, target_dates=target_dates)
 
     backtest_rows: list[dict[str, Any]] = []
     audit_rows: list[dict[str, Any]] = []
@@ -1353,6 +1355,65 @@ def build_walk_forward_backtest(
                     data_split=split_name,
                     feature_row_id=str(training_row["training_row_id"]),
                     lineup_snapshot_id=str(lineup_snapshot_id),
+                )
+            )
+            continue
+
+        projection_timestamp_value = (
+            probability_row.get("projection_generated_at")
+            or training_row.get("projection_generated_at")
+            or training_row.get("features_as_of")
+        )
+        if not _has_join_value(training_row.get("features_as_of")) or not _has_join_value(
+            projection_timestamp_value
+        ):
+            skipped_count += 1
+            evaluation_status = "missing_projection_timestamp"
+            _increment_reason_count(
+                skip_reason_counts,
+                reason_key=evaluation_status,
+            )
+            reason = (
+                "The matched projection is missing features_as_of or "
+                "projection_generated_at, so the backtest cannot verify "
+                "projection timing against the selected line snapshot."
+            )
+            backtest_rows.append(
+                {
+                    **base_row,
+                    "evaluation_status": evaluation_status,
+                    "bet_placed": False,
+                    "data_split": split_name,
+                    "feature_row_id": str(training_row["training_row_id"]),
+                    "lineup_snapshot_id": str(lineup_snapshot_id),
+                    "model_train_from_date": probability_row.get("model_train_from_date"),
+                    "model_train_through_date": probability_row.get(
+                        "model_train_through_date"
+                    ),
+                    "reason": reason,
+                }
+            )
+            audit_rows.append(
+                _audit_row(
+                    base_row,
+                    audit_status=evaluation_status,
+                    reason=reason,
+                    eligible_snapshot_count=len(eligible_rows),
+                    late_snapshot_count=late_snapshot_count,
+                    selected_snapshot_before_cutoff=True,
+                    selected_snapshot_is_latest_before_cutoff=True,
+                    data_split=split_name,
+                    model_train_from_date=probability_row.get("model_train_from_date"),
+                    model_train_through_date=probability_row.get(
+                        "model_train_through_date"
+                    ),
+                    calibration_fit_through_date=probability_row.get(
+                        "calibration_fit_through_date"
+                    ),
+                    feature_row_id=str(training_row["training_row_id"]),
+                    lineup_snapshot_id=str(lineup_snapshot_id),
+                    outcome_id=str(outcome_row["outcome_id"]),
+                    outcome_available=True,
                 )
             )
             continue
@@ -1708,8 +1769,15 @@ def build_walk_forward_backtest(
         f"--end-date {end_date.isoformat()} "
         f"--output-dir {quote(str(output_dir))} "
         f"--model-run-dir {quote(str(resolved_model_run_dir))} "
+        + (
+            f"--odds-input-dir {quote(str(odds_input_dir))} "
+            if odds_input_dir is not None
+            else ""
+        )
+        + (
         "--cutoff-minutes-before-first-pitch "
         f"{cutoff_minutes_before_first_pitch}"
+        )
     )
     run_name = (
         f"walk-forward-backtest-{start_date.isoformat()}-"
@@ -1800,6 +1868,7 @@ def build_walk_forward_backtest(
                 "training_dataset_path": training_dataset_path,
                 "raw_vs_calibrated_path": raw_vs_calibrated_path,
                 "outcomes_path": outcomes_path,
+                "odds_input_dir": odds_root,
             },
             "reporting_artifacts": {
                 "bet_reporting_path": bet_reporting_path,
@@ -1858,6 +1927,7 @@ def build_walk_forward_backtest(
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "output_dir": str(output_dir),
+                "odds_input_dir": str(odds_root),
                 "resolved_model_run_dir": str(resolved_model_run_dir),
                 "cutoff_minutes_before_first_pitch": cutoff_minutes_before_first_pitch,
             }

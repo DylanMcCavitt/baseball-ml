@@ -57,6 +57,10 @@ from .model_comparison import (
     compare_starter_strikeout_baselines,
     render_model_comparison_summary,
 )
+from .market_report import (
+    StarterStrikeoutMarketReportResult,
+    build_starter_strikeout_market_report,
+)
 from .paper_tracking import (
     DailyCandidateWorkflowResult,
     build_daily_candidate_workflow,
@@ -423,6 +427,38 @@ def render_starter_strikeout_ml_report_summary(
         f"report_markdown_path={result.report_markdown_path}",
         f"predictions_path={result.predictions_path}",
         f"reproducibility_notes_path={result.reproducibility_notes_path}",
+    ]
+    return "\n".join(lines)
+
+
+def render_starter_strikeout_market_report_summary(
+    result: StarterStrikeoutMarketReportResult,
+) -> str:
+    """Return a human-readable summary for one sportsbook market report."""
+    lines = [
+        (
+            "Starter strikeout sportsbook market report complete for "
+            f"{result.start_date.isoformat()} -> {result.end_date.isoformat()}"
+        ),
+        f"run_id={result.run_id}",
+        f"scoreable_rows={result.scoreable_row_count}",
+        f"skipped_rows={result.skipped_row_count}",
+        f"snapshot_groups={result.backtest_result.snapshot_group_count}",
+        f"actionable_rows={result.backtest_result.actionable_bet_count}",
+        f"below_threshold_rows={result.backtest_result.below_threshold_count}",
+        (
+            "skip_reason_counts="
+            f"{json.dumps(result.backtest_result.skip_reason_counts, sort_keys=True)}"
+        ),
+        f"market_report_path={result.report_path}",
+        f"market_report_markdown_path={result.report_markdown_path}",
+        f"adapted_model_run_dir={result.adapted_model_run_dir}",
+        f"backtest_bets_path={result.backtest_result.backtest_bets_path}",
+        f"join_audit_path={result.backtest_result.join_audit_path}",
+        f"clv_summary_path={result.backtest_result.clv_summary_path}",
+        f"roi_summary_path={result.backtest_result.roi_summary_path}",
+        f"edge_bucket_summary_path={result.backtest_result.edge_bucket_summary_path}",
+        f"reproducibility_notes_path={result.backtest_result.reproducibility_notes_path}",
     ]
     return "\n".join(lines)
 
@@ -1054,6 +1090,59 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="Optional exact workload/leash feature run directory.",
     )
 
+    market_report_parser = subparsers.add_parser(
+        "build-starter-strikeout-market-report",
+        help=(
+            "Join starter strikeout ML report predictions to historical "
+            "sportsbook lines and write a research-only market report."
+        ),
+    )
+    market_report_parser.add_argument(
+        "--start-date",
+        required=True,
+        help="Earliest official date to include in the market report.",
+    )
+    market_report_parser.add_argument(
+        "--end-date",
+        required=True,
+        help="Latest official date to include in the market report.",
+    )
+    market_report_parser.add_argument(
+        "--output-dir",
+        default="data",
+        help="Directory where market report and backtest artifacts will be written.",
+    )
+    market_report_parser.add_argument(
+        "--ml-report-run-dir",
+        default=None,
+        help=(
+            "Optional exact starter_strikeout_ml_report run directory from AGE-311. "
+            "Defaults to the latest matching run under output-dir."
+        ),
+    )
+    market_report_parser.add_argument(
+        "--predictions-path",
+        default=None,
+        help=(
+            "Optional exact starter_strikeout_ml_predictions.jsonl path. "
+            "Overrides --ml-report-run-dir for the prediction source."
+        ),
+    )
+    market_report_parser.add_argument(
+        "--odds-input-dir",
+        default=None,
+        help=(
+            "Optional directory to read normalized/the_odds_api snapshots from. "
+            "Defaults to output-dir."
+        ),
+    )
+    market_report_parser.add_argument(
+        "--cutoff-minutes-before-first-pitch",
+        type=int,
+        default=StackConfig().backtest_cutoff_minutes_before_first_pitch,
+        help="Latest allowed odds snapshot timestamp before scheduled first pitch.",
+    )
+
     daily_candidates_parser = subparsers.add_parser(
         "build-daily-candidates",
         help=(
@@ -1157,6 +1246,14 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help=(
             "Optional explicit starter_strikeout_baseline run directory. "
             "Defaults to the latest run covering the full requested date window."
+        ),
+    )
+    backtest_parser.add_argument(
+        "--odds-input-dir",
+        default=None,
+        help=(
+            "Optional directory to read normalized/the_odds_api snapshots from. "
+            "Defaults to output-dir."
         ),
     )
     backtest_parser.add_argument(
@@ -1413,6 +1510,19 @@ def main(argv: list[str] | None = None) -> int:
         print(render_starter_strikeout_ml_report_summary(result))
         return 0
 
+    if args.command == "build-starter-strikeout-market-report":
+        result = build_starter_strikeout_market_report(
+            start_date=date.fromisoformat(args.start_date),
+            end_date=date.fromisoformat(args.end_date),
+            output_dir=args.output_dir,
+            ml_report_run_dir=args.ml_report_run_dir,
+            predictions_path=args.predictions_path,
+            odds_input_dir=args.odds_input_dir,
+            cutoff_minutes_before_first_pitch=args.cutoff_minutes_before_first_pitch,
+        )
+        print(render_starter_strikeout_market_report_summary(result))
+        return 0
+
     if args.command == "build-daily-candidates":
         result = build_daily_candidate_workflow(
             target_date=(
@@ -1454,6 +1564,7 @@ def main(argv: list[str] | None = None) -> int:
             end_date=date.fromisoformat(args.end_date),
             output_dir=args.output_dir,
             model_run_dir=args.model_run_dir,
+            odds_input_dir=args.odds_input_dir,
             cutoff_minutes_before_first_pitch=args.cutoff_minutes_before_first_pitch,
         )
         print(render_walk_forward_backtest_summary(result))
