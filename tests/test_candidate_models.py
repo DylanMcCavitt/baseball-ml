@@ -173,6 +173,7 @@ def test_train_candidate_strikeout_models_writes_comparable_distribution_report(
 
     report = json.loads(result.report_path.read_text(encoding="utf-8"))
     selected_model = json.loads(result.selected_model_path.read_text(encoding="utf-8"))
+    output_markdown = result.model_outputs_markdown_path.read_text(encoding="utf-8")
     output_rows = [
         json.loads(line)
         for line in result.model_outputs_path.read_text(encoding="utf-8").splitlines()
@@ -198,6 +199,9 @@ def test_train_candidate_strikeout_models_writes_comparable_distribution_report(
     )
     assert report["candidates"][result.selected_candidate]["feature_group_contributions"]
     assert selected_model["selected_candidate"] == result.selected_candidate
+    assert selected_model["model_outputs_markdown_path"] == str(
+        result.model_outputs_markdown_path
+    )
     assert output_rows[0]["point_projection"] >= 0.0
     assert output_rows[0]["probability_distribution"]
     assert output_rows[0]["line_probability_contract"]["supports_arbitrary_lines"] is True
@@ -206,6 +210,11 @@ def test_train_candidate_strikeout_models_writes_comparable_distribution_report(
     assert "Candidate Strikeout Model Comparison" in result.report_markdown_path.read_text(
         encoding="utf-8"
     )
+    assert "Candidate Strikeout Model Outputs" in output_markdown
+    assert "Projection-only report" in output_markdown
+    assert "## Split Summary" in output_markdown
+    assert "## Example Pitcher Outputs" in output_markdown
+    assert "Pitcher" in output_markdown
 
 
 def test_strikeout_line_probabilities_supports_arbitrary_lines() -> None:

@@ -375,6 +375,7 @@ def render_candidate_strikeout_model_summary(
         f"model_comparison_markdown_path={result.report_markdown_path}",
         f"selected_model_path={result.selected_model_path}",
         f"model_outputs_path={result.model_outputs_path}",
+        f"model_outputs_markdown_path={result.model_outputs_markdown_path}",
         f"reproducibility_notes_path={result.reproducibility_notes_path}",
     ]
     return "\n".join(lines)

@@ -47,6 +47,7 @@ class CandidateStrikeoutModelTrainingResult:
     report_markdown_path: Path
     selected_model_path: Path
     model_outputs_path: Path
+    model_outputs_markdown_path: Path
     reproducibility_notes_path: Path
 
 
@@ -1125,6 +1126,150 @@ def _model_output_rows(
     return output_rows
 
 
+def _format_probability(value: float) -> str:
+    return f"{value:.1%}"
+
+
+def _format_float(value: float) -> str:
+    return f"{value:.2f}"
+
+
+def _output_line_probability(row: dict[str, Any], line: float) -> dict[str, Any]:
+    for probabilities in row["over_under_probabilities"]:
+        if float(probabilities["line"]) == line:
+            return probabilities
+    raise ValueError(f"Output row is missing line {line}.")
+
+
+def _render_model_outputs_markdown(
+    *,
+    report: dict[str, Any],
+    output_rows: list[dict[str, Any]],
+) -> str:
+    selected_candidate = report["selection"]["selected_candidate"]
+    lines = [
+        "# Candidate Strikeout Model Outputs",
+        "",
+        f"- Run ID: `{report['run_id']}`",
+        f"- Window: `{report['date_window']['start_date']}` to `{report['date_window']['end_date']}`",
+        f"- Selected candidate: `{selected_candidate}`",
+        f"- Output rows: `{len(output_rows)}`",
+        "",
+        (
+            "Projection-only report. These rows show count-distribution model "
+            "outputs and common-line probabilities; they do not include sportsbook "
+            "prices, edge ranking, wager approval, or stake sizing."
+        ),
+        "",
+        "## Split Summary",
+        "",
+        "| Split | Rows | Avg Projection | Avg Actual | Avg Abs Error | Avg Predictive SD |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    split_order = ("train", "validation", "test")
+    for split in split_order:
+        split_rows = [row for row in output_rows if row["split"] == split]
+        if not split_rows:
+            continue
+        avg_projection = sum(row["point_projection"] for row in split_rows) / len(split_rows)
+        avg_actual = sum(row["actual_strikeouts"] for row in split_rows) / len(split_rows)
+        avg_abs_error = (
+            sum(abs(row["point_projection"] - row["actual_strikeouts"]) for row in split_rows)
+            / len(split_rows)
+        )
+        avg_sd = sum(row["confidence"]["predictive_sd"] for row in split_rows) / len(split_rows)
+        lines.append(
+            "| {split} | {rows} | {avg_projection} | {avg_actual} | {avg_abs_error} | {avg_sd} |".format(
+                split=split,
+                rows=len(split_rows),
+                avg_projection=_format_float(avg_projection),
+                avg_actual=_format_float(avg_actual),
+                avg_abs_error=_format_float(avg_abs_error),
+                avg_sd=_format_float(avg_sd),
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Average Over Probability By Common Line",
+            "",
+            "| Line | All Rows | Validation | Test |",
+            "| ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for line in COMMON_PROP_LINES:
+        all_avg = sum(
+            _output_line_probability(row, line)["over_probability"] for row in output_rows
+        ) / len(output_rows)
+        split_values: dict[str, str] = {}
+        for split in ("validation", "test"):
+            split_rows = [row for row in output_rows if row["split"] == split]
+            if split_rows:
+                split_avg = sum(
+                    _output_line_probability(row, line)["over_probability"]
+                    for row in split_rows
+                ) / len(split_rows)
+                split_values[split] = _format_probability(split_avg)
+            else:
+                split_values[split] = "n/a"
+        lines.append(
+            f"| {line:.1f} | {_format_probability(all_avg)} | "
+            f"{split_values['validation']} | {split_values['test']} |"
+        )
+
+    sample_rows = sorted(
+        output_rows,
+        key=lambda row: (
+            0 if row["split"] in {"validation", "test"} else 1,
+            -row["point_projection"],
+            row["official_date"],
+            str(row.get("pitcher_name") or ""),
+        ),
+    )[:25]
+    lines.extend(
+        [
+            "",
+            "## Example Pitcher Outputs",
+            "",
+            "| Date | Split | Pitcher | Actual K | Projected K | 80% Range | Over 4.5 | Over 5.5 | Over 6.5 |",
+            "| --- | --- | --- | ---: | ---: | --- | ---: | ---: | ---: |",
+        ]
+    )
+    for row in sample_rows:
+        interval = row["confidence"]["central_80_interval"]
+        lines.append(
+            "| {date} | {split} | {pitcher} | {actual} | {projected} | {interval} | {over45} | {over55} | {over65} |".format(
+                date=row["official_date"],
+                split=row["split"],
+                pitcher=row.get("pitcher_name") or f"pitcher_id={row.get('pitcher_id')}",
+                actual=row["actual_strikeouts"],
+                projected=_format_float(row["point_projection"]),
+                interval=f"{interval[0]}-{interval[1]}",
+                over45=_format_probability(
+                    _output_line_probability(row, 4.5)["over_probability"]
+                ),
+                over55=_format_probability(
+                    _output_line_probability(row, 5.5)["over_probability"]
+                ),
+                over65=_format_probability(
+                    _output_line_probability(row, 6.5)["over_probability"]
+                ),
+            )
+        )
+    lines.extend(
+        [
+            "",
+            (
+                "The full machine-readable output remains in `model_outputs.jsonl`; "
+                "this Markdown file is a compact reading layer over the same rows."
+            ),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _render_markdown(report: dict[str, Any]) -> str:
     lines = [
         "# Candidate Strikeout Model Comparison",
@@ -1293,6 +1438,7 @@ def train_candidate_strikeout_models(
     report_markdown_path = normalized_root / "model_comparison.md"
     selected_model_path = normalized_root / "selected_model.json"
     model_outputs_path = normalized_root / "model_outputs.jsonl"
+    model_outputs_markdown_path = normalized_root / "model_outputs.md"
     reproducibility_notes_path = normalized_root / "reproducibility_notes.md"
     rerun_command = _rerun_command(
         start_date=start_date,
@@ -1385,18 +1531,21 @@ def train_candidate_strikeout_models(
         "line_probability_contract": report["output_contract"],
         "model_comparison_path": report_path,
         "model_outputs_path": model_outputs_path,
+        "model_outputs_markdown_path": model_outputs_markdown_path,
     }
+    model_output_rows = _model_output_rows(
+        rows,
+        selected_candidate,
+        split_by_date=split_by_date,
+        generated_at=generated_at,
+    )
     _write_json(report_path, report)
     _write_text(report_markdown_path, _render_markdown(report))
     _write_json(selected_model_path, selected_model)
-    _write_jsonl(
-        model_outputs_path,
-        _model_output_rows(
-            rows,
-            selected_candidate,
-            split_by_date=split_by_date,
-            generated_at=generated_at,
-        ),
+    _write_jsonl(model_outputs_path, model_output_rows)
+    _write_text(
+        model_outputs_markdown_path,
+        _render_model_outputs_markdown(report=report, output_rows=model_output_rows),
     )
     _write_text(
         reproducibility_notes_path,
@@ -1424,5 +1573,6 @@ def train_candidate_strikeout_models(
         report_markdown_path=report_markdown_path,
         selected_model_path=selected_model_path,
         model_outputs_path=model_outputs_path,
+        model_outputs_markdown_path=model_outputs_markdown_path,
         reproducibility_notes_path=reproducibility_notes_path,
     )

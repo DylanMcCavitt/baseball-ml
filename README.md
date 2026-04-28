@@ -572,6 +572,9 @@ The candidate command compares Poisson, negative-binomial, plate-appearance
 rate, boosted-stump tree-equivalent, and validation-selected blend families.
 It writes count distributions and common-line probabilities only; it does not
 price sportsbook lines, rank edges, approve wagers, or imply live readiness.
+The run also writes `model_outputs.md`, a compact human-readable view over
+`model_outputs.jsonl` with split summaries, common-line probability averages,
+and example pitcher projections.
 
 ## Model-Only Walk-Forward Validation
 

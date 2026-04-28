@@ -517,9 +517,11 @@ def test_candidate_model_cli_smoke_writes_distribution_artifacts(
     report = json.loads(result.report_path.read_text(encoding="utf-8"))
 
     assert result.model_outputs_path.exists()
+    assert result.model_outputs_markdown_path.exists()
     assert report["selection"]["selected_candidate"] == result.selected_candidate
     assert "Candidate strikeout model training complete" in output
     assert f"model_outputs_path={result.model_outputs_path}" in output
+    assert f"model_outputs_markdown_path={result.model_outputs_markdown_path}" in output
 
 
 def test_stage_gate_cli_smoke_writes_readiness_report(tmp_path, capsys) -> None:

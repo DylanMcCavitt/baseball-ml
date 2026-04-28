@@ -169,6 +169,7 @@ For candidate strikeout model-family work, open:
 - `model_comparison.md`
 - `selected_model.json`
 - `model_outputs.jsonl`
+- `model_outputs.md`
 - `reproducibility_notes.md`
 
 Confirm that every trained family used the same date split, the selected
@@ -177,8 +178,9 @@ common-line log-loss and Brier scores, calibration curves, distribution
 diagnostics, and feature-group contribution summaries. Spot-check
 `model_outputs.jsonl` for a full count distribution, arbitrary line
 over/under probability support from the count distribution, and uncertainty
-intervals. Confirm the command did not emit edge candidates, wager approval
-rows, or betting decisions.
+intervals. Open `model_outputs.md` for the readable split summary, common-line
+probability averages, and example pitcher projections. Confirm the command did
+not emit edge candidates, wager approval rows, or betting decisions.
 
 For model-only walk-forward validation work, open:
 

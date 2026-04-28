@@ -447,6 +447,7 @@ def test_candidate_strikeout_models_cli_renders_output_summary(monkeypatch, tmp_
         report_markdown_path=tmp_path / "model_comparison.md",
         selected_model_path=tmp_path / "selected_model.json",
         model_outputs_path=tmp_path / "model_outputs.jsonl",
+        model_outputs_markdown_path=tmp_path / "model_outputs.md",
         reproducibility_notes_path=tmp_path / "reproducibility_notes.md",
     )
 
@@ -474,6 +475,7 @@ def test_candidate_strikeout_models_cli_renders_output_summary(monkeypatch, tmp_
     assert "model_comparison_path=" in output
     assert "selected_model_path=" in output
     assert "model_outputs_path=" in output
+    assert "model_outputs_markdown_path=" in output
 
 
 def test_model_only_validation_cli_renders_output_summary(monkeypatch, tmp_path, capsys):
