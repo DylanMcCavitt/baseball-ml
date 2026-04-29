@@ -8,6 +8,7 @@ from mlb_props_lab.dashboard import build_dashboard
 from mlb_props_lab.feature_registry import load_registry, validate_registry
 from mlb_props_lab.reports import generate_feature_report
 from mlb_props_lab.statcast_features import build_statcast_feature_artifacts
+from mlb_props_lab.targets import build_pitcher_start_target_artifacts
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -45,6 +46,15 @@ def build_parser() -> argparse.ArgumentParser:
     statcast_build_parser.add_argument("--targets", type=Path, default=None)
     statcast_build_parser.add_argument("--registry-path", type=Path, default=None)
 
+    targets_parser = subparsers.add_parser("targets")
+    targets_subparsers = targets_parser.add_subparsers(dest="targets_command", required=True)
+    targets_build_parser = targets_subparsers.add_parser("build")
+    targets_build_parser.add_argument("--issue", required=True)
+    targets_build_parser.add_argument("--output-dir", type=Path, default=Path("artifacts/reports"))
+    targets_build_parser.add_argument("--run-id", default=None)
+    targets_build_parser.add_argument("--starts", type=Path, default=None)
+    targets_build_parser.add_argument("--identities", type=Path, default=None)
+
     return parser
 
 
@@ -60,6 +70,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "statcast":
         return _handle_statcast(args)
+    if args.command == "targets":
+        return _handle_targets(args)
     return 2
 
 
@@ -105,5 +117,22 @@ def _handle_statcast(args: argparse.Namespace) -> int:
         print(f"Statcast feature build written to {build.report_root}")
         print(f"Feature matrix: {build.feature_matrix_path}")
         print(f"Coverage: {build.coverage_path}")
+        return 0
+    return 2
+
+
+def _handle_targets(args: argparse.Namespace) -> int:
+    if args.targets_command == "build":
+        build = build_pitcher_start_target_artifacts(
+            issue=args.issue,
+            output_dir=args.output_dir,
+            run_id=args.run_id,
+            starts_path=args.starts,
+            identities_path=args.identities,
+        )
+        print(f"Pitcher start target build written to {build.report_root}")
+        print(f"Target table: {build.target_table_path}")
+        print(f"Audit: {build.audit_path}")
+        print(f"Rejected rows: {build.rejected_rows_path}")
         return 0
     return 2

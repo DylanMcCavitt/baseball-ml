@@ -1,0 +1,7 @@
+game_pk,game_date,game_time_utc,pregame_as_of,game_status,game_completed_at,pitcher_mlb_id,pitcher_name,team_id,team_abbr,opponent_team_id,opponent_team_abbr,is_home,p_throws,started_game,source_updated_at,final_strikeouts,batters_faced,pitches,outs_recorded
+9001,2024-04-10,2024-04-10T23:05:00Z,2024-04-10T22:35:00Z,Final,2024-04-11T02:21:00Z,111,Sample Starter,1,AAA,2,BBB,yes,,yes,2024-04-11T02:25:00Z,7,24,96,18
+9002,2024-04-15,2024-04-15T20:10:00Z,2024-04-15T19:40:00Z,Final,2024-04-15T23:05:00Z,222,Lefty Starter,2,BBB,1,AAA,no,,yes,2024-04-15T23:08:00Z,5,21,88,16
+9002,2024-04-15,2024-04-15T20:10:00Z,2024-04-15T19:40:00Z,Final,2024-04-15T23:05:00Z,222,Lefty Starter,2,BBB,1,AAA,no,L,yes,2024-04-15T23:08:00Z,5,21,88,16
+9003,2024-04-16,2024-04-16T18:35:00Z,2024-04-16T18:05:00Z,Final,2024-04-16T21:14:00Z,333,Incomplete Target,3,CCC,4,DDD,yes,R,yes,2024-04-16T21:18:00Z,,20,74,14
+9004,2024-04-17,2024-04-17T19:05:00Z,2024-04-17T18:35:00Z,Final,2024-04-17T22:44:00Z,999,Unknown Starter,4,DDD,3,CCC,no,R,yes,2024-04-17T22:48:00Z,4,19,71,15
+9005,2024-04-18,2024-04-18T19:05:00Z,2024-04-18T19:10:00Z,Final,2024-04-18T22:44:00Z,111,Sample Starter,1,AAA,2,BBB,yes,R,yes,2024-04-18T22:49:00Z,6,23,91,17
